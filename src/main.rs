@@ -19,10 +19,16 @@ fn main() -> Status {
 
     if amd::checks::skinit_supported() {
         info!("drtm: [PASS] SKINIT CPUID bit set (CPUID.80000001:ECX[12])");
-    } else {
+    } else if amd::checks::cpu_is_amd() {
         error!(
             "drtm: [FAIL] SKINIT CPUID bit not set (CPUID.80000001:ECX[12]), \
              SKINIT unsupported on this CPU"
+        );
+    } else {
+        error!(
+            "drtm: [FAIL] SKINIT CPUID bit not set (CPUID.80000001:ECX[12]), \
+             and this CPU does not report itself as AMD, SKINIT is an AMD \
+             extension"
         );
     }
 
@@ -31,14 +37,11 @@ fn main() -> Status {
             error!("drtm: [FAIL] no TPM answered at locality 0 (0xFED40000)");
         }
         TpmProbe::Present { family, interface } => {
-            info!(
-                "drtm: [PASS] TPM present at locality 0: {family:?} {interface:?} \
-                 (cannot tell discrete vs. firmware TPM from software; SKINIT \
-                 requires a discrete TPM)"
-            );
+            info!("drtm: [PASS] TPM present at locality 0: {family:?} {interface:?}");
             warn!(
-                "drtm: [WARN] TPM presence does not confirm it is discrete, \
-                 verify manually"
+                "drtm: [WARN] software cannot tell a discrete TPM from a \
+                 firmware TPM, and SKINIT requires a discrete one, verify \
+                 manually"
             );
         }
     }

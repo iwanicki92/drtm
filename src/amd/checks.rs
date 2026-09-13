@@ -13,10 +13,30 @@ use core::arch::x86_64::__cpuid;
 /// sufficient without also reading `EFER`.
 const SKINIT_CPUID_BIT: u32 = 1 << 12;
 
+/// CPUID vendor string `AuthenticAMD`, as returned in `EBX`, `EDX`, `ECX` by
+/// leaf 0.
+const VENDOR_AMD: [u32; 3] = [0x6874_7541, 0x6974_6E65, 0x444D_4163];
+
+/// Whether the CPU reports itself as AMD.
+///
+/// `SKINIT` is an AMD extension, so a non-AMD CPU failing the CPUID check
+/// below is a different situation than an AMD CPU that lacks the feature.
+pub fn cpu_is_amd() -> bool {
+    let result = __cpuid(0x0);
+    [result.ebx, result.edx, result.ecx] == VENDOR_AMD
+}
+
 /// Whether the CPU advertises `SKINIT` support via CPUID.
 ///
 /// This is a hard gate: without it, no other AMD DRTM check matters.
 pub fn skinit_supported() -> bool {
+    // An unimplemented CPUID leaf returns the highest implemented leaf's
+    // values instead of zero, so check leaf 0x80000001 exists before reading
+    // it. Every x86-64 CPU implements it, but reading a leaf unguarded is how
+    // garbage gets mistaken for a feature bit.
+    if __cpuid(0x8000_0000).eax < 0x8000_0001 {
+        return false;
+    }
     let result = __cpuid(0x8000_0001);
     result.ecx & SKINIT_CPUID_BIT != 0
 }
@@ -27,12 +47,24 @@ pub fn skinit_supported() -> bool {
 /// same way (`grub-core/commands/i386/tpm.c`, `xen/arch/x86/tpm.c`).
 const TPM_LOCALITY_0_BASE: usize = 0xFED4_0000;
 
+/// `TPM_ACCESS_0` under the FIFO layout, `TPM_LOC_STATE_0` under CRB (PTP
+/// table 20). Both carry `tpmRegValidSts` in bit 7, so this offset can be
+/// read before the active interface is known.
 const TPM_ACCESS_OFFSET: usize = 0x00;
+
+/// `TPM_INTF_CAPABILITY_0`, but only under the FIFO layout. The CRB layout
+/// puts `TPM_DATA_CSUM_0` at this offset instead (PTP table 20), so this must
+/// not be read until `INTERFACE_TYPE` says FIFO is active.
 const TPM_INTF_CAPABILITY_OFFSET: usize = 0x14;
+
+/// `TPM_INTERFACE_ID_0` under FIFO, `TPM_CRB_INTF_ID_0` under CRB (PTP table
+/// 20). Both carry `InterfaceType` in bits 3:0, so this offset can be read
+/// before the active interface is known.
 const TPM_INTERFACE_ID_OFFSET: usize = 0x30;
 
-/// `TPM_ACCESS.tpmRegValidSts`, bit 7 (PTP table 31): set once the rest of
-/// the register holds valid values.
+/// `TPM_ACCESS.tpmRegValidSts`, bit 7 (PTP table 31, and table 37 for the CRB
+/// register aliased at the same offset): set once the rest of the register
+/// holds valid values.
 const TPM_ACCESS_VALID_STS: u8 = 1 << 7;
 
 /// `TPM_INTF_CAPABILITY.InterfaceVersion`, bits 30:28 (PTP table 34). `011`
@@ -41,7 +73,9 @@ const INTF_VERSION_SHIFT: u32 = 28;
 const INTF_VERSION_MASK: u32 = 0x7;
 const INTF_VERSION_TPM_1_2: [u32; 2] = [0x0, 0x2];
 
-/// `TPM_INTERFACE_ID.InterfaceType`, bits 3:0 (PTP table 23).
+/// `TPM_INTERFACE_ID.InterfaceType`, bits 3:0 (PTP table 23). `0000` is FIFO
+/// active, `0001` CRB active, `1111` a TPM built to an earlier interface
+/// specification (i.e. TPM 1.2).
 const INTERFACE_TYPE_MASK: u32 = 0xF;
 const INTERFACE_TYPE_CRB: u32 = 0x1;
 
@@ -96,8 +130,8 @@ pub enum TpmProbe {
 /// (`TrenchBoot.github.io:docs/user-docs/requirements.md`). Software has
 /// no way to tell the two apart from here.
 pub fn probe_tpm() -> TpmProbe {
-    // Safety: TPM_ACCESS_0 is a valid byte register at this offset in the
-    // locality 0 window (PTP table 20).
+    // Safety: a valid byte register at this offset under either interface
+    // layout (PTP table 20).
     let access = unsafe { read_tpm_reg8(TPM_ACCESS_OFFSET) };
     // PTP, TPM_ACCESS_x.tpmEstablishment: "reading from a device that
     // doesn't exist ... returns a value of all ones" (real hardware bus
@@ -108,26 +142,36 @@ pub fn probe_tpm() -> TpmProbe {
         return TpmProbe::NotPresent;
     }
 
-    // Safety: same MMIO window as above, offset is within range.
-    let intf_capability = unsafe { read_tpm_reg32(TPM_INTF_CAPABILITY_OFFSET) };
-    let version = (intf_capability >> INTF_VERSION_SHIFT) & INTF_VERSION_MASK;
-    if INTF_VERSION_TPM_1_2.contains(&version) {
-        // TPM 1.2 predates CRB, so FIFO (TIS) is the only interface.
+    // The active interface has to be established first. TPM_INTF_CAPABILITY
+    // is only valid when InterfaceType is 0000 or 1111 (PTP section 6.5.2.7);
+    // under CRB its offset holds TPM_DATA_CSUM, which would read back as a
+    // plausible-looking InterfaceVersion.
+    //
+    // Safety: same MMIO window, 4-byte aligned offset valid under either
+    // interface layout.
+    let interface_id = unsafe { read_tpm_reg32(TPM_INTERFACE_ID_OFFSET) };
+    if interface_id & INTERFACE_TYPE_MASK == INTERFACE_TYPE_CRB {
+        // CRB was introduced with TPM 2.0, so the family follows.
         return TpmProbe::Present {
-            family: TpmFamily::V1_2,
-            interface: TpmInterface::Tis,
+            family: TpmFamily::V2_0,
+            interface: TpmInterface::Crb,
         };
     }
 
-    // Safety: same MMIO window as above, offset is within range.
-    let interface_id = unsafe { read_tpm_reg32(TPM_INTERFACE_ID_OFFSET) };
-    let interface = if interface_id & INTERFACE_TYPE_MASK == INTERFACE_TYPE_CRB {
-        TpmInterface::Crb
+    // FIFO is active, or this is a TPM built to an earlier interface
+    // specification. TPM_INTF_CAPABILITY is valid in both cases and is what
+    // separates 1.2 from 2.0.
+    //
+    // Safety: same MMIO window, offset valid now that FIFO is known active.
+    let intf_capability = unsafe { read_tpm_reg32(TPM_INTF_CAPABILITY_OFFSET) };
+    let version = (intf_capability >> INTF_VERSION_SHIFT) & INTF_VERSION_MASK;
+    let family = if INTF_VERSION_TPM_1_2.contains(&version) {
+        TpmFamily::V1_2
     } else {
-        TpmInterface::Tis
+        TpmFamily::V2_0
     };
     TpmProbe::Present {
-        family: TpmFamily::V2_0,
-        interface,
+        family,
+        interface: TpmInterface::Tis,
     }
 }

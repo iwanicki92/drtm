@@ -59,6 +59,7 @@ class QemuVm:
         self._serial_buf_lock = threading.Lock()
         self._serial_reader = None
         self._stop_reading = threading.Event()
+        self._qmp_sock_path = None
         self.qmp = None
 
     def __enter__(self):
@@ -150,9 +151,14 @@ class QemuVm:
                 break
             if not chunk:
                 break
-            self._serial_log_f.write(chunk)
-            self._serial_log_f.flush()
             with self._serial_buf_lock:
+                # __exit__ closes the log file under this same lock, so
+                # re-check the stop flag here: if the join below it timed out,
+                # this thread must not write to an already-closed file.
+                if self._stop_reading.is_set():
+                    break
+                self._serial_log_f.write(chunk)
+                self._serial_log_f.flush()
                 self._serial_buf.extend(chunk)
 
     def read_serial_until(self, needle: str, timeout: float = 40.0) -> str:
@@ -188,12 +194,13 @@ class QemuVm:
             except subprocess.TimeoutExpired:
                 self._process.kill()
                 self._process.wait()
-        if getattr(self, "_qmp_sock_path", None):
+        if self._qmp_sock_path is not None:
             Path(self._qmp_sock_path).unlink(missing_ok=True)
         if self._workdir is not None:
             shutil.rmtree(self._workdir, ignore_errors=True)
-        if self._serial_log_f is not None:
-            self._serial_log_f.close()
+        with self._serial_buf_lock:
+            if self._serial_log_f is not None:
+                self._serial_log_f.close()
         if self._qemu_log_f is not None:
             self._qemu_log_f.close()
         return False

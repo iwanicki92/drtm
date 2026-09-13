@@ -19,10 +19,13 @@ from qemu_vm import QemuVm
 def test_skinit_check_fails_without_cpu_support(test_log_dir, efi_binary: Path):
     with QemuVm(efi_binary, log_dir=test_log_dir) as vm:
         output = vm.read_serial_until("SKINIT CPUID bit")
-    assert "[FAIL]" in output
+    assert "[FAIL] SKINIT CPUID bit not set" in output
 
 
 def test_tpm_check_fails_without_a_tpm_device(test_log_dir, efi_binary: Path):
+    # "at locality 0" is common to both branches of the check, so a pass
+    # fails this assertion instead of timing out on a needle that only the
+    # failure message contains.
     with QemuVm(efi_binary, log_dir=test_log_dir) as vm:
-        output = vm.read_serial_until("TPM answered")
-    assert "[FAIL]" in output
+        output = vm.read_serial_until("at locality 0")
+    assert "[FAIL] no TPM answered" in output
