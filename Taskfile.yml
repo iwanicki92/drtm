@@ -23,5 +23,5 @@ tasks:
   docs:
     desc: Regenerate offline dependency docs (target/x86_64-unknown-uefi/doc)
     cmds:
-      - cargo doc --no-deps -p log -p uefi -p uefi-raw -p uefi-macros
+      - cargo doc --no-deps -p log -p uefi -p uefi-raw
       - cp docs/rustdoc-index.html target/x86_64-unknown-uefi/doc/index.html
