@@ -23,8 +23,9 @@ checks it currently performs is whatever `src/main.rs` reports and
 
 **The DRTM launch itself is on hold.** Do not design or write launch logic
 (building the Secure Loader Block, parking the APs, executing `SKINIT`, or
-the equivalent for another vendor) until the user provides documents
-describing it.
+the equivalent for another vendor) until the user asks for it. The reference
+material for it has been provided, so what it waits on is an agreed design
+and hardware to validate it on, not missing documentation.
 
 Precondition checks are in scope and land one at a time. The line between
 the two: a check only observes the platform and leaves it as it found it.
