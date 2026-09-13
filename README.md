@@ -26,18 +26,13 @@ See [docs/development.md](docs/development.md) for setup details.
 ## Usage
 
 ```sh
-cargo build
+task build   # cargo build -> target/x86_64-unknown-uefi/debug/drtm.efi
+task lint    # pre-commit run --all-files
+task test    # pytest qemu-tests/ (builds the binary itself first)
 ```
 
-Produces `target/x86_64-unknown-uefi/debug/drtm.efi`.
-
-To run the QEMU smoke test:
-
-```sh
-python3 -m venv .venv-vm
-.venv-vm/bin/pip install -r qemu-tests/requirements.txt
-.venv-vm/bin/pytest qemu-tests/
-```
+`task` is optional; each wraps a plain command documented in
+[docs/development.md](docs/development.md).
 
 ## More
 

@@ -29,3 +29,8 @@ defaults.
     `target/x86_64-unknown-uefi/debug/drtm.efi`).
 - Run the QEMU smoke test: `.venv-vm/bin/pytest qemu-tests/` (builds the
     binary itself first). See `docs/testing.md` for details.
+- Lint everything: `pre-commit run --all-files` (config in
+    `.pre-commit-config.yaml`; needs `pre-commit install` once, plus
+    `rustup component add rustfmt clippy`).
+- `task build`/`task lint`/`task test` (Taskfile.yml) wrap the three commands
+    above.
