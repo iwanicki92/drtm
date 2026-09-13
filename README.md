@@ -1,4 +1,4 @@
-# drtm
+# DRTM
 
 A single-binary tool for testing DRTM (Dynamic Root of Trust for
 Measurement) and gathering logs to help debug
