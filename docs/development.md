@@ -79,6 +79,14 @@ entry to `REUSE.toml` instead.
 
 See `docs/testing.md`.
 
+## Dependency docs
+
+`task docs` regenerates offline `rustdoc` HTML for `drtm`'s dependencies
+into `target/x86_64-unknown-uefi/doc`, with `index.html` linking to each
+documented crate. Copy that directory wherever it's useful (e.g. a
+reference repo kept outside this one); nothing here does that
+automatically.
+
 ## Layout
 
 - `src/`: the Rust binary.

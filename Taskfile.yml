@@ -19,3 +19,9 @@ tasks:
     desc: Run the QEMU smoke test suite (builds the binary itself first)
     cmds:
       - uv run --project qemu-tests pytest qemu-tests
+
+  docs:
+    desc: Regenerate offline dependency docs (target/x86_64-unknown-uefi/doc)
+    cmds:
+      - cargo doc --no-deps -p log -p uefi -p uefi-raw -p uefi-macros
+      - cp docs/rustdoc-index.html target/x86_64-unknown-uefi/doc/index.html
