@@ -26,7 +26,24 @@ The first run downloads Dasharo's QEMU Q35 firmware image into
 
 ## How the VM is set up
 
-For each test, `qemu-tests/qemu_vm.py` builds a scratch working directory
+Booting takes around 25 seconds, so tests do not boot QEMU themselves. A
+session-scoped fixture in `qemu-tests/conftest.py` boots once per distinct
+QEMU configuration and yields that boot's complete serial output as a string,
+which tests then assert against. `default_boot` is the only such fixture for
+now: no TPM device, and a CPU model reporting neither AMD nor `SKINIT`. A
+configuration needing different QEMU arguments gets its own fixture calling
+`boot_and_capture`, rather than the existing one growing parameters.
+
+The trade-off is that tests sharing a boot fail together if that boot does,
+which is the honest result: they were never independent, they were repeated
+boots of identical arguments asserting on identical output.
+
+Each boot reads serial output until `drtm: checks complete`, the last line
+`src/main.rs` prints. Reaching that marker is what proves the binary got past
+every check instead of hanging or faulting midway, so the marker must stay in
+step with the code that emits it.
+
+For each boot, `qemu-tests/qemu_vm.py` builds a scratch working directory
 (under the system temp dir, removed on exit) containing:
 
 - `esp/EFI/BOOT/BOOTX64.EFI`: a copy of the built `drtm.efi`, placed where
@@ -45,11 +62,22 @@ used automatically when `/dev/kvm` is accessible.
 ## Logs
 
 Each pytest invocation gets its own numbered, gitignored folder under
-`qemu-tests/logs/`, e.g. `0007-2026-09-13/`, holding a `timestamp.txt` with
-the exact run time and one subfolder per test with its captured
-`serial.log` and `qemu.log`. Old runs are never pruned automatically, so
-clean out `qemu-tests/logs/` by hand once in a while. The run number is
-4 digits; if it's exhausted, delete old runs and try again.
+`qemu-tests/logs/`, e.g. `0007-2026-09-13/`, holding:
+
+- `timestamp.txt`: the exact run time.
+- `results.txt`: every test's outcome and duration, the session's exit
+    status, and the full traceback for anything that failed. A log folder
+    therefore records how the run went, not only what the guest printed.
+- One subfolder per boot, e.g. `boot-default/`, with that boot's captured
+    `serial.log` and `qemu.log`.
+
+Durations in `results.txt` sum a test's setup, call and teardown phases, so a
+shared boot's cost shows against the first test that triggered it rather than
+every test reporting 0.0s.
+
+Old runs are never pruned automatically, so clean out `qemu-tests/logs/` by
+hand once in a while. The run number is 4 digits; if it's exhausted, delete
+old runs and try again.
 
 ## Why Dasharo's firmware, not OVMF
 

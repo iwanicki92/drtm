@@ -2,18 +2,20 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""Boots the drtm binary in QEMU and checks it runs without crashing.
+"""Checks the drtm binary boots and runs to completion without crashing.
 
 Uses Dasharo's coreboot+UEFI firmware for QEMU Q35 rather than stock OVMF.
 See CLAUDE.md and firmware.py for why.
 """
 
-from pathlib import Path
-
-from qemu_vm import QemuVm
+from conftest import CHECKS_COMPLETE
 
 
-def test_binary_boots_and_prints_hello(test_log_dir, efi_binary: Path):
-    with QemuVm(efi_binary, log_dir=test_log_dir) as vm:
-        output = vm.read_serial_until("drtm: hello from UEFI")
-    assert "drtm: hello from UEFI" in output
+def test_binary_boots_and_prints_hello(default_boot: str):
+    assert "drtm: hello from UEFI" in default_boot
+
+
+def test_binary_runs_every_check_to_completion(default_boot: str):
+    # The boot fixture reads until this marker, so reaching it is what proves
+    # the binary got past every check rather than hanging or faulting midway.
+    assert CHECKS_COMPLETE in default_boot

@@ -46,5 +46,9 @@ fn main() -> Status {
         }
     }
 
+    // Terminal marker. The QEMU test harness reads serial output until this
+    // line, so it knows it has every check's result and not a partial boot.
+    info!("drtm: checks complete");
+
     Status::SUCCESS
 }
