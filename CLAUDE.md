@@ -17,13 +17,18 @@ out, what was tried, or a spec quoted verbatim. Anything longer belongs in
 
 ## Project status
 
-Base scaffolding only: a `no_std`/`no_main` UEFI binary that logs a line and
-returns, plus a QEMU smoke test proving it boots. No DRTM logic yet.
+A `no_std`/`no_main` UEFI binary, exercised by booting it under QEMU. Which
+checks it currently performs is whatever `src/main.rs` reports and
+`qemu-tests/` asserts on, so read those rather than a summary here.
 
-**DRTM implementation work is on hold.** Do not design or write the actual
-DRTM launch logic (AMD SKINIT path or otherwise) until the user provides
-further documents describing it. Current work is limited to non-DRTM
-scaffolding.
+**The DRTM launch itself is on hold.** Do not design or write launch logic
+(building the Secure Loader Block, parking the APs, executing `SKINIT`, or
+the equivalent for another vendor) until the user provides documents
+describing it.
+
+Precondition checks are in scope and land one at a time. The line between
+the two: a check only observes the platform and leaves it as it found it.
+Anything that changes machine state to make a launch happen is the launch.
 
 For the "why" behind the project and its testing setup, see `docs/design.md`
 and `docs/testing.md`. This file only covers agent-operational specifics.
@@ -39,7 +44,7 @@ defaults.
 - Build the EFI binary: `cargo build` (target is `x86_64-unknown-uefi`, set
     via `.cargo/config.toml`, output at
     `target/x86_64-unknown-uefi/debug/drtm.efi`).
-- Run the QEMU smoke test: `uv run --project qemu-tests pytest qemu-tests`
+- Run the QEMU tests: `uv run --project qemu-tests pytest qemu-tests`
     (builds the binary itself first, see `docs/testing.md`).
 - Lint everything: `pre-commit run --all-files` (config in
     `.pre-commit-config.yaml`, needs `pre-commit install` once, plus
