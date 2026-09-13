@@ -41,10 +41,10 @@ existing ones growing parameters.
 | `tpm_crb_boot` | `swtpm`-backed TPM 2.0 on the CRB interface        |
 
 No configuration reports `SKINIT` support, since QEMU will not set that
-feature bit on any CPU model (see above). The CPU model still decides the
-vendor string, so `default_boot` and `amd_cpu_boot` between them cover both
-reasons the check can fail: a CPU that is not AMD at all, and an AMD CPU
-without the feature.
+feature bit on any CPU model (see [DRTM under QEMU](#drtm-under-qemu)). The
+CPU model still decides the vendor string, so `default_boot` and
+`amd_cpu_boot` between them cover both reasons the check can fail: a CPU
+that is not AMD at all, and an AMD CPU without the feature.
 
 The two TPM configurations exist because the check reports a different
 interface for each, and getting that wrong is not hypothetical: reading
@@ -181,14 +181,31 @@ Robot-Framework-specific bits stripped.
 
 ## DRTM under QEMU
 
-QEMU does not support real DRTM launches. Real DRTM-path code will either
-need to be stubbed out for QEMU builds (a no-DRTM test build variant) or is
-expected to fault/crash under QEMU. Which of these applies depends on how
-the DRTM instructions actually behave when executed in QEMU, and should be
-verified rather than assumed. Dasharo's own TrenchBoot QEMU tests suggest the
-failure is graceful and happens before the DRTM instruction executes (GRUB
-reports "secure launch not enabled" rather than the VM crashing), but this
-should be confirmed for our own launch path rather than assumed.
+QEMU does not support real DRTM launches, and this is a deliberate
+limitation rather than a gap that will close. Two independent things stop
+it:
+
+- **The feature bit cannot be set.** Forcing it on (`-cpu qemu64,+skinit`,
+    or any other model, including AMD's own `EPYC`) is refused in practice:
+    TCG answers "TCG doesn't support requested feature", and `-enable-kvm`
+    on a non-AMD host answers "host doesn't support requested feature".
+    Either way the bit ends up clear.
+- **The instruction is not implemented.** QEMU's TCG decoder recognises
+    `SKINIT`, checks the guest is allowed to execute it, then raises `#UD`
+    regardless, under the comment "If not intercepted, not implemented"
+    (QEMU 8.2.2, `target/i386/tcg/translate.c`).
+
+So DRTM-path code that reaches the instruction takes an undefined opcode
+exception. That is worth knowing precisely, because it is not a crash, not
+a silent no-op, and not something a separate no-DRTM test build has to
+avoid. What it does mean is that a launch path has to be built so the work
+around the instruction (SLB construction, memory layout, header validation)
+can be exercised here, leaving only the instruction itself for real
+hardware.
+
+Dasharo's own TrenchBoot QEMU tests never get that far: GRUB stops at its
+own precondition checks and reports "secure launch not enabled". That is
+consistent with the above rather than a gentler failure mode.
 
 Dasharo's `trenchboot/*.robot` tests are a useful model for DRTM-aware test
 structure later. They run against a fully booted Linux and read PCRs from
