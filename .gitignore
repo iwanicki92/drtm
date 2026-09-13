@@ -16,6 +16,7 @@ CLAUDE.local.md
 .venv-vm/
 __pycache__/
 .pytest_cache/
+.ruff_cache/
 
 # Downloaded QEMU firmware cache
 qemu-tests/dl-cache/

@@ -39,7 +39,9 @@ class QmpClient:
         finally:
             sock.close()
         if "error" in response:
-            raise RuntimeError(f"QMP command '{command}' failed: {response['error']['desc']}")
+            raise RuntimeError(
+                f"QMP command '{command}' failed: {response['error']['desc']}"
+            )
         return response
 
     def _send(self, sock, command, **args):
@@ -48,7 +50,9 @@ class QmpClient:
         sock.sendall(json.dumps(msg).encode())
         response = sock.recv(8192).decode()
         logger.debug("QMP response: %s", response)
-        json_objects = [json.loads(line) for line in response.splitlines() if line.strip()]
+        json_objects = [
+            json.loads(line) for line in response.splitlines() if line.strip()
+        ]
         if len(json_objects) > 1:
             return {"ack": json_objects[0], "event": json_objects[1]}
         return json_objects[0]

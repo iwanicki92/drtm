@@ -52,8 +52,12 @@ class QemuVm:
 
         serial_port = _free_tcp_port()
         # QMP is a Unix socket. AF_UNIX paths are capped at ~108 bytes, so it
-        # cannot live under the (potentially long) per-test workdir.
-        qmp_sock = tempfile.mktemp(prefix="drtm-qmp-", suffix=".sock")
+        # cannot live under the (potentially long) per-test workdir. Reserve
+        # a short, unique path with mkstemp, then hand QEMU the bare path
+        # (it creates the actual socket there itself).
+        qmp_fd, qmp_sock = tempfile.mkstemp(prefix="drtm-qmp-", suffix=".sock")
+        os.close(qmp_fd)
+        os.unlink(qmp_sock)
 
         args = [
             "qemu-system-x86_64",
@@ -104,6 +108,9 @@ class QemuVm:
     def read_serial_until(self, needle: str, timeout: float = 40.0) -> str:
         """Reads from the serial console until `needle` appears, or raises
         TimeoutError with everything read so far."""
+        assert self._serial_sock is not None, (
+            "read_serial_until() outside a `with` block"
+        )
         needle_bytes = needle.encode()
         buf = b""
         self._serial_sock.settimeout(0.2)
@@ -113,7 +120,7 @@ class QemuVm:
                 return buf.decode("utf-8", "replace")
             try:
                 chunk = self._serial_sock.recv(65536)
-            except (TimeoutError, socket.timeout):
+            except TimeoutError:
                 continue
             if not chunk:
                 break
