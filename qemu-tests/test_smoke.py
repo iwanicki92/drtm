@@ -17,8 +17,8 @@ def build_efi_binary():
     subprocess.run(["cargo", "build"], cwd=REPO_ROOT, check=True)
 
 
-def test_binary_boots_and_prints_hello():
+def test_binary_boots_and_prints_hello(test_log_dir):
     build_efi_binary()
-    with QemuVm(EFI_BINARY) as vm:
+    with QemuVm(EFI_BINARY, log_dir=test_log_dir) as vm:
         output = vm.read_serial_until("drtm: hello from UEFI")
     assert "drtm: hello from UEFI" in output

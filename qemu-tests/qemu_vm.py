@@ -30,17 +30,27 @@ def _kvm_available() -> bool:
 
 
 class QemuVm:
-    """Runs one UEFI binary as the only boot entry on a scratch ESP."""
+    """Runs one UEFI binary as the only boot entry on a scratch ESP.
 
-    def __init__(self, efi_binary: Path):
+    `log_dir` receives the QEMU process's own stdout/stderr (`qemu.log`) and
+    the raw serial console capture (`serial.log`), written as they arrive so
+    they're useful even if the test times out or crashes.
+    """
+
+    def __init__(self, efi_binary: Path, log_dir: Path):
         self.efi_binary = Path(efi_binary)
+        self.log_dir = Path(log_dir)
         self._workdir = None
         self._process = None
         self._serial_sock = None
+        self._serial_log_f = None
+        self._qemu_log_f = None
         self.qmp = None
 
     def __enter__(self):
         self._workdir = tempfile.mkdtemp(prefix="drtm-qemu-")
+        self._serial_log_f = open(self.log_dir / "serial.log", "wb")
+        self._qemu_log_f = open(self.log_dir / "qemu.log", "wb")
         esp_dir = Path(self._workdir) / "esp" / "EFI" / "BOOT"
         esp_dir.mkdir(parents=True)
         shutil.copy(self.efi_binary, esp_dir / "BOOTX64.EFI")
@@ -86,7 +96,7 @@ class QemuVm:
 
         self._process = subprocess.Popen(
             args,
-            stdout=subprocess.PIPE,
+            stdout=self._qemu_log_f,
             stderr=subprocess.STDOUT,
         )
         self._qmp_sock_path = qmp_sock
@@ -111,6 +121,9 @@ class QemuVm:
         assert self._serial_sock is not None, (
             "read_serial_until() outside a `with` block"
         )
+        assert self._serial_log_f is not None, (
+            "read_serial_until() outside a `with` block"
+        )
         needle_bytes = needle.encode()
         buf = b""
         self._serial_sock.settimeout(0.2)
@@ -125,6 +138,8 @@ class QemuVm:
             if not chunk:
                 break
             buf += chunk
+            self._serial_log_f.write(chunk)
+            self._serial_log_f.flush()
         raise TimeoutError(
             f"Timed out waiting for {needle!r} on serial console. "
             f"Read so far:\n{buf.decode('utf-8', 'replace')}"
@@ -144,4 +159,8 @@ class QemuVm:
             Path(self._qmp_sock_path).unlink(missing_ok=True)
         if self._workdir is not None:
             shutil.rmtree(self._workdir, ignore_errors=True)
+        if self._serial_log_f is not None:
+            self._serial_log_f.close()
+        if self._qemu_log_f is not None:
+            self._qemu_log_f.close()
         return False

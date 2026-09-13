@@ -19,3 +19,6 @@ __pycache__/
 
 # Downloaded QEMU firmware cache
 qemu-tests/dl-cache/
+
+# Per-run test logs (serial/QEMU output)
+qemu-tests/logs/

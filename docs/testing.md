@@ -18,6 +18,15 @@ uv run --project qemu-tests pytest qemu-tests
 The first run downloads Dasharo's QEMU Q35 firmware image into
 `qemu-tests/dl-cache/` (a few MB, gitignored, cached after that).
 
+## Logs
+
+Each pytest invocation gets its own numbered, gitignored folder under
+`qemu-tests/logs/`, e.g. `0007-2026-09-13/`, holding a `timestamp.txt` with
+the exact run time and one subfolder per test with its captured
+`serial.log` and `qemu.log`. Old runs are never pruned automatically, so
+clean out `qemu-tests/logs/` by hand once in a while. The run number is
+4 digits; if it's exhausted, delete old runs and try again.
+
 ## Why Dasharo's firmware, not OVMF
 
 Firmware for QEMU testing is Dasharo's coreboot+UEFI build for QEMU Q35 (from

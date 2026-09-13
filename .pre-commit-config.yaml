@@ -49,6 +49,7 @@ repos:
     rev: v0.0.65
     hooks:
       - id: ty
+        args: [--project, qemu-tests]
         files: ^qemu-tests/
 
   - repo: local
