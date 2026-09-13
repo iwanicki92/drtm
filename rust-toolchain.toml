@@ -3,4 +3,5 @@
 # SPDX-License-Identifier: Apache-2.0
 
 [toolchain]
+channel = "1.98.1"
 targets = ["x86_64-unknown-uefi"]
