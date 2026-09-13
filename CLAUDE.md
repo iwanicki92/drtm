@@ -27,8 +27,9 @@ defaults.
 - Build the EFI binary: `cargo build` (target is `x86_64-unknown-uefi`, set
     via `.cargo/config.toml`, output at
     `target/x86_64-unknown-uefi/debug/drtm.efi`).
-- Run the QEMU smoke test: `.venv-vm/bin/pytest qemu-tests/` (builds the
-    binary itself first). See `docs/testing.md` for details.
+- Run the QEMU smoke test: `pytest qemu-tests/` (builds the binary itself
+    first). Requires an activated venv (`source .venv/bin/activate`, see
+    `docs/testing.md` for setup) or `pytest` otherwise on `PATH`.
 - Lint everything: `pre-commit run --all-files` (config in
     `.pre-commit-config.yaml`, needs `pre-commit install` once, plus
     `rustup component add rustfmt clippy`).

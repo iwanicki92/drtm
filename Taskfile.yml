@@ -14,4 +14,4 @@ tasks:
   test:
     desc: Run the QEMU smoke test suite (builds the binary itself first)
     cmds:
-      - .venv-vm/bin/pytest qemu-tests/
+      - pytest qemu-tests/

@@ -5,16 +5,20 @@ are supported, to prove the UEFI application itself boots and runs correctly.
 
 ## Running
 
-`cargo` must be on `PATH` (the test fixture builds the binary itself):
+`cargo` must be on `PATH` (the test fixture builds the binary itself). Create
+and activate the venv once:
 
 ```sh
-.venv-vm/bin/pytest qemu-tests/
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r qemu-tests/requirements.txt
 ```
 
-The venv is created with `python3 -m venv .venv-vm` and
-`.venv-vm/bin/pip install -r qemu-tests/requirements.txt`. It's named
-`.venv-vm` rather than `.venv` so host-side editors that auto-detect `.venv`
-don't try to use a venv built for this VM's Python.
+Then, with the venv active:
+
+```sh
+pytest qemu-tests/
+```
 
 The first run downloads Dasharo's QEMU Q35 firmware image into
 `qemu-tests/dl-cache/` (a few MB, gitignored, cached after that).
