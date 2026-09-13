@@ -7,4 +7,19 @@ name = "qemu-tests"
 version = "0.1.0"
 requires-python = ">=3.12"
 license = "Apache-2.0"
-dependencies = ["pytest"]
+dependencies = [
+    "pytest",
+    "pytest-timeout>=2.4.0",
+]
+
+[tool.pytest.ini_options]
+# Backstop for hangs the harness's own timeouts don't cover, e.g. a blocked
+# QMP socket. Must stay above BOOT_TIMEOUT in conftest.py: a slow boot should
+# fail on that specific timeout, which reports the serial output captured so
+# far, rather than on this blunt one.
+#
+# "signal" rather than "thread": it raises inside the test, so pytest still
+# reports the failure and still runs pytest_sessionfinish, which is what
+# writes results.txt. The thread method calls os._exit() and loses both.
+timeout = 300
+timeout_method = "signal"

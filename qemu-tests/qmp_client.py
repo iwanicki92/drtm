@@ -18,14 +18,22 @@ import socket
 logger = logging.getLogger(__name__)
 
 
+# Every socket operation is bounded by this. QEMU answers QMP in
+# milliseconds when it answers at all, so a wait this long already means it
+# is wedged, and blocking forever would hang the whole test session.
+DEFAULT_TIMEOUT = 10.0
+
+
 class QmpClient:
     """A minimal client for QEMU's QMP control socket."""
 
-    def __init__(self, socket_path):
+    def __init__(self, socket_path, timeout=DEFAULT_TIMEOUT):
         self.socket_path = socket_path
+        self.timeout = timeout
 
     def _open(self):
         sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        sock.settimeout(self.timeout)
         sock.connect(self.socket_path)
         greeting = sock.recv(4096)
         logger.debug("QMP greeting: %r", greeting)

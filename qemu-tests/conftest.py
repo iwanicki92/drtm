@@ -33,10 +33,21 @@ _MAX_RUN_NUMBER = 9999
 # capture holds every check's result rather than a partially booted guest.
 CHECKS_COMPLETE = "drtm: checks complete"
 
+# Generous on purpose. Measured boot-to-marker is ~11s under TCG and ~23s
+# under KVM on a nested-virtualisation host, but this only has to be tight
+# enough to catch a genuinely stuck guest. Being slow to report a real hang
+# costs one wait; being too tight turns a loaded machine into a flaky
+# failure that looks exactly like one.
+BOOT_TIMEOUT = 120.0
+
+# A build this long means something is wedged, not slow: a from-scratch
+# debug build of this crate is seconds.
+BUILD_TIMEOUT = 300.0
+
 
 @pytest.fixture(scope="session")
 def efi_binary() -> Path:
-    subprocess.run(["cargo", "build"], cwd=REPO_ROOT, check=True)
+    subprocess.run(["cargo", "build"], cwd=REPO_ROOT, check=True, timeout=BUILD_TIMEOUT)
     return EFI_BINARY
 
 
@@ -93,7 +104,7 @@ def boot_and_capture(efi_binary: Path, log_dir: Path) -> str:
     """
     log_dir.mkdir(parents=True, exist_ok=True)
     with QemuVm(efi_binary, log_dir=log_dir) as vm:
-        return vm.read_serial_until(CHECKS_COMPLETE)
+        return vm.read_serial_until(CHECKS_COMPLETE, timeout=BOOT_TIMEOUT)
 
 
 @pytest.fixture(scope="session")

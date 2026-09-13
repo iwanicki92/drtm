@@ -56,8 +56,51 @@ For each boot, `qemu-tests/qemu_vm.py` builds a scratch working directory
 It then launches `qemu-system-x86_64` on a Q35 machine, with that ESP
 attached as a FAT-formatted drive and that firmware image as pflash. Serial
 is exposed on a raw TCP port (see below) and QMP on a short-lived Unix
-socket, both used by the test to interact with the VM. KVM acceleration is
-used automatically when `/dev/kvm` is accessible.
+socket, both used by the test to interact with the VM.
+
+## Acceleration
+
+`DRTM_QEMU_ACCEL` picks the accelerator: `auto` (the default) uses KVM
+whenever `/dev/kvm` is usable, while `kvm` and `tcg` force the choice so the
+two can be compared on a given machine.
+
+KVM is not automatically the faster option. Measured boot-to-marker on a
+nested-virtualisation development host:
+
+| Mode | Boot  | Full suite |
+|------|-------|------------|
+| TCG  | 11.0s | 11.4s      |
+| KVM  | 22.7s | 23.0s      |
+
+The guest boots with `smm=on`, and Dasharo's firmware does substantial SMM
+setup. Nested, every SMM transition traps out through both hypervisor layers,
+while TCG emulates it in userspace with no exits at all. On bare metal the
+ordering is expected to flip back, which is what `DRTM_QEMU_ACCEL` is for:
+measure before assuming.
+
+Each boot writes the exact `qemu-system-x86_64` invocation to
+`qemu-args.txt` in its log folder, so two runs being compared show what
+actually differed.
+
+## Timeouts
+
+A stuck `drtm.efi` fails the run rather than wedging it. Layers, innermost
+first:
+
+- `read_serial_until` gives up after its timeout and raises with the serial
+    output captured so far. Boot waits pass `BOOT_TIMEOUT` (120s), which is
+    deliberately far above the ~23s a real boot takes: reporting a genuine
+    hang late costs one wait, while a tight limit turns a loaded machine into
+    a flaky failure that looks identical to a hang.
+- `QemuVm.__exit__` always tears QEMU down (`terminate`, then `kill` after
+    5s), so a timed-out test leaves no stray process.
+- `_connect_serial` waits at most 5s for QEMU to open its serial port,
+    `QmpClient` bounds every socket operation at 10s, and the `cargo build`
+    in the `efi_binary` fixture is capped at `BUILD_TIMEOUT` (300s).
+- `pytest-timeout` backstops anything the above misses, at 300s per test
+    with the `signal` method. `signal` matters: it raises inside the test, so
+    pytest still reports the failure and still runs the hook that writes
+    `results.txt`. The `thread` method calls `os._exit()` and loses both.
 
 ## Logs
 
@@ -69,7 +112,8 @@ Each pytest invocation gets its own numbered, gitignored folder under
     status, and the full traceback for anything that failed. A log folder
     therefore records how the run went, not only what the guest printed.
 - One subfolder per boot, e.g. `boot-default/`, with that boot's captured
-    `serial.log` and `qemu.log`.
+    `serial.log` and `qemu.log`, plus the `qemu-args.txt` it was launched
+    with.
 
 Durations in `results.txt` sum a test's setup, call and teardown phases, so a
 shared boot's cost shows against the first test that triggered it rather than

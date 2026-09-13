@@ -30,7 +30,24 @@ def _free_tcp_port() -> int:
         return s.getsockname()[1]
 
 
-def _kvm_available() -> bool:
+def _use_kvm() -> bool:
+    """Whether to pass `-enable-kvm`, honouring `DRTM_QEMU_ACCEL`.
+
+    `auto` (the default) uses KVM whenever `/dev/kvm` is usable. `kvm` and
+    `tcg` force the choice, which is what makes the two comparable on a given
+    machine: KVM is not always the faster option. Under nested virtualisation
+    it loses badly to TCG here, because this guest boots with `smm=on` and
+    every SMM transition traps out through both hypervisor layers.
+    """
+    accel = os.environ.get("DRTM_QEMU_ACCEL", "auto").lower()
+    if accel == "tcg":
+        return False
+    if accel == "kvm":
+        return True
+    if accel != "auto":
+        raise ValueError(
+            f"DRTM_QEMU_ACCEL must be 'auto', 'kvm' or 'tcg', got {accel!r}"
+        )
     return os.access("/dev/kvm", os.R_OK | os.W_OK)
 
 
@@ -106,8 +123,12 @@ class QemuVm:
             f"unix:{qmp_sock},server,nowait",
             "-nographic",
         ]
-        if _kvm_available():
+        if _use_kvm():
             args.append("-enable-kvm")
+
+        # Record the exact invocation next to its output, so runs compared
+        # against each other (KVM vs TCG, say) show what actually differed.
+        (self.log_dir / "qemu-args.txt").write_text("\n".join(args) + "\n")
 
         self._process = subprocess.Popen(
             args,
@@ -163,7 +184,12 @@ class QemuVm:
 
     def read_serial_until(self, needle: str, timeout: float = 40.0) -> str:
         """Waits until `needle` appears anywhere in the serial output seen so
-        far, or raises TimeoutError with everything read so far."""
+        far, or raises TimeoutError with everything read so far.
+
+        The default suits a wait for something the guest prints soon after it
+        is already running. Waiting for a full boot needs longer: that path
+        passes `conftest.BOOT_TIMEOUT`.
+        """
         assert self._serial_reader is not None, (
             "read_serial_until() outside a `with` block"
         )
