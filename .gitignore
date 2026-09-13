@@ -10,3 +10,12 @@ CLAUDE.local.md
 
 # Rust
 /target/
+
+# Python (test harness). Named .venv-vm, not .venv, so host-side editors
+# that auto-detect .venv don't try to use a venv built for the VM.
+.venv-vm/
+__pycache__/
+.pytest_cache/
+
+# Downloaded QEMU firmware cache
+qemu-tests/dl-cache/
