@@ -81,16 +81,17 @@ See `docs/testing.md`.
 
 ## Dependency docs
 
-`task docs` regenerates offline `rustdoc` HTML for `drtm`'s dependencies
-into `target/x86_64-unknown-uefi/doc`, with `index.html` linking to each
-documented crate. Copy that directory wherever it's useful (e.g. a
-reference repo kept outside this one); nothing here does that
-automatically.
+`task docs` (`scripts/gen-dependency-docs.sh`) regenerates offline `rustdoc`
+HTML for `drtm`'s dependencies into `docs/dependency-docs` (gitignored,
+since it's generated and can be rebuilt any time). It also builds an
+`index.html` linking to each documented crate, styled to match rustdoc's own
+pages, and adds a link back to that index on each crate's root page.
 
 ## Layout
 
 - `src/`: the Rust binary.
 - `qemu-tests/`: the pytest-based QEMU test suite (kept out of Cargo's own
   `tests/` directory to avoid confusion between the two).
+- `scripts/`: standalone helper scripts, e.g. dependency doc generation.
 - `docs/`: this folder.
 - `Taskfile.yml`, `.pre-commit-config.yaml`: see above.

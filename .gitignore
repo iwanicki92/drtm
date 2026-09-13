@@ -21,6 +21,9 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 
+# Generated offline dependency docs (task docs)
+docs/dependency-docs/
+
 # Downloaded QEMU firmware cache
 qemu-tests/dl-cache/
 

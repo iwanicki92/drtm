@@ -36,7 +36,7 @@ See [docs/development.md](docs/development.md) for setup details.
 task build   # cargo build -> target/x86_64-unknown-uefi/debug/drtm.efi
 task lint    # pre-commit run --all-files
 task test    # uv run pytest qemu-tests/ (builds the binary itself first)
-task docs    # cargo doc -> target/x86_64-unknown-uefi/doc (dependency docs)
+task docs    # cargo doc -> docs/dependency-docs (offline dependency docs)
 ```
 
 `task` is optional. Each wraps a plain command documented in
