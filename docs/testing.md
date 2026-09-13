@@ -28,10 +28,10 @@ The first run downloads Dasharo's QEMU Q35 firmware image into
 
 Booting takes around 11 seconds, so tests do not boot QEMU themselves. A
 session-scoped fixture in `qemu-tests/conftest.py` boots once per distinct
-QEMU configuration and yields that boot's complete serial output as a string,
-which tests then assert against. A configuration needing different QEMU
-arguments gets its own fixture calling `boot_and_capture`, rather than the
-existing ones growing parameters.
+QEMU configuration and yields that boot's serial output as a string, which
+tests assert against. A configuration needing different QEMU arguments gets
+its own fixture calling `boot_and_capture`, rather than the existing ones
+growing parameters. Tests sharing a boot fail together if it does.
 
 | Fixture        | Configuration                                      |
 |----------------|----------------------------------------------------|
@@ -43,31 +43,16 @@ existing ones growing parameters.
 No configuration reports `SKINIT` support, since QEMU will not set that
 feature bit on any CPU model (see [DRTM under QEMU](#drtm-under-qemu)). The
 CPU model still decides the vendor string, so `default_boot` and
-`amd_cpu_boot` between them cover both reasons the check can fail: a CPU
-that is not AMD at all, and an AMD CPU without the feature.
-
-The two TPM configurations exist because the check reports a different
-interface for each, and getting that wrong is not hypothetical: reading
-`TPM_INTF_CAPABILITY` before establishing the active interface made a CRB
-TPM report as `V1_2 Tis`, since offset `0x14` holds `TPM_DATA_CSUM` under
-the CRB layout. Reverting that fix turns `test_tpm_check_detects_a_crb_tpm`
-red, which is the point of testing both.
-
-The trade-off is that tests sharing a boot fail together if that boot does,
-which is the honest result: they were never independent, they were repeated
-boots of identical arguments asserting on identical output.
+`amd_cpu_boot` cover both reasons the check can fail: a CPU that is not AMD
+at all, and an AMD CPU without the feature. Both TPM interfaces are tested
+because the check reports them differently, and an earlier bug got CRB
+wrong while passing on TIS.
 
 Each boot reads serial output until `drtm: checks complete`, the last line
-`src/main.rs` prints. Reaching that marker is what proves the binary got past
-every check instead of hanging or faulting midway, so the marker must stay in
-step with the code that emits it, and must stay short enough to survive the
-wrapping described next.
-
-The UEFI console is 80 columns and hard-wraps mid-word, so a log line longer
-than that arrives as two. `boot_and_capture` rejoins the pieces before handing
-the output to tests, which lets an assertion quote the message the code
-actually logs rather than whichever fragment happened to fit. `serial.log`
-keeps the unmodified capture.
+`src/main.rs` prints, which proves the binary got past every check rather
+than hanging midway. The UEFI console hard-wraps at 80 columns mid-word, so
+`boot_and_capture` rejoins split lines before tests see them (`serial.log`
+keeps the raw capture), and the marker itself has to stay under that width.
 
 For each boot, `qemu-tests/qemu_vm.py` builds a scratch working directory
 (under the system temp dir, removed on exit) containing:
@@ -86,47 +71,41 @@ socket, both used by the test to interact with the VM.
 
 ## Acceleration
 
-`DRTM_QEMU_ACCEL` picks the accelerator. `tcg` is the default, `kvm` forces
-KVM, and `auto` uses KVM whenever `/dev/kvm` is usable.
-
-TCG is the default because KVM measured slower on every machine tried. On a
-nested-virtualisation development host it is roughly 2x slower:
+`DRTM_QEMU_ACCEL` picks the accelerator: `tcg` (the default), `kvm`, or
+`auto` (KVM whenever `/dev/kvm` is usable). TCG is the default because KVM
+measured slower on every machine tried, roughly 2x on a
+nested-virtualisation host:
 
 | Mode | Boot  | Full suite |
 |------|-------|------------|
 | TCG  | 11.0s | 11.4s      |
 | KVM  | 22.7s | 23.0s      |
 
-On bare metal the gap nearly closes, but KVM is still marginally behind (a
-little over half a second on the suite). The guest boots with `smm=on` and
-Dasharo's firmware does substantial SMM setup, so nested, every SMM
-transition traps out through both hypervisor layers while TCG emulates it in
-userspace with no exits at all.
+On bare metal KVM is still marginally behind, by a little over half a second
+on the suite. The guest boots with `smm=on` and Dasharo's firmware does
+substantial SMM setup, so nested, every SMM transition traps through both
+hypervisor layers while TCG has no exits at all.
 
-This is a measurement, not a law: `kvm` and `auto` exist so the comparison
-can be re-run somewhere it may not hold. Each boot records its
-`qemu-system-x86_64` invocation to `qemu-args.txt` in its log folder, so two
-runs compared against each other show what actually differed.
+This is a measurement, not a law: `kvm` and `auto` exist so it can be re-run
+somewhere it may not hold. Each boot records its invocation to
+`qemu-args.txt`, so two runs compared show what actually differed.
 
 ## Timeouts
 
 A stuck `drtm.efi` fails the run rather than wedging it. Layers, innermost
 first:
 
-- `read_serial_until` gives up after its timeout and raises with the serial
-    output captured so far. Boot waits pass `BOOT_TIMEOUT` (120s), which is
-    deliberately far above the ~23s a real boot takes: reporting a genuine
-    hang late costs one wait, while a tight limit turns a loaded machine into
-    a flaky failure that looks identical to a hang.
+- `read_serial_until` raises with the output captured so far. Boot waits use
+    `BOOT_TIMEOUT` (120s), far above the ~23s a real boot takes, so a loaded
+    machine does not fail looking like a hang.
 - `QemuVm.__exit__` always tears QEMU down (`terminate`, then `kill` after
     5s), so a timed-out test leaves no stray process.
 - `_connect_serial` waits at most 5s for QEMU to open its serial port,
     `QmpClient` bounds every socket operation at 10s, and the `cargo build`
     in the `efi_binary` fixture is capped at `BUILD_TIMEOUT` (300s).
-- `pytest-timeout` backstops anything the above misses, at 300s per test
-    with the `signal` method. `signal` matters: it raises inside the test, so
-    pytest still reports the failure and still runs the hook that writes
-    `results.txt`. The `thread` method calls `os._exit()` and loses both.
+- `pytest-timeout` backstops the rest at 300s per test, with the `signal`
+    method so the failure is still reported and `results.txt` still written.
+    The `thread` method calls `os._exit()` and loses both.
 
 ## Logs
 
@@ -135,23 +114,17 @@ Each pytest invocation gets its own numbered, gitignored folder under
 
 - `timestamp.txt`: the exact run time.
 - `results.txt`: every test's outcome and duration, the session's exit
-    status, and the full traceback for anything that failed. A log folder
-    therefore records how the run went, not only what the guest printed.
+    status, and the full traceback for anything that failed. Durations sum
+    the setup, call and teardown phases, so a shared boot's cost shows
+    against the test that triggered it rather than every test reading 0.0s.
 - One subfolder per boot, e.g. `boot-default/`, with that boot's captured
     `serial.log` and `qemu.log`, plus the `qemu-args.txt` it was launched
     with. Boots with a TPM also get `swtpm.log`.
 
-`swtpm.log` is empty after a healthy run, which is expected rather than a
-sign of a broken capture. swtpm writes its errors straight to stderr, which
-that file captures, but emits nothing otherwise. Debug tracing is separate
-and off by default: set `DRTM_SWTPM_LOG_LEVEL` to turn it on. The only
-threshold swtpm documents is that level 5 and above activates libtpms
-debug logging, and level 20 dumps every TPM command and response, around
-38K per boot.
-
-Durations in `results.txt` sum a test's setup, call and teardown phases, so a
-shared boot's cost shows against the first test that triggered it rather than
-every test reporting 0.0s.
+`swtpm.log` is empty after a healthy run: swtpm writes errors to stderr,
+which that file captures, and emits nothing otherwise. Debug tracing is
+separate, via `DRTM_SWTPM_LOG_LEVEL`, where level 5 and above activates
+libtpms logging and 20 dumps every command (~38K per boot).
 
 Old runs are never pruned automatically, so clean out `qemu-tests/logs/` by
 hand once in a while. The run number is 4 digits; if it's exhausted, delete
@@ -181,31 +154,18 @@ Robot-Framework-specific bits stripped.
 
 ## DRTM under QEMU
 
-QEMU does not support real DRTM launches, and this is a deliberate
-limitation rather than a gap that will close. Two independent things stop
-it:
+QEMU does not support real DRTM launches, and this is deliberate rather than
+a gap that will close. `+skinit` is refused on every CPU model (TCG and KVM
+both report the feature unsupported), and QEMU's TCG decoder raises `#UD`
+for `SKINIT` unconditionally, under the comment "If not intercepted, not
+implemented" (QEMU 8.2.2, `target/i386/tcg/translate.c`).
 
-- **The feature bit cannot be set.** Forcing it on (`-cpu qemu64,+skinit`,
-    or any other model, including AMD's own `EPYC`) is refused in practice:
-    TCG answers "TCG doesn't support requested feature", and `-enable-kvm`
-    on a non-AMD host answers "host doesn't support requested feature".
-    Either way the bit ends up clear.
-- **The instruction is not implemented.** QEMU's TCG decoder recognises
-    `SKINIT`, checks the guest is allowed to execute it, then raises `#UD`
-    regardless, under the comment "If not intercepted, not implemented"
-    (QEMU 8.2.2, `target/i386/tcg/translate.c`).
-
-So DRTM-path code that reaches the instruction takes an undefined opcode
-exception. That is worth knowing precisely, because it is not a crash, not
-a silent no-op, and not something a separate no-DRTM test build has to
-avoid. What it does mean is that a launch path has to be built so the work
-around the instruction (SLB construction, memory layout, header validation)
-can be exercised here, leaving only the instruction itself for real
-hardware.
-
-Dasharo's own TrenchBoot QEMU tests never get that far: GRUB stops at its
-own precondition checks and reports "secure launch not enabled". That is
-consistent with the above rather than a gentler failure mode.
+So code reaching the instruction takes an undefined opcode exception, not a
+crash, and no separate no-DRTM build variant is needed to avoid one. Nothing
+past that point is testable here either, so a launch path has to keep the
+surrounding work (SLB construction, memory layout, header validation)
+exercisable without executing `SKINIT`. Dasharo's own TrenchBoot QEMU tests
+never get that far: GRUB stops at its own precondition checks.
 
 Dasharo's `trenchboot/*.robot` tests are a useful model for DRTM-aware test
 structure later. They run against a fully booted Linux and read PCRs from
