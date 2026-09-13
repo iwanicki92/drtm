@@ -1,0 +1,12 @@
+# Claude Code
+.claude/
+CLAUDE.local.md
+
+# VS Code
+.vscode/
+.vscode-server/
+.vscode-ctags
+*.code-workspace
+
+# Rust
+/target/
