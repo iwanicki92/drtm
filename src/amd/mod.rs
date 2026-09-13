@@ -5,3 +5,4 @@
 //! AMD-specific DRTM (`SKINIT`) precondition checks.
 
 pub mod checks;
+pub mod memory;

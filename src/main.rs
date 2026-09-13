@@ -8,6 +8,7 @@
 mod amd;
 
 use amd::checks::TpmProbe;
+use amd::memory::SlbRegion;
 use log::{error, info, warn};
 use uefi::prelude::*;
 
@@ -42,6 +43,21 @@ fn main() -> Status {
                 "drtm: [WARN] software cannot tell a discrete TPM from a \
                  firmware TPM, and SKINIT requires a discrete one, verify \
                  manually"
+            );
+        }
+    }
+
+    match amd::memory::probe_slb_region() {
+        SlbRegion::Available(address) => {
+            info!(
+                "drtm: [PASS] 64 KiB-aligned SLB region available below 4 GiB \
+                 (probed at {address:#x})"
+            );
+        }
+        SlbRegion::Unavailable(status) => {
+            error!(
+                "drtm: [FAIL] no 64 KiB-aligned SLB region available below \
+                 4 GiB ({status:?})"
             );
         }
     }

@@ -31,6 +31,8 @@ _MAX_RUN_NUMBER = 9999
 
 # The last line src/main.rs prints. Reading until this marker means the
 # capture holds every check's result rather than a partially booted guest.
+# Matched against the raw console, so it has to stay short enough to survive
+# the wrap described below.
 CHECKS_COMPLETE = "drtm: checks complete"
 
 # Generous on purpose. Measured boot-to-marker is ~11s under TCG and ~23s
@@ -43,6 +45,30 @@ BOOT_TIMEOUT = 120.0
 # A build this long means something is wedged, not slow: a from-scratch
 # debug build of this crate is seconds.
 BUILD_TIMEOUT = 300.0
+
+# Width of the UEFI text console. It hard-wraps at this column, mid-word, so
+# any log line longer than it arrives split across two.
+CONSOLE_COLUMNS = 80
+
+
+def unwrap_console(text: str) -> str:
+    """Rejoins console lines split by the 80-column hard wrap.
+
+    A segment of exactly `CONSOLE_COLUMNS` was cut short by the wrap rather
+    than ended by the guest, so it continues into the next one. Without this,
+    an assertion would have to match whichever fragment happened to fit, and
+    would break whenever the message or its `src/main.rs@NNN:` prefix changed
+    length. `serial.log` keeps the raw capture either way.
+    """
+    lines: list[str] = []
+    wrapped = False
+    for line in text.split("\r\n"):
+        if wrapped:
+            lines[-1] += line
+        else:
+            lines.append(line)
+        wrapped = len(line) == CONSOLE_COLUMNS
+    return "\n".join(lines)
 
 
 @pytest.fixture(scope="session")
@@ -109,7 +135,9 @@ def boot_and_capture(
     """
     log_dir.mkdir(parents=True, exist_ok=True)
     with QemuVm(efi_binary, log_dir=log_dir, tpm=tpm, cpu=cpu) as vm:
-        return vm.read_serial_until(CHECKS_COMPLETE, timeout=BOOT_TIMEOUT)
+        return unwrap_console(
+            vm.read_serial_until(CHECKS_COMPLETE, timeout=BOOT_TIMEOUT)
+        )
 
 
 @pytest.fixture(scope="session")

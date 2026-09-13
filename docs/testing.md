@@ -60,7 +60,14 @@ boots of identical arguments asserting on identical output.
 Each boot reads serial output until `drtm: checks complete`, the last line
 `src/main.rs` prints. Reaching that marker is what proves the binary got past
 every check instead of hanging or faulting midway, so the marker must stay in
-step with the code that emits it.
+step with the code that emits it, and must stay short enough to survive the
+wrapping described next.
+
+The UEFI console is 80 columns and hard-wraps mid-word, so a log line longer
+than that arrives as two. `boot_and_capture` rejoins the pieces before handing
+the output to tests, which lets an assertion quote the message the code
+actually logs rather than whichever fragment happened to fit. `serial.log`
+keeps the unmodified capture.
 
 For each boot, `qemu-tests/qemu_vm.py` builds a scratch working directory
 (under the system temp dir, removed on exit) containing:
