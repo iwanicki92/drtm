@@ -33,13 +33,16 @@ def _free_tcp_port() -> int:
 def _use_kvm() -> bool:
     """Whether to pass `-enable-kvm`, honouring `DRTM_QEMU_ACCEL`.
 
-    `auto` (the default) uses KVM whenever `/dev/kvm` is usable. `kvm` and
-    `tcg` force the choice, which is what makes the two comparable on a given
-    machine: KVM is not always the faster option. Under nested virtualisation
-    it loses badly to TCG here, because this guest boots with `smm=on` and
-    every SMM transition traps out through both hypervisor layers.
+    `tcg` is the default because KVM measured slower on every machine tried:
+    marginally so on bare metal, and about 2x on a nested-virtualisation
+    host. This guest boots with `smm=on`, and nested, every SMM transition
+    traps out through both hypervisor layers, while TCG emulates it in
+    userspace with no exits at all.
+
+    `kvm` forces KVM and `auto` picks it whenever `/dev/kvm` is usable, both
+    kept so the comparison can be re-run on a machine where it may not hold.
     """
-    accel = os.environ.get("DRTM_QEMU_ACCEL", "auto").lower()
+    accel = os.environ.get("DRTM_QEMU_ACCEL", "tcg").lower()
     if accel == "tcg":
         return False
     if accel == "kvm":

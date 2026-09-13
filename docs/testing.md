@@ -60,27 +60,27 @@ socket, both used by the test to interact with the VM.
 
 ## Acceleration
 
-`DRTM_QEMU_ACCEL` picks the accelerator: `auto` (the default) uses KVM
-whenever `/dev/kvm` is usable, while `kvm` and `tcg` force the choice so the
-two can be compared on a given machine.
+`DRTM_QEMU_ACCEL` picks the accelerator. `tcg` is the default, `kvm` forces
+KVM, and `auto` uses KVM whenever `/dev/kvm` is usable.
 
-KVM is not automatically the faster option. Measured boot-to-marker on a
-nested-virtualisation development host:
+TCG is the default because KVM measured slower on every machine tried. On a
+nested-virtualisation development host it is roughly 2x slower:
 
 | Mode | Boot  | Full suite |
 |------|-------|------------|
 | TCG  | 11.0s | 11.4s      |
 | KVM  | 22.7s | 23.0s      |
 
-The guest boots with `smm=on`, and Dasharo's firmware does substantial SMM
-setup. Nested, every SMM transition traps out through both hypervisor layers,
-while TCG emulates it in userspace with no exits at all. On bare metal the
-ordering is expected to flip back, which is what `DRTM_QEMU_ACCEL` is for:
-measure before assuming.
+On bare metal the gap nearly closes, but KVM is still marginally behind (a
+little over half a second on the suite). The guest boots with `smm=on` and
+Dasharo's firmware does substantial SMM setup, so nested, every SMM
+transition traps out through both hypervisor layers while TCG emulates it in
+userspace with no exits at all.
 
-Each boot writes the exact `qemu-system-x86_64` invocation to
-`qemu-args.txt` in its log folder, so two runs being compared show what
-actually differed.
+This is a measurement, not a law: `kvm` and `auto` exist so the comparison
+can be re-run somewhere it may not hold. Each boot records its
+`qemu-system-x86_64` invocation to `qemu-args.txt` in its log folder, so two
+runs compared against each other show what actually differed.
 
 ## Timeouts
 
