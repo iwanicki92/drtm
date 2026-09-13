@@ -8,12 +8,25 @@ QEMU 8.2.2 refuses to set the `skinit` CPUID feature bit under both TCG and
 KVM ("TCG doesn't support requested feature" / "host doesn't support
 requested feature"), on every CPU model tried, including AMD's own `EPYC`.
 So only the "unsupported" branch of this check can be exercised here; see
-the design spec for detail.
+the design spec for detail. Which *reason* it reports is still testable,
+since the vendor string follows the CPU model.
 """
 
 
-def test_skinit_check_fails_without_cpu_support(default_boot: str):
+def test_skinit_check_fails_and_blames_the_vendor_on_a_non_amd_cpu(
+    default_boot: str,
+):
     assert "[FAIL] SKINIT CPUID bit not set" in default_boot
+    assert "does not report itself as AMD" in default_boot
+
+
+def test_skinit_check_fails_without_blaming_the_vendor_on_an_amd_cpu(
+    amd_cpu_boot: str,
+):
+    # An AMD CPU lacking SKINIT is a different situation than a non-AMD one,
+    # and only an AMD CPU model reaches this branch.
+    assert "SKINIT unsupported on this CPU" in amd_cpu_boot
+    assert "does not report itself as AMD" not in amd_cpu_boot
 
 
 def test_tpm_check_fails_without_a_tpm_device(default_boot: str):

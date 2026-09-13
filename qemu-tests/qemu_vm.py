@@ -23,6 +23,10 @@ from qmp_client import QmpClient
 # Dasharo's own scripts/ci/qemu-run.sh does.
 _VARSTORE_ZERO_BYTES = 256
 
+# QEMU CPU model used unless a caller asks for another. Intel, so the guest
+# reads GenuineIntel from CPUID leaf 0.
+DEFAULT_CPU = "Skylake-Client"
+
 
 def _free_tcp_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -70,14 +74,25 @@ class QemuVm:
     `tpm-tis` (FIFO) or `tpm-crb` device. Leave it `None` for no TPM at all,
     which is what the platform looks like to a guest on a machine without
     one.
+
+    `cpu` is passed straight to `-cpu`, so it decides the vendor string and
+    feature bits the guest sees. Any name `qemu-system-x86_64 -cpu help`
+    lists works.
     """
 
-    def __init__(self, efi_binary: Path, log_dir: Path, tpm: str | None = None):
+    def __init__(
+        self,
+        efi_binary: Path,
+        log_dir: Path,
+        tpm: str | None = None,
+        cpu: str = DEFAULT_CPU,
+    ):
         if tpm not in (None, "tis", "crb"):
             raise ValueError(f"tpm must be None, 'tis' or 'crb', got {tpm!r}")
         self.efi_binary = Path(efi_binary)
         self.log_dir = Path(log_dir)
         self.tpm = tpm
+        self.cpu = cpu
         self._workdir = None
         self._process = None
         self._swtpm_process = None
@@ -120,7 +135,7 @@ class QemuVm:
             "-machine",
             "q35,smm=on",
             "-cpu",
-            "Skylake-Client",
+            self.cpu,
             "-m",
             "1G",
             "-global",

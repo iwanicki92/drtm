@@ -35,12 +35,16 @@ existing ones growing parameters.
 
 | Fixture        | Configuration                                      |
 |----------------|----------------------------------------------------|
-| `default_boot` | No TPM device                                      |
+| `default_boot` | No TPM device, Intel CPU model (`Skylake-Client`)  |
+| `amd_cpu_boot` | No TPM device, AMD CPU model (`EPYC`)              |
 | `tpm_tis_boot` | `swtpm`-backed TPM 2.0 on the FIFO (TIS) interface |
 | `tpm_crb_boot` | `swtpm`-backed TPM 2.0 on the CRB interface        |
 
-All three use a CPU model reporting neither AMD nor `SKINIT`, since QEMU
-will not set that feature bit (see above).
+No configuration reports `SKINIT` support, since QEMU will not set that
+feature bit on any CPU model (see above). The CPU model still decides the
+vendor string, so `default_boot` and `amd_cpu_boot` between them cover both
+reasons the check can fail: a CPU that is not AMD at all, and an AMD CPU
+without the feature.
 
 The two TPM configurations exist because the check reports a different
 interface for each, and getting that wrong is not hypothetical: reading

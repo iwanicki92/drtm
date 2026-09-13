@@ -20,7 +20,7 @@ from datetime import datetime
 from pathlib import Path
 
 import pytest
-from qemu_vm import QemuVm
+from qemu_vm import DEFAULT_CPU, QemuVm
 
 REPO_ROOT = Path(__file__).parent.parent
 EFI_BINARY = REPO_ROOT / "target" / "x86_64-unknown-uefi" / "debug" / "drtm.efi"
@@ -95,7 +95,12 @@ def run_log_dir() -> Path:
     return _get_run_log_dir()
 
 
-def boot_and_capture(efi_binary: Path, log_dir: Path, tpm: str | None = None) -> str:
+def boot_and_capture(
+    efi_binary: Path,
+    log_dir: Path,
+    tpm: str | None = None,
+    cpu: str = DEFAULT_CPU,
+) -> str:
     """Boots `efi_binary` once and returns everything it printed.
 
     Shared by the per-configuration boot fixtures below. A configuration
@@ -103,7 +108,7 @@ def boot_and_capture(efi_binary: Path, log_dir: Path, tpm: str | None = None) ->
     matching parameter here and on `QemuVm`.
     """
     log_dir.mkdir(parents=True, exist_ok=True)
-    with QemuVm(efi_binary, log_dir=log_dir, tpm=tpm) as vm:
+    with QemuVm(efi_binary, log_dir=log_dir, tpm=tpm, cpu=cpu) as vm:
         return vm.read_serial_until(CHECKS_COMPLETE, timeout=BOOT_TIMEOUT)
 
 
@@ -113,6 +118,17 @@ def default_boot(run_log_dir: Path, efi_binary: Path) -> str:
     device attached, and a CPU model that reports neither AMD nor `SKINIT`.
     """
     return boot_and_capture(efi_binary, run_log_dir / "boot-default")
+
+
+@pytest.fixture(scope="session")
+def amd_cpu_boot(run_log_dir: Path, efi_binary: Path) -> str:
+    """Serial output of one boot on an AMD CPU model, with no TPM device.
+
+    QEMU still refuses to set the `SKINIT` bit on `EPYC`, but the guest does
+    read `AuthenticAMD`, which is the only way to reach the AMD branch of the
+    `SKINIT` check.
+    """
+    return boot_and_capture(efi_binary, run_log_dir / "boot-amd-cpu", cpu="EPYC")
 
 
 @pytest.fixture(scope="session")
