@@ -11,6 +11,7 @@ import shutil
 import socket
 import subprocess
 import tempfile
+import threading
 import time
 from pathlib import Path
 
@@ -39,6 +40,11 @@ class QemuVm:
     `log_dir` receives the QEMU process's own stdout/stderr (`qemu.log`) and
     the raw serial console capture (`serial.log`), written as they arrive so
     they're useful even if the test times out or crashes.
+
+    A background thread drains the serial console for the whole life of the
+    `with` block, independent of what `read_serial_until` is waiting for, so
+    `serial.log` captures everything the guest printed up to teardown, not
+    just up to the first matched string.
     """
 
     def __init__(self, efi_binary: Path, log_dir: Path):
@@ -49,6 +55,10 @@ class QemuVm:
         self._serial_sock = None
         self._serial_log_f = None
         self._qemu_log_f = None
+        self._serial_buf = bytearray()
+        self._serial_buf_lock = threading.Lock()
+        self._serial_reader = None
+        self._stop_reading = threading.Event()
         self.qmp = None
 
     def __enter__(self):
@@ -106,6 +116,11 @@ class QemuVm:
         self._qmp_sock_path = qmp_sock
         self.qmp = QmpClient(qmp_sock)
         self._serial_sock = self._connect_serial(serial_port)
+        self._serial_sock.settimeout(0.2)
+        self._serial_reader = threading.Thread(
+            target=self._read_serial_loop, daemon=True
+        )
+        self._serial_reader.start()
         return self
 
     def _connect_serial(self, port, timeout=5.0):
@@ -119,39 +134,53 @@ class QemuVm:
                 time.sleep(0.1)
         raise TimeoutError(f"QEMU never opened its serial port: {last_error}")
 
-    def read_serial_until(self, needle: str, timeout: float = 40.0) -> str:
-        """Reads from the serial console until `needle` appears, or raises
-        TimeoutError with everything read so far."""
-        assert self._serial_sock is not None, (
-            "read_serial_until() outside a `with` block"
-        )
-        assert self._serial_log_f is not None, (
-            "read_serial_until() outside a `with` block"
-        )
-        needle_bytes = needle.encode()
-        buf = b""
-        self._serial_sock.settimeout(0.2)
-        deadline = time.monotonic() + timeout
-        while time.monotonic() < deadline:
-            if needle_bytes in buf:
-                return buf.decode("utf-8", "replace")
+    def _read_serial_loop(self):
+        """Runs in a background thread for the life of the `with` block,
+        continuously draining the serial socket into `serial.log` and the
+        in-memory buffer `read_serial_until` polls."""
+        assert self._serial_sock is not None
+        assert self._serial_log_f is not None
+        while not self._stop_reading.is_set():
             try:
                 chunk = self._serial_sock.recv(65536)
             except TimeoutError:
                 continue
+            except OSError:
+                # Socket closed from __exit__ while recv() was blocked.
+                break
             if not chunk:
                 break
-            buf += chunk
             self._serial_log_f.write(chunk)
             self._serial_log_f.flush()
+            with self._serial_buf_lock:
+                self._serial_buf.extend(chunk)
+
+    def read_serial_until(self, needle: str, timeout: float = 40.0) -> str:
+        """Waits until `needle` appears anywhere in the serial output seen so
+        far, or raises TimeoutError with everything read so far."""
+        assert self._serial_reader is not None, (
+            "read_serial_until() outside a `with` block"
+        )
+        needle_bytes = needle.encode()
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            with self._serial_buf_lock:
+                if needle_bytes in self._serial_buf:
+                    return bytes(self._serial_buf).decode("utf-8", "replace")
+            time.sleep(0.05)
+        with self._serial_buf_lock:
+            buf = bytes(self._serial_buf)
         raise TimeoutError(
             f"Timed out waiting for {needle!r} on serial console. "
             f"Read so far:\n{buf.decode('utf-8', 'replace')}"
         )
 
     def __exit__(self, exc_type, exc_value, traceback):
+        self._stop_reading.set()
         if self._serial_sock is not None:
             self._serial_sock.close()
+        if self._serial_reader is not None:
+            self._serial_reader.join(timeout=5)
         if self._process is not None:
             self._process.terminate()
             try:
