@@ -2,17 +2,29 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""Session-wide fixtures for per-run log directories under `logs/`."""
+"""Session-wide fixtures for per-run log directories under `logs/` and for
+building the `drtm` EFI binary once per test session.
+"""
 
 import re
+import subprocess
 from datetime import datetime
 from pathlib import Path
 
 import pytest
 
+REPO_ROOT = Path(__file__).parent.parent
+EFI_BINARY = REPO_ROOT / "target" / "x86_64-unknown-uefi" / "debug" / "drtm.efi"
+
 LOGS_DIR = Path(__file__).parent / "logs"
 _RUN_DIR_RE = re.compile(r"^(\d{4})-")
 _MAX_RUN_NUMBER = 9999
+
+
+@pytest.fixture(scope="session")
+def efi_binary() -> Path:
+    subprocess.run(["cargo", "build"], cwd=REPO_ROOT, check=True)
+    return EFI_BINARY
 
 
 def _next_run_number() -> int:

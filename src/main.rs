@@ -5,7 +5,9 @@
 #![no_main]
 #![no_std]
 
-use log::info;
+mod amd;
+
+use log::{error, info};
 use uefi::prelude::*;
 
 #[entry]
@@ -13,6 +15,15 @@ fn main() -> Status {
     uefi::helpers::init().unwrap();
 
     info!("drtm: hello from UEFI");
+
+    if amd::checks::skinit_supported() {
+        info!("drtm: [PASS] SKINIT CPUID bit set (CPUID.80000001:ECX[12])");
+    } else {
+        error!(
+            "drtm: [FAIL] SKINIT CPUID bit not set (CPUID.80000001:ECX[12]), \
+             SKINIT unsupported on this CPU"
+        );
+    }
 
     Status::SUCCESS
 }
