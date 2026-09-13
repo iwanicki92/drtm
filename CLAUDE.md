@@ -5,9 +5,29 @@ code in this repository.
 
 ## Project status
 
-No code yet — only `README.md` and this file. There is no build system
-(`Cargo.toml`, etc.) in place, so there are no build/lint/test commands to
-document until that scaffolding exists.
+Base scaffolding only: a `no_std`/`no_main` UEFI binary that logs a line and
+returns, plus a QEMU smoke test proving it boots. No DRTM logic yet.
+
+## Commands
+
+The Rust toolchain and Python venv are not on `/`, since this machine is a VM
+with a small rootfs (see the machine-wide instructions) — put them on PATH
+before running anything:
+
+```sh
+export RUSTUP_HOME=/home/iwans/workspace/rust/.rustup
+export CARGO_HOME=/home/iwans/workspace/rust/.cargo
+export PATH="$CARGO_HOME/bin:$PATH"
+```
+
+- Build the EFI binary: `cargo build` (target is `x86_64-unknown-uefi`, set
+  via `.cargo/config.toml`; output at
+  `target/x86_64-unknown-uefi/debug/drtm.efi`).
+- Run the QEMU smoke test: `.venv-vm/bin/pytest qemu-tests/` (builds the
+  binary itself first). `.venv-vm` is a Python venv local to this repo, kept
+  out of `.venv` on purpose — see its `.gitignore` comment.
+- First run of the test suite downloads Dasharo's QEMU Q35 firmware image
+  into `qemu-tests/dl-cache/` (a few MB, gitignored, cached after that).
 
 ## What this is
 
@@ -52,12 +72,13 @@ reporting) can be built without re-litigating them later:
 - SKINIT (and equivalent) tears down normal UEFI execution, so the embedded
   stub cannot rely on UEFI console/boot services to report results. It writes
   results directly to the serial UART before halting or resetting.
-- On real hardware, the tool runs unattended/scripted: something external
-  (a test rig) captures and parses the serial output rather than a human
-  watching it interactively. Output should therefore carry both a
-  human-readable form and a machine-parseable form (e.g. plain log lines for
-  people, plus a structured — JSON or similar — summary/result line for the
-  rig). Exact format is still open.
+- On real hardware, the tool is most often run by hand. Output should still
+  carry both a human-readable form and a machine-parseable form (e.g. plain
+  log lines for people, plus a structured — JSON or similar — summary/result
+  line a test rig could parse), so it stays useful if it does get scripted
+  later. Prefer a single binary with an argument selecting the output mode;
+  fall back to two separate binaries only if that turns out impractical.
+  Exact format is still open.
 
 ## Testing strategy
 
@@ -77,15 +98,19 @@ are supported, to prove the UEFI application itself boots and runs correctly:
   OVMF. It is a more feature-complete, open-source UEFI implementation
   (already used by Dasharo to test TrenchBoot itself), which leaves room to
   grow into TPM/DRTM-adjacent QEMU testing later without switching firmware.
-- Robot Framework is the test runner, driving QEMU over its serial console
-  (exposed via `-serial telnet:...`, as Dasharo does) and controlling the VM
-  over its QMP socket for things like reset. Reference implementation:
-  Dasharo/open-source-firmware-validation — see `scripts/ci/qemu-run.sh` for
-  the QEMU invocation, `lib/QemuMonitor.py` for the QMP-over-Robot-Framework
-  library pattern, and `trenchboot/*.robot` for how they structure DRTM-aware
-  test suites (their tests run against a fully booted Linux and read PCRs
-  from `/sys/class/tpm/tpm0/pcr-*` and the event log from
-  `/sys/kernel/security/slaunch/eventlog` — not applicable verbatim to us
-  since we don't boot a full OS, but useful as a model).
+- Tests are plain `pytest`, not Robot Framework: RF's test-case syntax is
+  `.robot` files, which is more ceremony than this project wants. QEMU is
+  driven over its serial console, exposed as a raw TCP socket
+  (`-serial tcp:...`, not `telnet:...`, to avoid depending on Python's
+  removed/deprecated `telnetlib`), plus its QMP socket for VM control (reset,
+  quit). See `qemu-tests/qemu_vm.py`.
+- `qemu-tests/qmp_client.py` is adapted from
+  Dasharo/open-source-firmware-validation's `lib/QemuMonitor.py` (Apache-2.0;
+  see its SPDX header and the repo's `NOTICE` file) with the Robot-Framework
+  specific bits stripped. Dasharo's `trenchboot/*.robot` tests are a useful
+  model for DRTM-aware test structure later (they run against a fully booted
+  Linux and read PCRs from `/sys/class/tpm/tpm0/pcr-*` and the event log from
+  `/sys/kernel/security/slaunch/eventlog`), though not applicable verbatim
+  since we don't boot a full OS.
 - A separate future project may add simple DRTM emulation to QEMU itself;
   that is out of scope here.
