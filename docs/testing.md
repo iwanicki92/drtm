@@ -5,20 +5,15 @@ are supported, to prove the UEFI application itself boots and runs correctly.
 
 ## Running
 
-`cargo` must be on `PATH` (the test fixture builds the binary itself). Create
-and activate the venv once:
+`cargo` must be on `PATH` (the test fixture builds the binary itself). Test
+dependencies are managed by [uv](https://docs.astral.sh/uv/) via
+`qemu-tests/pyproject.toml`, no separate venv setup needed:
 
 ```sh
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r qemu-tests/requirements.txt
+uv run --project qemu-tests pytest qemu-tests
 ```
 
-Then, with the venv active:
-
-```sh
-pytest qemu-tests/
-```
+`uv` creates and reuses `qemu-tests/.venv` on its own.
 
 The first run downloads Dasharo's QEMU Q35 firmware image into
 `qemu-tests/dl-cache/` (a few MB, gitignored, cached after that).

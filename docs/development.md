@@ -19,8 +19,8 @@ System packages needed alongside it:
   `proc-macro2`, `quote`) compile for the host target and need a C linker
   (`cc`) even though the final binary targets `x86_64-unknown-uefi`, which
   doesn't need one.
-- `python3.12-venv` (or whatever matches the system Python): to create
-  `.venv`, see `docs/testing.md`.
+- [`uv`](https://docs.astral.sh/uv/): manages the Python test dependencies
+  and their virtual environment, see `docs/testing.md`.
 - `qemu-system-x86_64`: for the test suite.
 
 ## Task runner
@@ -33,9 +33,6 @@ task build
 task lint
 task test
 ```
-
-`task test` runs `pytest` from whatever's on `PATH`, so activate the venv
-(`source .venv/bin/activate`, see `docs/testing.md`) before running it.
 
 These just wrap the commands below, so using them directly works too.
 

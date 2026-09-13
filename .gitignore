@@ -11,11 +11,8 @@ CLAUDE.local.md
 # Rust
 /target/
 
-# Python (test harness). .venv-vm is an alternate name used when building
-# the venv from inside a VM on a host-shared mount, to avoid collisions with
-# host-side tooling that auto-detects .venv.
+# Python (test harness), managed by uv
 .venv/
-.venv-vm/
 __pycache__/
 .pytest_cache/
 .ruff_cache/

@@ -19,7 +19,8 @@ proving it does. No DRTM launch logic yet. See
 
 - Rust via [rustup](https://rustup.rs/), with the `x86_64-unknown-uefi`
     target added.
-- `qemu-system-x86_64` and a Python 3 venv, for the test suite.
+- `qemu-system-x86_64` and [uv](https://docs.astral.sh/uv/), for the test
+    suite.
 
 See [docs/development.md](docs/development.md) for setup details.
 
@@ -28,7 +29,7 @@ See [docs/development.md](docs/development.md) for setup details.
 ```sh
 task build   # cargo build -> target/x86_64-unknown-uefi/debug/drtm.efi
 task lint    # pre-commit run --all-files
-task test    # pytest qemu-tests/ (builds the binary itself first)
+task test    # uv run pytest qemu-tests/ (builds the binary itself first)
 ```
 
 `task` is optional. Each wraps a plain command documented in
