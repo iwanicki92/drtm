@@ -7,7 +7,8 @@
 
 mod amd;
 
-use log::{error, info};
+use amd::checks::TpmProbe;
+use log::{error, info, warn};
 use uefi::prelude::*;
 
 #[entry]
@@ -23,6 +24,23 @@ fn main() -> Status {
             "drtm: [FAIL] SKINIT CPUID bit not set (CPUID.80000001:ECX[12]), \
              SKINIT unsupported on this CPU"
         );
+    }
+
+    match amd::checks::probe_tpm() {
+        TpmProbe::NotPresent => {
+            error!("drtm: [FAIL] no TPM answered at locality 0 (0xFED40000)");
+        }
+        TpmProbe::Present { family, interface } => {
+            info!(
+                "drtm: [PASS] TPM present at locality 0: {family:?} {interface:?} \
+                 (cannot tell discrete vs. firmware TPM from software; SKINIT \
+                 requires a discrete TPM)"
+            );
+            warn!(
+                "drtm: [WARN] TPM presence does not confirm it is discrete, \
+                 verify manually"
+            );
+        }
     }
 
     Status::SUCCESS
