@@ -1,4 +1,8 @@
 {
+    // SPDX-FileCopyrightText: 2026 iwanicki92 <iwanicki92@gmail.com>
+    //
+    // SPDX-License-Identifier: Apache-2.0
+
     // Encodes the house style from the markdown-style skill, so pre-commit
     // and CI enforce the same rules as local development.
     "config": {

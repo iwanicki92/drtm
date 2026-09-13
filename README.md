@@ -1,3 +1,9 @@
+<!--
+SPDX-FileCopyrightText: 2026 iwanicki92 <iwanicki92@gmail.com>
+
+SPDX-License-Identifier: Apache-2.0
+-->
+
 # DRTM
 
 A single-binary tool for testing DRTM (Dynamic Root of Trust for
@@ -42,3 +48,8 @@ task test    # uv run pytest qemu-tests/ (builds the binary itself first)
 - [docs/testing.md](docs/testing.md): how the QEMU test suite works and why.
 - [docs/development.md](docs/development.md): toolchain setup and repo
     layout.
+
+## License
+
+Apache-2.0, see [LICENSE](LICENSE). `qemu-tests/qmp_client.py` is adapted
+from third-party Apache-2.0 code, see [NOTICE](NOTICE).

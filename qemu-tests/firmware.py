@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 iwanicki92 <iwanicki92@gmail.com>
+#
+# SPDX-License-Identifier: Apache-2.0
+
 """Fetches and caches the Dasharo QEMU Q35 firmware image used for tests.
 
 We use Dasharo's coreboot+UEFI build instead of stock OVMF: it is a more

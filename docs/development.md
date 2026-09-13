@@ -1,3 +1,9 @@
+<!--
+SPDX-FileCopyrightText: 2026 iwanicki92 <iwanicki92@gmail.com>
+
+SPDX-License-Identifier: Apache-2.0
+-->
+
 # Development
 
 ## Toolchain setup
@@ -59,6 +65,15 @@ pre-commit run --all-files    # run everything once, e.g. after cloning
 
 `cargo-fmt` and `cargo-clippy` hooks shell out to the local toolchain
 directly, so `rustup component add rustfmt clippy` is needed once too.
+
+## Licensing
+
+The project is Apache-2.0 (`LICENSE`, a symlink into `LICENSES/`) and aims
+for [REUSE](https://reuse.software/) compliance, checked by the `reuse`
+pre-commit hook. New files need an `SPDX-FileCopyrightText` /
+`SPDX-License-Identifier` header (see any existing file for the style); for
+ones that cannot carry a header (generated lockfiles, `NOTICE`), add an
+entry to `REUSE.toml` instead.
 
 ## Testing
 

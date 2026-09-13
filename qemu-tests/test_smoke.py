@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 iwanicki92 <iwanicki92@gmail.com>
+#
+# SPDX-License-Identifier: Apache-2.0
+
 """Boots the drtm binary in QEMU and checks it runs without crashing.
 
 Uses Dasharo's coreboot+UEFI firmware for QEMU Q35 rather than stock OVMF.
