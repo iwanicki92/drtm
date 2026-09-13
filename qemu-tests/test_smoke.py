@@ -1,7 +1,7 @@
 """Boots the drtm binary in QEMU and checks it runs without crashing.
 
-Uses Dasharo's coreboot+UEFI firmware for QEMU Q35 rather than stock OVMF —
-see CLAUDE.md and firmware.py for why.
+Uses Dasharo's coreboot+UEFI firmware for QEMU Q35 rather than stock OVMF.
+See CLAUDE.md and firmware.py for why.
 """
 
 import subprocess

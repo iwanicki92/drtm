@@ -12,7 +12,7 @@ it worked.
 ## Status
 
 Early scaffolding: a UEFI binary that boots and logs a line, plus a QEMU test
-proving it does. No DRTM launch logic yet — see
+proving it does. No DRTM launch logic yet. See
 [docs/design.md](docs/design.md) for the planned scope.
 
 ## Requirements
@@ -31,13 +31,13 @@ task lint    # pre-commit run --all-files
 task test    # pytest qemu-tests/ (builds the binary itself first)
 ```
 
-`task` is optional; each wraps a plain command documented in
+`task` is optional. Each wraps a plain command documented in
 [docs/development.md](docs/development.md).
 
 ## More
 
-- [docs/design.md](docs/design.md) — target scope, architecture, and DRTM
+- [docs/design.md](docs/design.md): target scope, architecture, and DRTM
     launch design decisions.
-- [docs/testing.md](docs/testing.md) — how the QEMU test suite works and why.
-- [docs/development.md](docs/development.md) — toolchain setup and repo
+- [docs/testing.md](docs/testing.md): how the QEMU test suite works and why.
+- [docs/development.md](docs/development.md): toolchain setup and repo
     layout.

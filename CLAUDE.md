@@ -14,23 +14,23 @@ further documents describing it. Current work is limited to non-DRTM
 scaffolding.
 
 For the "why" behind the project and its testing setup, see `docs/design.md`
-and `docs/testing.md` — this file only covers agent-operational specifics.
+and `docs/testing.md`. This file only covers agent-operational specifics.
 
 ## Commands
 
 Requires `cargo`/`rustc` (via rustup, with the `x86_64-unknown-uefi` target
 added) on `PATH`. If this machine's Rust toolchain lives somewhere other than
 the default `~/.rustup`/`~/.cargo`, set `RUSTUP_HOME`/`CARGO_HOME`
-accordingly first — check for a machine-specific note before assuming
+accordingly first. Check for a machine-specific note before assuming
 defaults.
 
 - Build the EFI binary: `cargo build` (target is `x86_64-unknown-uefi`, set
-    via `.cargo/config.toml`; output at
+    via `.cargo/config.toml`, output at
     `target/x86_64-unknown-uefi/debug/drtm.efi`).
 - Run the QEMU smoke test: `.venv-vm/bin/pytest qemu-tests/` (builds the
     binary itself first). See `docs/testing.md` for details.
 - Lint everything: `pre-commit run --all-files` (config in
-    `.pre-commit-config.yaml`; needs `pre-commit install` once, plus
+    `.pre-commit-config.yaml`, needs `pre-commit install` once, plus
     `rustup component add rustfmt clippy`).
 - `task build`/`task lint`/`task test` (Taskfile.yml) wrap the three commands
     above.

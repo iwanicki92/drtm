@@ -25,6 +25,11 @@ repos:
     hooks:
       - id: markdownlint-cli2
 
+  - repo: https://github.com/3mdeb/hooks
+    rev: v0.2.2
+    hooks:
+      - id: replace-hyphen-like
+
   - repo: https://github.com/fsfe/reuse-tool
     rev: v6.2.0
     hooks:

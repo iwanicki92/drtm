@@ -37,7 +37,7 @@ depending on Python's removed/deprecated `telnetlib`, which RF's own
 See `qemu-tests/qemu_vm.py`.
 
 `qemu-tests/qmp_client.py` is adapted from
-Dasharo/open-source-firmware-validation's `lib/QemuMonitor.py` (Apache-2.0 —
+Dasharo/open-source-firmware-validation's `lib/QemuMonitor.py` (Apache-2.0,
 see its SPDX header and this repo's `NOTICE` file), with the
 Robot-Framework-specific bits stripped.
 
@@ -45,7 +45,7 @@ Robot-Framework-specific bits stripped.
 
 QEMU does not support real DRTM launches. Real DRTM-path code will either
 need to be stubbed out for QEMU builds (a no-DRTM test build variant) or is
-expected to fault/crash under QEMU — which of these applies depends on how
+expected to fault/crash under QEMU. Which of these applies depends on how
 the DRTM instructions actually behave when executed in QEMU, and should be
 verified rather than assumed. Dasharo's own TrenchBoot QEMU tests suggest the
 failure is graceful and happens before the DRTM instruction executes (GRUB
@@ -53,10 +53,10 @@ reports "secure launch not enabled" rather than the VM crashing), but this
 should be confirmed for our own launch path rather than assumed.
 
 Dasharo's `trenchboot/*.robot` tests are a useful model for DRTM-aware test
-structure later — they run against a fully booted Linux and read PCRs from
+structure later. They run against a fully booted Linux and read PCRs from
 `/sys/class/tpm/tpm0/pcr-*` and the event log from
-`/sys/kernel/security/slaunch/eventlog` — though not applicable verbatim
+`/sys/kernel/security/slaunch/eventlog`, though not applicable verbatim
 since we don't boot a full OS.
 
-A separate future project may add simple DRTM emulation to QEMU itself; that
-is out of scope here.
+A separate future project may add simple DRTM emulation to QEMU itself.
+That is out of scope here.
