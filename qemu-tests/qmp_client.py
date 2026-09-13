@@ -1,5 +1,5 @@
 # SPDX-FileCopyrightText: 2024 3mdeb <contact@3mdeb.com>
-# SPDX-FileCopyrightText: 2026 iwans
+# SPDX-FileCopyrightText: 2026 iwanicki92 <iwanicki92@gmail.com>
 #
 # SPDX-License-Identifier: Apache-2.0
 #
