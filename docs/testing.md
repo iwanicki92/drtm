@@ -18,6 +18,24 @@ uv run --project qemu-tests pytest qemu-tests
 The first run downloads Dasharo's QEMU Q35 firmware image into
 `qemu-tests/dl-cache/` (a few MB, gitignored, cached after that).
 
+## How the VM is set up
+
+For each test, `qemu-tests/qemu_vm.py` builds a scratch working directory
+(under the system temp dir, removed on exit) containing:
+
+- `esp/EFI/BOOT/BOOTX64.EFI`: a copy of the built `drtm.efi`, placed where
+    UEFI's removable-media boot path picks it up automatically, so it needs
+    no boot entry or bootloader.
+- `firmware.rom`: a copy of the cached Dasharo firmware image, with its
+    variable store (the first 256 bytes) zeroed so settings like boot order
+    reset to defaults on every run.
+
+It then launches `qemu-system-x86_64` on a Q35 machine, with that ESP
+attached as a FAT-formatted drive and that firmware image as pflash. Serial
+is exposed on a raw TCP port (see below) and QMP on a short-lived Unix
+socket, both used by the test to interact with the VM. KVM acceleration is
+used automatically when `/dev/kvm` is accessible.
+
 ## Logs
 
 Each pytest invocation gets its own numbered, gitignored folder under
