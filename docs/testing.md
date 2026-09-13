@@ -26,13 +26,28 @@ The first run downloads Dasharo's QEMU Q35 firmware image into
 
 ## How the VM is set up
 
-Booting takes around 25 seconds, so tests do not boot QEMU themselves. A
+Booting takes around 11 seconds, so tests do not boot QEMU themselves. A
 session-scoped fixture in `qemu-tests/conftest.py` boots once per distinct
 QEMU configuration and yields that boot's complete serial output as a string,
-which tests then assert against. `default_boot` is the only such fixture for
-now: no TPM device, and a CPU model reporting neither AMD nor `SKINIT`. A
-configuration needing different QEMU arguments gets its own fixture calling
-`boot_and_capture`, rather than the existing one growing parameters.
+which tests then assert against. A configuration needing different QEMU
+arguments gets its own fixture calling `boot_and_capture`, rather than the
+existing ones growing parameters.
+
+| Fixture        | Configuration                                      |
+|----------------|----------------------------------------------------|
+| `default_boot` | No TPM device                                      |
+| `tpm_tis_boot` | `swtpm`-backed TPM 2.0 on the FIFO (TIS) interface |
+| `tpm_crb_boot` | `swtpm`-backed TPM 2.0 on the CRB interface        |
+
+All three use a CPU model reporting neither AMD nor `SKINIT`, since QEMU
+will not set that feature bit (see above).
+
+The two TPM configurations exist because the check reports a different
+interface for each, and getting that wrong is not hypothetical: reading
+`TPM_INTF_CAPABILITY` before establishing the active interface made a CRB
+TPM report as `V1_2 Tis`, since offset `0x14` holds `TPM_DATA_CSUM` under
+the CRB layout. Reverting that fix turns `test_tpm_check_detects_a_crb_tpm`
+red, which is the point of testing both.
 
 The trade-off is that tests sharing a boot fail together if that boot does,
 which is the honest result: they were never independent, they were repeated
@@ -113,7 +128,15 @@ Each pytest invocation gets its own numbered, gitignored folder under
     therefore records how the run went, not only what the guest printed.
 - One subfolder per boot, e.g. `boot-default/`, with that boot's captured
     `serial.log` and `qemu.log`, plus the `qemu-args.txt` it was launched
-    with.
+    with. Boots with a TPM also get `swtpm.log`.
+
+`swtpm.log` is empty after a healthy run, which is expected rather than a
+sign of a broken capture. swtpm writes its errors straight to stderr, which
+that file captures, but emits nothing otherwise. Debug tracing is separate
+and off by default: set `DRTM_SWTPM_LOG_LEVEL` to turn it on. The only
+threshold swtpm documents is that level 5 and above activates libtpms
+debug logging, and level 20 dumps every TPM command and response, around
+38K per boot.
 
 Durations in `results.txt` sum a test's setup, call and teardown phases, so a
 shared boot's cost shows against the first test that triggered it rather than

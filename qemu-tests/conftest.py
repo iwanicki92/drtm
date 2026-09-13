@@ -95,7 +95,7 @@ def run_log_dir() -> Path:
     return _get_run_log_dir()
 
 
-def boot_and_capture(efi_binary: Path, log_dir: Path) -> str:
+def boot_and_capture(efi_binary: Path, log_dir: Path, tpm: str | None = None) -> str:
     """Boots `efi_binary` once and returns everything it printed.
 
     Shared by the per-configuration boot fixtures below. A configuration
@@ -103,7 +103,7 @@ def boot_and_capture(efi_binary: Path, log_dir: Path) -> str:
     matching parameter here and on `QemuVm`.
     """
     log_dir.mkdir(parents=True, exist_ok=True)
-    with QemuVm(efi_binary, log_dir=log_dir) as vm:
+    with QemuVm(efi_binary, log_dir=log_dir, tpm=tpm) as vm:
         return vm.read_serial_until(CHECKS_COMPLETE, timeout=BOOT_TIMEOUT)
 
 
@@ -113,6 +113,22 @@ def default_boot(run_log_dir: Path, efi_binary: Path) -> str:
     device attached, and a CPU model that reports neither AMD nor `SKINIT`.
     """
     return boot_and_capture(efi_binary, run_log_dir / "boot-default")
+
+
+@pytest.fixture(scope="session")
+def tpm_tis_boot(run_log_dir: Path, efi_binary: Path) -> str:
+    """Serial output of one boot with an `swtpm`-backed TPM 2.0 on the FIFO
+    (TIS) interface.
+    """
+    return boot_and_capture(efi_binary, run_log_dir / "boot-tpm-tis", tpm="tis")
+
+
+@pytest.fixture(scope="session")
+def tpm_crb_boot(run_log_dir: Path, efi_binary: Path) -> str:
+    """Serial output of one boot with an `swtpm`-backed TPM 2.0 on the CRB
+    interface.
+    """
+    return boot_and_capture(efi_binary, run_log_dir / "boot-tpm-crb", tpm="crb")
 
 
 _reports: list[pytest.TestReport] = []

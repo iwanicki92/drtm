@@ -9,6 +9,12 @@ SPDX-License-Identifier: Apache-2.0
 This file provides guidance to Claude Code (claude.ai/code) when working with
 code in this repository.
 
+## Comments
+
+Two or three lines, maximum. State what is true now, not how it was found
+out, what was tried, or a spec quoted verbatim. Anything longer belongs in
+`docs/`, not inline.
+
 ## Project status
 
 Base scaffolding only: a `no_std`/`no_main` UEFI binary that logs a line and

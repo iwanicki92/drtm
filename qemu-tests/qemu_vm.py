@@ -65,13 +65,24 @@ class QemuVm:
     `with` block, independent of what `read_serial_until` is waiting for, so
     `serial.log` captures everything the guest printed up to teardown, not
     just up to the first matched string.
+
+    `tpm` attaches an emulated TPM 2.0 backed by `swtpm`, as either a
+    `tpm-tis` (FIFO) or `tpm-crb` device. Leave it `None` for no TPM at all,
+    which is what the platform looks like to a guest on a machine without
+    one.
     """
 
-    def __init__(self, efi_binary: Path, log_dir: Path):
+    def __init__(self, efi_binary: Path, log_dir: Path, tpm: str | None = None):
+        if tpm not in (None, "tis", "crb"):
+            raise ValueError(f"tpm must be None, 'tis' or 'crb', got {tpm!r}")
         self.efi_binary = Path(efi_binary)
         self.log_dir = Path(log_dir)
+        self.tpm = tpm
         self._workdir = None
         self._process = None
+        self._swtpm_process = None
+        self._swtpm_log_f = None
+        self._swtpm_sock_path = None
         self._serial_sock = None
         self._serial_log_f = None
         self._qemu_log_f = None
@@ -126,6 +137,18 @@ class QemuVm:
             f"unix:{qmp_sock},server,nowait",
             "-nographic",
         ]
+        if self.tpm is not None:
+            self._swtpm_log_f = open(self.log_dir / "swtpm.log", "wb")
+            swtpm_sock = self._start_swtpm()
+            args += [
+                "-chardev",
+                f"socket,id=chrtpm,path={swtpm_sock}",
+                "-tpmdev",
+                "emulator,id=tpm0,chardev=chrtpm",
+                "-device",
+                f"tpm-{self.tpm},tpmdev=tpm0",
+            ]
+
         if _use_kvm():
             args.append("-enable-kvm")
 
@@ -147,6 +170,58 @@ class QemuVm:
         )
         self._serial_reader.start()
         return self
+
+    def _start_swtpm(self) -> str:
+        """Starts `swtpm` on a Unix socket and returns that socket's path.
+
+        QEMU's `emulator` TPM backend drives swtpm over its control channel,
+        so the same socket serves both. Follows Dasharo's own recipe in
+        `Dasharo/open-source-firmware-validation:scripts/ci/qemu-run.sh`.
+        """
+        assert self._workdir is not None
+        state_dir = Path(self._workdir) / "swtpm-state"
+        state_dir.mkdir()
+        # Same AF_UNIX path length limit as QMP below, so reserve a short
+        # unique path instead of one under the long per-test workdir.
+        fd, sock = tempfile.mkstemp(prefix="drtm-swtpm-", suffix=".sock")
+        os.close(fd)
+        os.unlink(sock)
+
+        swtpm_args = [
+            "swtpm",
+            "socket",
+            "--tpm2",
+            "--tpmstate",
+            f"dir={state_dir}",
+            "--ctrl",
+            f"type=unixio,path={sock}",
+        ]
+        # Errors go to stderr regardless of --log, so an empty swtpm.log
+        # means a clean run. --log adds debug tracing only: level 5+ enables
+        # libtpms logging, 20 dumps every command (~38K per boot).
+        level = os.environ.get("DRTM_SWTPM_LOG_LEVEL")
+        if level:
+            swtpm_args += ["--log", f"fd=1,level={level}"]
+
+        assert self._swtpm_log_f is not None
+        self._swtpm_process = subprocess.Popen(
+            swtpm_args,
+            stdout=self._swtpm_log_f,
+            stderr=subprocess.STDOUT,
+        )
+        self._swtpm_sock_path = sock
+
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline:
+            if Path(sock).exists():
+                return sock
+            if self._swtpm_process.poll() is not None:
+                raise RuntimeError(
+                    f"swtpm exited with {self._swtpm_process.returncode} before "
+                    f"creating its socket, see {self.log_dir / 'swtpm.log'}"
+                )
+            time.sleep(0.05)
+        raise TimeoutError(f"swtpm never created its control socket at {sock}")
 
     def _connect_serial(self, port, timeout=5.0):
         deadline = time.monotonic() + timeout
@@ -223,6 +298,19 @@ class QemuVm:
             except subprocess.TimeoutExpired:
                 self._process.kill()
                 self._process.wait()
+        # swtpm goes down after QEMU, so QEMU never sees its backend vanish
+        # mid-teardown and log an error that looks like a real failure.
+        if self._swtpm_process is not None:
+            self._swtpm_process.terminate()
+            try:
+                self._swtpm_process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                self._swtpm_process.kill()
+                self._swtpm_process.wait()
+        if self._swtpm_sock_path is not None:
+            Path(self._swtpm_sock_path).unlink(missing_ok=True)
+        if self._swtpm_log_f is not None:
+            self._swtpm_log_f.close()
         if self._qmp_sock_path is not None:
             Path(self._qmp_sock_path).unlink(missing_ok=True)
         if self._workdir is not None:

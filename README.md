@@ -25,8 +25,9 @@ proving it does. No DRTM launch logic yet. See
 
 - Rust via [rustup](https://rustup.rs/), with the `x86_64-unknown-uefi`
     target added.
-- `qemu-system-x86_64` and [uv](https://docs.astral.sh/uv/), for the test
-    suite.
+- `qemu-system-x86_64`, `swtpm` and [uv](https://docs.astral.sh/uv/), for
+    the test suite. `swtpm` backs the emulated TPM the TPM-detection tests
+    need.
 
 See [docs/development.md](docs/development.md) for setup details.
 
