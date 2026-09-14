@@ -149,12 +149,12 @@ pub fn probe() -> Probe {
 pub fn report() {
     match probe() {
         Probe::NotPresent => {
-            error!("drtm: [FAIL] no TPM answered at locality 0 (0xFED40000)");
+            error!("[FAIL] no TPM answered at locality 0 (0xFED40000)");
         }
         Probe::Present { family, interface } => {
-            info!("drtm: [PASS] TPM present at locality 0: {family:?} {interface:?}");
+            info!("[PASS] TPM present at locality 0: {family:?} {interface:?}");
             warn!(
-                "drtm: [WARN] software cannot tell a discrete TPM from a \
+                "[WARN] software cannot tell a discrete TPM from a \
                  firmware TPM, and SKINIT requires a discrete one, verify \
                  manually"
             );

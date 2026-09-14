@@ -50,9 +50,9 @@ them differently, and an earlier bug got CRB wrong while passing on TIS.
 
 Each boot reads serial output until `drtm: checks complete`, the last line
 `src/main.rs` prints, which proves the binary got past every check rather
-than hanging midway. The UEFI console hard-wraps at 80 columns mid-word, so
-`boot_and_capture` rejoins split lines before tests see them (`serial.log`
-keeps the raw capture), and the marker itself has to stay under that width.
+than hanging midway. The binary writes to the serial device itself rather
+than through the UEFI text console, which hard-wraps at 80 columns mid-word,
+so a line arrives whole however long it is.
 
 For each boot, `qemu-tests/qemu_vm.py` builds a scratch working directory
 (under the system temp dir, removed on exit) containing:
