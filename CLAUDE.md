@@ -9,11 +9,15 @@ SPDX-License-Identifier: Apache-2.0
 This file provides guidance to Claude Code (claude.ai/code) when working with
 code in this repository.
 
-## Comments
+## Comments and docs
 
 Two or three lines, maximum. State what is true now, not how it was found
 out, what was tried, or a spec quoted verbatim. Anything longer belongs in
 `docs/`, not inline.
+
+`docs/` carries the longer explanation, but it is edited in place, not
+grown: rework the paragraph that is now wrong instead of appending a new
+one. A page that gains a section per change stops being read.
 
 ## Project status
 
@@ -26,6 +30,10 @@ checks it currently performs is whatever `src/main.rs` reports and
 the equivalent for another vendor) until the user asks for it. The reference
 material for it has been provided, so what it waits on is an agreed design
 and hardware to validate it on, not missing documentation.
+
+Committed files cite upstream sources only: APM section numbers, or paths
+into EDK2/QEMU/Linux. Never the private notes repo the reference material
+arrived in, which a reader of this repo does not have.
 
 Precondition checks are in scope and land one at a time. The line between
 the two: a check only observes the platform and leaves it as it found it.
