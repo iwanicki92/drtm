@@ -19,6 +19,8 @@ use core::arch::asm;
 pub unsafe fn read(msr: u32) -> u64 {
     let low: u32;
     let high: u32;
+    // Safety: the caller guarantees the MSR exists, which is this function's
+    // whole contract. `rdmsr` needs ring 0, which a UEFI application has.
     unsafe {
         asm!(
             "rdmsr",

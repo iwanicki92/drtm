@@ -67,6 +67,8 @@ pub fn on_bsp() -> Bsp {
 
 fn read_cr0() -> u64 {
     let value: u64;
+    // Safety: reading CR0 needs ring 0, which a UEFI application has. It
+    // writes only the output register, touching no memory and no flags.
     unsafe {
         asm!("mov {}, cr0", out(reg) value, options(nomem, nostack, preserves_flags));
     }
@@ -75,7 +77,8 @@ fn read_cr0() -> u64 {
 
 fn read_eflags() -> u64 {
     let value: u64;
-    // No `nostack`: `pushfq` writes through the stack pointer.
+    // Safety: `pushfq` is unprivileged and the pair leaves the stack as it
+    // found it. No `nostack`, since `pushfq` does write through `rsp`.
     unsafe {
         asm!("pushfq", "pop {}", out(reg) value, options(preserves_flags));
     }
@@ -148,8 +151,7 @@ fn report_machine_check() {
         return;
     }
 
-    // Safety: CPUID reports MCA, which is what defines these MSRs. The bank
-    // count from IA32_MCG_CAP is exactly how many banks exist to be read.
+    // Safety: CPUID reports MCA, which is what defines these two MSRs.
     let status = unsafe { msr::read(IA32_MCG_STATUS) };
     let banks = (unsafe { msr::read(IA32_MCG_CAP) } & MCG_CAP_BANK_COUNT) as u32;
 
@@ -160,6 +162,8 @@ fn report_machine_check() {
 
     let mut logged = 0;
     for bank in 0..banks {
+        // Safety: `banks` came from IA32_MCG_CAP, so every index in this
+        // range names a bank the CPU implements.
         let bank_status = unsafe { msr::read(IA32_MC0_STATUS + 4 * bank) };
         if bank_status & MCI_STATUS_VALID != 0 {
             error!("[FAIL] IA32_MC{bank}_STATUS holds a logged error ({bank_status:#018x})");
