@@ -6,7 +6,9 @@
 #![no_std]
 
 mod amd;
+mod cpu_state;
 mod logging;
+mod msr;
 mod platform;
 mod tpm;
 
@@ -26,6 +28,7 @@ fn main() -> Status {
     info!("CPU vendor {}", cpu.name());
 
     // Phase 2: checks that hold regardless of which DRTM path applies.
+    cpu_state::report();
     tpm::report();
 
     // Phase 3: the vendor's own preconditions.

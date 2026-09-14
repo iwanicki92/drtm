@@ -5,8 +5,8 @@
 """Exercises the checks that run whatever the CPU vendor is.
 
 Phase 1 identifies the CPU (`src/platform.rs`) and phase 2 runs the checks
-that hold on every DRTM path (`src/tpm.rs`). Only phase 3 is vendor-gated,
-and its tests live in `test_amd_checks.py`.
+that hold on every DRTM path (`src/cpu_state.rs`, `src/tpm.rs`). Only phase 3
+is vendor-gated, and its tests live in `test_amd_checks.py`.
 
 Both TPM interfaces are covered because the check reports them differently,
 and an earlier bug got CRB wrong while passing on TIS.
@@ -33,6 +33,19 @@ def test_skipping_means_the_amd_checks_did_not_run(intel_cpu_boot: str):
     # so assert their output is absent rather than trusting the skip line.
     assert "SKINIT CPUID bit" not in intel_cpu_boot
     assert "SLB region" not in intel_cpu_boot
+
+
+def test_running_on_the_bootstrap_processor(default_boot: str):
+    # A UEFI application is entered on the BSP, so this passes anywhere the
+    # tool can run at all. It is here to state the requirement, and to catch
+    # the day something runs us somewhere else.
+    assert "[PASS] running on the bootstrap processor" in default_boot
+
+
+def test_bsp_check_runs_on_a_non_amd_cpu(intel_cpu_boot: str):
+    # IA32_APIC_BASE is architectural, so this check belongs to phase 2 even
+    # though the spec numbers it among the AMD ones.
+    assert "[PASS] running on the bootstrap processor" in intel_cpu_boot
 
 
 def test_tpm_check_runs_on_a_non_amd_cpu(intel_cpu_boot: str):
