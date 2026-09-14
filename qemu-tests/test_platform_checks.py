@@ -12,6 +12,8 @@ Both TPM interfaces are covered because the check reports them differently,
 and an earlier bug got CRB wrong while passing on TIS.
 """
 
+import re
+
 
 def test_cpu_vendor_is_reported(default_boot: str):
     assert "drtm: CPU vendor AuthenticAMD" in default_boot
@@ -46,6 +48,38 @@ def test_bsp_check_runs_on_a_non_amd_cpu(intel_cpu_boot: str):
     # IA32_APIC_BASE is architectural, so this check belongs to phase 2 even
     # though the spec numbers it among the AMD ones.
     assert "[PASS] running on the bootstrap processor" in intel_cpu_boot
+
+
+def test_control_register_deviation_is_reported(default_boot: str):
+    # Dasharo's firmware leaves CR0.NE clear, so this is the live path rather
+    # than a hypothetical one. It is the reason the check exists at all.
+    assert "[WARN] CR0.NE clear" in default_boot
+
+
+def test_control_register_deviations_are_not_failures(default_boot: str):
+    # A launch sets CR0 and EFLAGS itself, unconditionally, so a deviation is
+    # information about the firmware and not a reason to refuse.
+    assert "[FAIL] CR0" not in default_boot
+    assert "[FAIL] EFLAGS" not in default_boot
+
+
+def test_machine_check_state_permits_a_launch(default_boot: str):
+    assert "[PASS] no machine check in progress" in default_boot
+
+
+def test_machine_check_banks_are_actually_read(default_boot: str):
+    # The pass line is reachable with zero banks, which would mean IA32_MCG_CAP
+    # was misread and no bank was ever looked at. Assert the count is real.
+    match = re.search(r"all (\d+) status banks clear", default_boot)
+    assert match is not None
+    assert int(match.group(1)) > 0
+
+
+def test_cpu_state_checks_run_on_a_non_amd_cpu(intel_cpu_boot: str):
+    # CR0, EFLAGS and the machine-check MSRs are architectural, and Intel TXT
+    # carries the same requirements, so these are phase 2 like the BSP check.
+    assert "[WARN] CR0.NE clear" in intel_cpu_boot
+    assert "[PASS] no machine check in progress" in intel_cpu_boot
 
 
 def test_tpm_check_runs_on_a_non_amd_cpu(intel_cpu_boot: str):
