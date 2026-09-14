@@ -29,6 +29,23 @@ System packages needed alongside it:
   and their virtual environment, see `docs/testing.md`.
 - `qemu-system-x86_64`: for the test suite.
 
+## Build features
+
+Log records go to the serial device by default, because that is what an
+operator running this by hand is usually watching. `sink-console` adds (or,
+with `--no-default-features`, replaces it with) the UEFI text console:
+
+```sh
+cargo build --features sink-console                      # both
+cargo build --no-default-features --features sink-console  # console only
+```
+
+Enabling both is right only where the two are separate devices. Firmware
+that mirrors its console to the serial port, which the test suite's does,
+would then show every line twice. The QEMU suite only ever builds the
+default, so the other two combinations are checked by `cargo build` and
+nothing else.
+
 ## Task runner
 
 Build, lint, and test are wrapped in a [Taskfile](https://taskfile.dev/)

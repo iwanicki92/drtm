@@ -6,7 +6,7 @@
 #![no_std]
 
 mod amd;
-mod logger;
+mod logging;
 mod platform;
 mod tpm;
 
@@ -17,7 +17,7 @@ use uefi::prelude::*;
 #[entry]
 fn main() -> Status {
     uefi::helpers::init().unwrap();
-    logger::init();
+    logging::init();
 
     info!("hello from UEFI");
 

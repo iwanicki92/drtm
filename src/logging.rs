@@ -7,6 +7,11 @@
 //! Replaces the logger in `uefi::helpers`, whose format is fixed and whose
 //! sink is the text console. The console hard-wraps at 80 columns mid-word,
 //! so anything longer arrives split.
+//!
+//! [`emit`] holds the record format and depends on nothing but
+//! [`core::fmt::Write`], so the post-`SKINIT` stub can reuse it with a sink
+//! of its own once it exists. What differs between the two is the transport,
+//! not the format.
 
 use core::ffi::c_void;
 use core::fmt::Write;
@@ -21,6 +26,19 @@ use uefi::{Handle, system};
 /// Verbosity until something asks for another. Everything up to `trace` is
 /// compiled in, so raising it needs no rebuild.
 const DEFAULT_LEVEL: LevelFilter = LevelFilter::Info;
+
+/// Which sinks to write each record to, from the `sink-serial` and
+/// `sink-console` cargo features.
+///
+/// Both at once is right only where the two are separate devices. Firmware
+/// that mirrors its console to the serial port, as the one the test suite
+/// uses does, would then show every line twice. Nothing in the application
+/// can detect which kind of platform it is on, hence the build flag.
+const SERIAL_SINK: bool = cfg!(feature = "sink-serial");
+const CONSOLE_SINK: bool = cfg!(feature = "sink-console");
+
+#[cfg(not(any(feature = "sink-serial", feature = "sink-console")))]
+compile_error!("enable at least one of the sink-serial, sink-console features");
 
 /// Serial device to write to, null if the platform offered none.
 static SERIAL: AtomicPtr<c_void> = AtomicPtr::new(ptr::null_mut());
@@ -93,9 +111,14 @@ impl Log for Logger {
     }
 
     fn log(&self, record: &Record) {
-        if let Some(mut serial) = serial() {
+        let mut on_serial = false;
+        if SERIAL_SINK && let Some(mut serial) = serial() {
             let _ = emit(&mut *serial, record);
-        } else {
+            on_serial = true;
+        }
+        // Also the fallback: a platform with no serial device would
+        // otherwise say nothing at all.
+        if CONSOLE_SINK || !on_serial {
             system::with_stdout(|stdout| {
                 let _ = emit(stdout, record);
             });
