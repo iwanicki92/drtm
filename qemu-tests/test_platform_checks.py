@@ -35,6 +35,9 @@ def test_skipping_means_the_amd_checks_did_not_run(intel_cpu_boot: str):
     # so assert their output is absent rather than trusting the skip line.
     assert "SKINIT CPUID bit" not in intel_cpu_boot
     assert "SLB region" not in intel_cpu_boot
+    # This one is load-bearing beyond tidiness: MSR 0xC0010058 is AMD-only
+    # and raises #GP elsewhere, so the gate is what keeps Intel from faulting.
+    assert "MMIO configuration space" not in intel_cpu_boot
 
 
 def test_running_on_the_bootstrap_processor(default_boot: str):

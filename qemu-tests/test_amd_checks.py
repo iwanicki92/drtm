@@ -45,3 +45,17 @@ def test_slb_region_address_satisfies_skinit(default_boot: str):
     address = int(match.group(1), 16)
     assert address % SLB_SIZE == 0, f"{address:#x} is not 64 KiB aligned"
     assert address + SLB_SIZE <= 1 << 32, f"{address:#x} does not fit below 4 GiB"
+
+
+def test_mmio_config_window_is_reported(default_boot: str):
+    # Q35 carries extended configuration space through the chipset's own
+    # register and the ACPI MCFG table, leaving this MSR's enable bit clear.
+    # That is a third outcome, not a failure, so assert it reads as a skip.
+    assert "[SKIP] MMIO configuration space window" in default_boot
+    assert "enable bit clear" in default_boot
+
+
+def test_mmio_config_window_is_not_reported_as_a_failure(default_boot: str):
+    # The whole point of the third outcome. A platform that does not use this
+    # MSR is not a platform that failed a check.
+    assert "[FAIL] MMIO configuration space" not in default_boot

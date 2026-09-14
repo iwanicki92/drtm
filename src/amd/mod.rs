@@ -6,6 +6,7 @@
 
 pub mod checks;
 pub mod memory;
+pub mod mmconfig;
 
 use log::{error, info};
 use memory::SlbRegion;
@@ -39,4 +40,6 @@ pub fn report() {
             );
         }
     }
+
+    mmconfig::report();
 }
