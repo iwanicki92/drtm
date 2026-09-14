@@ -35,8 +35,9 @@ def test_skipping_means_the_amd_checks_did_not_run(intel_cpu_boot: str):
     # so assert their output is absent rather than trusting the skip line.
     assert "SKINIT CPUID bit" not in intel_cpu_boot
     assert "SLB region" not in intel_cpu_boot
-    # This one is load-bearing beyond tidiness: MSR 0xC0010058 is AMD-only
-    # and raises #GP elsewhere, so the gate is what keeps Intel from faulting.
+    # On hardware the gate is what keeps this Intel boot from taking a #GP
+    # on the AMD-only MSR 0xC0010058. QEMU does not model that MSR and reads
+    # it as zero whatever the vendor, so only the absence is testable here.
     assert "MMIO configuration space" not in intel_cpu_boot
 
 

@@ -8,6 +8,11 @@ These run only on an AMD CPU, so they all take `default_boot`, which QEMU
 gives an `EPYC` model. That the skip path really skips them is asserted in
 `test_platform_checks.py`.
 
+Two branches here are unreachable under QEMU rather than merely untaken.
+The MMCONFIG check only ever sees an unimplemented MSR reading zero, so
+neither enabled outcome can be produced, and the `SKINIT` check only ever
+sees the feature absent.
+
 QEMU 8.2.2 refuses to set the `skinit` CPUID feature bit under both TCG and
 KVM ("TCG doesn't support requested feature" / "host doesn't support
 requested feature"), on every CPU model tried, including AMD's own `EPYC`.
@@ -48,9 +53,10 @@ def test_slb_region_address_satisfies_skinit(default_boot: str):
 
 
 def test_mmio_config_window_is_reported(default_boot: str):
-    # Q35 carries extended configuration space through the chipset's own
-    # register and the ACPI MCFG table, leaving this MSR's enable bit clear.
-    # That is a third outcome, not a failure, so assert it reads as a skip.
+    # QEMU 8.2.2 does not model MSR 0xC0010058: it reads as zero on every AMD
+    # model tried, and on an Intel one too, where hardware would raise #GP.
+    # So this asserts the enable-bit-clear branch is reached and worded as a
+    # skip, not that any platform really leaves the window disabled.
     assert "[SKIP] MMIO configuration space window" in default_boot
     assert "enable bit clear" in default_boot
 
