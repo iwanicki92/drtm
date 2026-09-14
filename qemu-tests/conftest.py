@@ -143,20 +143,24 @@ def boot_and_capture(
 @pytest.fixture(scope="session")
 def default_boot(run_log_dir: Path, efi_binary: Path) -> str:
     """Serial output of one boot under QEMU's default configuration: no TPM
-    device attached, and a CPU model that reports neither AMD nor `SKINIT`.
+    device attached, and an AMD CPU model.
+
+    AMD by default so this fixture runs every check rather than skipping the
+    vendor-specific ones, which is most of them.
     """
     return boot_and_capture(efi_binary, run_log_dir / "boot-default")
 
 
 @pytest.fixture(scope="session")
-def amd_cpu_boot(run_log_dir: Path, efi_binary: Path) -> str:
-    """Serial output of one boot on an AMD CPU model, with no TPM device.
+def intel_cpu_boot(run_log_dir: Path, efi_binary: Path) -> str:
+    """Serial output of one boot on an Intel CPU model, with no TPM device.
 
-    QEMU still refuses to set the `SKINIT` bit on `EPYC`, but the guest does
-    read `AuthenticAMD`, which is the only way to reach the AMD branch of the
-    `SKINIT` check.
+    Exists to exercise the path where the AMD checks are skipped and the
+    vendor-independent ones still run.
     """
-    return boot_and_capture(efi_binary, run_log_dir / "boot-amd-cpu", cpu="EPYC")
+    return boot_and_capture(
+        efi_binary, run_log_dir / "boot-intel-cpu", cpu="Skylake-Client"
+    )
 
 
 @pytest.fixture(scope="session")

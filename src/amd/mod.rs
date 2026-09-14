@@ -6,3 +6,37 @@
 
 pub mod checks;
 pub mod memory;
+
+use log::{error, info};
+use memory::SlbRegion;
+
+/// Runs every AMD check and reports it.
+///
+/// Only called once the CPU has been identified as AMD, so a failure here
+/// means an AMD machine that cannot do a dynamic launch, not a machine on
+/// the wrong path.
+pub fn report() {
+    if checks::skinit_supported() {
+        info!("drtm: [PASS] SKINIT CPUID bit set (CPUID.80000001:ECX[12])");
+    } else {
+        error!(
+            "drtm: [FAIL] SKINIT CPUID bit not set (CPUID.80000001:ECX[12]), \
+             SKINIT unsupported on this CPU"
+        );
+    }
+
+    match memory::probe_slb_region() {
+        SlbRegion::Available(address) => {
+            info!(
+                "drtm: [PASS] 64 KiB-aligned SLB region available below 4 GiB \
+                 (probed at {address:#x})"
+            );
+        }
+        SlbRegion::Unavailable(status) => {
+            error!(
+                "drtm: [FAIL] no 64 KiB-aligned SLB region available below \
+                 4 GiB ({status:?})"
+            );
+        }
+    }
+}

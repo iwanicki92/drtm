@@ -33,20 +33,20 @@ tests assert against. A configuration needing different QEMU arguments gets
 its own fixture calling `boot_and_capture`, rather than the existing ones
 growing parameters. Tests sharing a boot fail together if it does.
 
-| Fixture        | Configuration                                      |
-|----------------|----------------------------------------------------|
-| `default_boot` | No TPM device, Intel CPU model (`Skylake-Client`)  |
-| `amd_cpu_boot` | No TPM device, AMD CPU model (`EPYC`)              |
-| `tpm_tis_boot` | `swtpm`-backed TPM 2.0 on the FIFO (TIS) interface |
-| `tpm_crb_boot` | `swtpm`-backed TPM 2.0 on the CRB interface        |
+| Fixture          | Configuration                                      |
+|------------------|----------------------------------------------------|
+| `default_boot`   | No TPM device, AMD CPU model (`EPYC`)              |
+| `intel_cpu_boot` | No TPM device, Intel CPU model (`Skylake-Client`)  |
+| `tpm_tis_boot`   | `swtpm`-backed TPM 2.0 on the FIFO (TIS) interface |
+| `tpm_crb_boot`   | `swtpm`-backed TPM 2.0 on the CRB interface        |
 
 No configuration reports `SKINIT` support, since QEMU will not set that
 feature bit on any CPU model (see [DRTM under QEMU](#drtm-under-qemu)). The
-CPU model still decides the vendor string, so `default_boot` and
-`amd_cpu_boot` cover both reasons the check can fail: a CPU that is not AMD
-at all, and an AMD CPU without the feature. Both TPM interfaces are tested
-because the check reports them differently, and an earlier bug got CRB
-wrong while passing on TIS.
+CPU model does decide the vendor string, and that selects which checks run
+at all: `default_boot` is AMD so every check runs, while `intel_cpu_boot`
+covers the path where the AMD checks are skipped and the vendor-independent
+ones still run. Both TPM interfaces are tested because the check reports
+them differently, and an earlier bug got CRB wrong while passing on TIS.
 
 Each boot reads serial output until `drtm: checks complete`, the last line
 `src/main.rs` prints, which proves the binary got past every check rather

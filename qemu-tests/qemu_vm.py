@@ -23,9 +23,10 @@ from qmp_client import QmpClient
 # Dasharo's own scripts/ci/qemu-run.sh does.
 _VARSTORE_ZERO_BYTES = 256
 
-# QEMU CPU model used unless a caller asks for another. Intel, so the guest
-# reads GenuineIntel from CPUID leaf 0.
-DEFAULT_CPU = "Skylake-Client"
+# QEMU CPU model used unless a caller asks for another. AMD, so the guest
+# reads AuthenticAMD and runs the AMD checks rather than skipping them. QEMU
+# still refuses to set the SKINIT feature bit on this or any other model.
+DEFAULT_CPU = "EPYC"
 
 
 def _free_tcp_port() -> int:

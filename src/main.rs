@@ -6,10 +6,11 @@
 #![no_std]
 
 mod amd;
+mod platform;
+mod tpm;
 
-use amd::checks::TpmProbe;
-use amd::memory::SlbRegion;
-use log::{error, info, warn};
+use log::{info, warn};
+use platform::Vendor;
 use uefi::prelude::*;
 
 #[entry]
@@ -18,48 +19,26 @@ fn main() -> Status {
 
     info!("drtm: hello from UEFI");
 
-    if amd::checks::skinit_supported() {
-        info!("drtm: [PASS] SKINIT CPUID bit set (CPUID.80000001:ECX[12])");
-    } else if amd::checks::cpu_is_amd() {
-        error!(
-            "drtm: [FAIL] SKINIT CPUID bit not set (CPUID.80000001:ECX[12]), \
-             SKINIT unsupported on this CPU"
-        );
-    } else {
-        error!(
-            "drtm: [FAIL] SKINIT CPUID bit not set (CPUID.80000001:ECX[12]), \
-             and this CPU does not report itself as AMD, SKINIT is an AMD \
-             extension"
-        );
-    }
+    // Phase 1: identify the platform, which decides what else can run.
+    let cpu = platform::identify();
+    info!("drtm: CPU vendor {}", cpu.name());
 
-    match amd::checks::probe_tpm() {
-        TpmProbe::NotPresent => {
-            error!("drtm: [FAIL] no TPM answered at locality 0 (0xFED40000)");
-        }
-        TpmProbe::Present { family, interface } => {
-            info!("drtm: [PASS] TPM present at locality 0: {family:?} {interface:?}");
-            warn!(
-                "drtm: [WARN] software cannot tell a discrete TPM from a \
-                 firmware TPM, and SKINIT requires a discrete one, verify \
-                 manually"
-            );
-        }
-    }
+    // Phase 2: checks that hold regardless of which DRTM path applies.
+    tpm::report();
 
-    match amd::memory::probe_slb_region() {
-        SlbRegion::Available(address) => {
-            info!(
-                "drtm: [PASS] 64 KiB-aligned SLB region available below 4 GiB \
-                 (probed at {address:#x})"
-            );
-        }
-        SlbRegion::Unavailable(status) => {
-            error!(
-                "drtm: [FAIL] no 64 KiB-aligned SLB region available below \
-                 4 GiB ({status:?})"
-            );
-        }
+    // Phase 3: the vendor's own preconditions.
+    match cpu.vendor {
+        Vendor::Amd => amd::report(),
+        Vendor::Intel => warn!(
+            "drtm: [SKIP] AMD checks, this CPU is {}, and the Intel TXT path \
+             is not implemented",
+            cpu.name()
+        ),
+        Vendor::Other => warn!(
+            "drtm: [SKIP] AMD checks, this CPU is {}, which is neither AMD \
+             nor Intel, so no DRTM path applies",
+            cpu.name()
+        ),
     }
 
     // Terminal marker. The QEMU test harness reads serial output until this
