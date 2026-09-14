@@ -17,3 +17,9 @@ sink-console = []
 [dependencies]
 log = "0.4"
 uefi = { version = "0.36.1", features = ["alloc", "global_allocator", "panic_handler"] }
+
+[lints.clippy]
+# Every unsafe block must say why it is sound. `warn` rather than `deny`
+# because pre-commit runs clippy with `-D warnings` anyway, and a bare
+# `cargo clippy` during development should report rather than stop.
+undocumented_unsafe_blocks = "warn"

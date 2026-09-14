@@ -20,9 +20,10 @@ grown: rework the paragraph that is now wrong instead of appending a new
 one. A page that gains a section per change stops being read.
 
 Every `unsafe` block carries its own `// Safety:` comment immediately above,
-saying what makes it sound. One comment does not cover the block after it.
-Inside an `unsafe fn` the reason is usually the function's own contract, so
-say that rather than leaving the block bare.
+saying what makes it sound. Inside an `unsafe fn` that reason is usually the
+function's own contract, so say so rather than leaving the block bare.
+`clippy::undocumented_unsafe_blocks` enforces this, down to one comment not
+covering the block after it.
 
 ## Project status
 
