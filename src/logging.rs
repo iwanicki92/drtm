@@ -61,6 +61,9 @@ pub fn init() {
 /// Opened per record rather than held, so nothing borrowed outlives the
 /// call and the handle can live in a `static`.
 fn serial() -> Option<ScopedProtocol<Serial>> {
+    // Safety: SERIAL holds either null, which yields None, or the pointer
+    // `init` took from a live handle. Handles stay valid for all of boot
+    // services, and nothing here runs after that.
     let handle = unsafe { Handle::from_ptr(SERIAL.load(Ordering::Relaxed)) }?;
     // Safety: the handle came from `get_handle_for_protocol`. `GetProtocol`
     // leaves the owning driver alone; an exclusive open would disconnect the

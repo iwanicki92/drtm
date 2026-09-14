@@ -19,6 +19,11 @@ out, what was tried, or a spec quoted verbatim. Anything longer belongs in
 grown: rework the paragraph that is now wrong instead of appending a new
 one. A page that gains a section per change stops being read.
 
+Every `unsafe` block carries its own `// Safety:` comment immediately above,
+saying what makes it sound. One comment does not cover the block after it.
+Inside an `unsafe fn` the reason is usually the function's own contract, so
+say that rather than leaving the block bare.
+
 ## Project status
 
 A `no_std`/`no_main` UEFI binary, exercised by booting it under QEMU. Which

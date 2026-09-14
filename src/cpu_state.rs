@@ -151,9 +151,11 @@ fn report_machine_check() {
         return;
     }
 
-    // Safety: CPUID reports MCA, which is what defines these two MSRs.
+    // Safety: CPUID reports MCA, which is what defines IA32_MCG_STATUS.
     let status = unsafe { msr::read(IA32_MCG_STATUS) };
-    let banks = (unsafe { msr::read(IA32_MCG_CAP) } & MCG_CAP_BANK_COUNT) as u32;
+    // Safety: same, for IA32_MCG_CAP.
+    let capabilities = unsafe { msr::read(IA32_MCG_CAP) };
+    let banks = (capabilities & MCG_CAP_BANK_COUNT) as u32;
 
     let in_progress = status & MCG_STATUS_MCIP != 0;
     if in_progress {
