@@ -66,7 +66,8 @@ unsafe fn read_tpm_reg32(offset: usize) -> u32 {
 unsafe fn read_tpm_reg8(offset: usize) -> u8 {
     let addr = (TPM_LOCALITY_0_BASE + offset) as *const u8;
     // Safety: the caller guarantees the offset is in the window, which is
-    // this function's whole contract. A byte read needs no alignment.
+    // this function's whole contract. `read_volatile` also wants the pointer
+    // aligned, which any address is for a `u8`.
     unsafe { core::ptr::read_volatile(addr) }
 }
 
