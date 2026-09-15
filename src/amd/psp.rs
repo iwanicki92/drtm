@@ -88,8 +88,8 @@ pub fn report(devices: &Devices) {
     if found == 0 {
         check::info!(
             "amd.psp",
-            "no AMD Secure Processor in configuration space, and classic \
-             SKINIT does not go through one"
+            "no AMD Secure Processor in configuration space (isn't required \
+             by classic SKINIT)"
         );
     }
 }
