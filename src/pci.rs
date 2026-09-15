@@ -9,7 +9,7 @@
 //! nor `0xCF8` has to be reached for. The IOMMU and PSP checks both identify
 //! their device out of this scan.
 
-use log::{info, warn};
+use log::{debug, trace, warn};
 use uefi::Identify;
 use uefi::boot::{self, OpenProtocolAttributes, OpenProtocolParams, SearchType};
 use uefi::proto::pci::PciIoAddress;
@@ -47,7 +47,7 @@ fn scan_function(pci: &PciIoAccessPci<'_>, segment: u32, bus: u8, dev: u8, fun: 
     let status = pci
         .read_one::<u16>(addr.with_register(REG_STATUS))
         .unwrap_or(0);
-    info!(
+    trace!(
         "[SCAN] {segment:04x}:{bus:02x}:{dev:02x}.{fun} id {:04x}:{:04x} class {class:06x}",
         id as u16,
         (id >> 16) as u16
@@ -65,7 +65,7 @@ fn scan_function(pci: &PciIoAccessPci<'_>, segment: u32, bus: u8, dev: u8, fun: 
     let mut seen = 0;
     while next != 0 && seen < MAX_CAPABILITIES {
         let header = pci.read_one::<u32>(addr.with_register(next)).unwrap_or(0);
-        info!(
+        trace!(
             "[SCAN]   capability {:02x} type {} at {next:02x}",
             header as u8,
             (header >> 16) & 0x7
@@ -77,8 +77,9 @@ fn scan_function(pci: &PciIoAccessPci<'_>, segment: u32, bus: u8, dev: u8, fun: 
 
 /// Reports every function the root bridges answer for.
 ///
-/// Bus 0 only for now, which is where both devices the checks want sit. The
-/// per-function lines belong at `debug` once the log level is configurable.
+/// Bus 0 only, which is where both devices the checks want sit. A machine
+/// with devices behind a bridge would have them missed, so this grows a
+/// recursion when something needs one.
 pub fn report() {
     let handles = match boot::locate_handle_buffer(SearchType::ByProtocol(&PciRootBridgeIo::GUID)) {
         Ok(handles) => handles,
@@ -91,7 +92,7 @@ pub fn report() {
             return;
         }
     };
-    info!("[SCAN] PCI root bridges: {}", handles.len());
+    debug!("[SCAN] PCI root bridges: {}", handles.len());
 
     for handle in handles.iter() {
         let params = OpenProtocolParams {

@@ -25,7 +25,11 @@ use uefi::{Handle, system};
 
 /// Verbosity until something asks for another. Everything up to `trace` is
 /// compiled in, so raising it needs no rebuild.
-const DEFAULT_LEVEL: LevelFilter = LevelFilter::Info;
+///
+/// `trace` rather than `info` only because nothing can ask yet. It drops to
+/// `info` when `drtm.conf` arrives, and the levels records already carry are
+/// what makes that a one-line change.
+const DEFAULT_LEVEL: LevelFilter = LevelFilter::Trace;
 
 /// Which sinks to write each record to, from the `sink-serial` and
 /// `sink-console` cargo features.

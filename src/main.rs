@@ -9,8 +9,8 @@ mod amd;
 mod cpu_state;
 mod logging;
 mod msr;
+mod pci;
 mod platform;
-mod probe;
 mod tpm;
 
 use log::{info, warn};
@@ -31,7 +31,7 @@ fn main() -> Status {
     // Phase 2: checks that hold regardless of which DRTM path applies.
     cpu_state::report();
     tpm::report();
-    probe::report();
+    pci::report();
 
     // Phase 3: the vendor's own preconditions.
     match cpu.vendor {
