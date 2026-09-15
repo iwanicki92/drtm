@@ -145,13 +145,11 @@ def test_locality_check_fails_where_the_tpm_offers_only_one(tpm_crb_boot: str):
     assert "locality 0" in detail
 
 
-def test_a_tpm_without_localities_is_not_also_asked_to_be_verified(
-    tpm_crb_boot: str,
-):
-    # The manual check exists because software cannot tell fTPM from discrete.
-    # Once the TPM reports locality 0 only, it is unusable either way, so
-    # asking for a manual check would be busywork.
-    assert verdicts(tpm_crb_boot, "tpm.discrete") == []
+def test_a_tpm_without_localities_still_asks_for_a_manual_check(tpm_crb_boot: str):
+    # Locality 0 only is what a firmware TPM looks like, and a platform
+    # offering both chooses in firmware setup, so this is exactly where the
+    # manual check has something to act on.
+    assert verdicts(tpm_crb_boot, "tpm.discrete") == ["WARN"]
 
 
 def test_locality_check_is_skipped_without_a_tpm(default_boot: str):
