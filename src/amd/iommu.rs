@@ -18,9 +18,10 @@ use crate::pci::{self, Function};
 const CAPABILITY_ID_SECURE_DEVICE: u8 = 0x0F;
 const CAPABILITY_TYPE_IOMMU: u8 = 3;
 
-/// The one address a launch programs, whatever else the scan turns up
+/// The Secure Kernel Loader sets up the IOMMU at this fixed address and no
+/// other, whatever else the scan turns up
 /// (`secure-kernel-loader:include/iommu.h`).
-const LAUNCH_PROGRAMS: Function = Function {
+const SKL_IOMMU: Function = Function {
     segment: 0,
     bus: 0,
     device: 0,
@@ -34,7 +35,7 @@ const LAUNCH_PROGRAMS: Function = Function {
 /// would fail.
 pub fn report() {
     let mut found = 0;
-    let mut at_launch_address = false;
+    let mut at_skl_address = false;
     pci::for_each_function(|pci, function| {
         pci::for_each_capability(pci, function, |capability| {
             if capability.id != CAPABILITY_ID_SECURE_DEVICE
@@ -43,7 +44,7 @@ pub fn report() {
                 return;
             }
             found += 1;
-            at_launch_address |= function == LAUNCH_PROGRAMS;
+            at_skl_address |= function == SKL_IOMMU;
             info!(
                 "[PASS] AMD IOMMU at {function}, capability block at \
                  {:#04x}",
@@ -59,14 +60,17 @@ pub fn report() {
         );
         return;
     }
-    if !at_launch_address {
-        warn!("[WARN] no IOMMU at {LAUNCH_PROGRAMS}, which is the only one a launch programs");
+    if !at_skl_address {
+        warn!(
+            "[WARN] no IOMMU at {SKL_IOMMU}, the fixed address the Secure \
+             Kernel Loader sets one up at, so it would configure none"
+        );
     }
     if found > 1 {
         warn!(
-            "[WARN] {found} IOMMUs, one per root complex. A launch programs \
-             the one at {LAUNCH_PROGRAMS} and leaves devices behind the \
-             others unprotected"
+            "[WARN] {found} IOMMUs, one per root complex. The Secure Kernel \
+             Loader configures only the one at {SKL_IOMMU}, leaving devices \
+             behind the others without DMA protection"
         );
     }
 }
