@@ -69,8 +69,8 @@ pub fn report() {
     if found > 1 {
         warn!(
             "[WARN] {found} IOMMUs, one per root complex. The Secure Kernel \
-             Loader configures only the one at {SKL_IOMMU}, leaving devices \
-             behind the others without DMA protection"
+             Loader configures only the one at {SKL_IOMMU}, so its deny-all \
+             device table covers that root complex alone"
         );
     }
 }
