@@ -130,6 +130,36 @@ def test_tpm_warns_that_discreteness_is_unverifiable(tpm_tis_boot: str):
     assert verdicts(tpm_tis_boot, "tpm.discrete") == ["WARN"]
 
 
+def test_locality_check_passes_where_the_tpm_offers_five(tpm_tis_boot: str):
+    # A launch measures through locality 4 and its DCE runs at locality 2, so
+    # the TPM has to implement more than locality 0 for any of it to work.
+    assert verdicts(tpm_tis_boot, "tpm.locality") == ["PASS"]
+
+
+def test_locality_check_fails_where_the_tpm_offers_only_one(tpm_crb_boot: str):
+    # QEMU's CRB device reports CapLocality clear, the same thing a firmware
+    # TPM reports, and it is the one way software can prove no launch is
+    # possible rather than warning that it cannot tell.
+    ((tag, detail),) = results(tpm_crb_boot, "tpm.locality")
+    assert tag == "FAIL"
+    assert "locality 0" in detail
+
+
+def test_a_tpm_without_localities_is_not_also_asked_to_be_verified(
+    tpm_crb_boot: str,
+):
+    # The manual check exists because software cannot tell fTPM from discrete.
+    # Once the TPM reports locality 0 only, it is unusable either way, so
+    # asking for a manual check would be busywork.
+    assert verdicts(tpm_crb_boot, "tpm.discrete") == []
+
+
+def test_locality_check_is_skipped_without_a_tpm(default_boot: str):
+    # Nothing to ask, and tpm.present has already failed, so this must not
+    # report a second failure for the same missing device.
+    assert verdicts(default_boot, "tpm.locality") == ["SKIP"]
+
+
 def test_pci_root_bridge_protocol_is_available(default_boot: str):
     # Everything read out of configuration space depends on the firmware
     # publishing this. QEMU's q35 has one root bridge, hence one handle, and

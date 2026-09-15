@@ -18,7 +18,7 @@ so the page stays a reference rather than growing a section per discovery.
 
 | Piece                       | State                                                                              |
 |-----------------------------|------------------------------------------------------------------------------------|
-| TPM 2.0, TIS and CRB        | Works through `swtpm`, both interfaces in the suite                                |
+| TPM 2.0, TIS and CRB        | Works through `swtpm`. TIS models five localities, CRB reports locality 0 only     |
 | AMD IOMMU                   | `amd-iommu` device, in the test matrix, at whatever slot is free, enable bit clear |
 | PCI configuration space     | Read through the root bridge protocol, extended space included                     |
 | CPU vendor and CPUID leaves | Selected by `-cpu`, enough to drive the vendor gate                                |
@@ -115,6 +115,7 @@ Observations from real boots. Newest first.
 
 | Date       | Observation                                                                                                               |
 |------------|---------------------------------------------------------------------------------------------------------------------------|
+| 2026-09-16 | `tpm-crb` reports `CapLocality` clear and `tpm-tis` set, so both locality outcomes are reachable                          |
 | 2026-09-16 | `amd-iommu` reads its capability's enable bit clear, so a launch would treat it as disabled by firmware                   |
 | 2026-09-16 | `amd-iommu` answers `1022:0000`, so an AMD vendor ID alone would take it for a Secure Processor                           |
 | 2026-09-16 | No guest configuration answers with any Secure Processor device ID, so the PSP check only reaches its not-found branch    |

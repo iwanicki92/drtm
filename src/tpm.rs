@@ -48,6 +48,20 @@ const INTF_VERSION_TPM_1_2: [u32; 2] = [0x0, 0x2];
 const INTERFACE_TYPE_MASK: u32 = 0xF;
 const INTERFACE_TYPE_CRB: u32 = 0x1;
 
+/// `TPM_INTERFACE_ID.CapLocality`, bit 8 (PTP tables 23 and 26). Clear means
+/// locality 0 and nothing else, set means all five.
+const CAP_LOCALITY_ALL: u32 = 1 << 8;
+
+/// The locality the DCE runs at, and the one this check reads to confirm the
+/// window is decoded. Each locality has a 4 KiB window of its own, at
+/// `base + (locality << 12)` (PTP section 6.5.2).
+const DCE_LOCALITY: usize = 2;
+
+/// Start of `locality`'s own MMIO window.
+const fn locality_base(locality: usize) -> usize {
+    TPM_LOCALITY_0_BASE + (locality << 12)
+}
+
 /// # Safety
 ///
 /// `offset` must be within the TPM's locality 0 MMIO window (`0x000`-`0xFFF`
@@ -150,22 +164,99 @@ pub fn probe() -> Probe {
     }
 }
 
+/// Whether the TPM implements the localities a dynamic launch needs.
+fn localities(family: Family) -> Localities {
+    if family == Family::V1_2 {
+        return Localities::Unknown;
+    }
+    // Safety: same MMIO window as the probe, 4-byte aligned offset valid
+    // under either interface layout.
+    let interface_id = unsafe { read_tpm_reg32(TPM_INTERFACE_ID_OFFSET) };
+    if interface_id & CAP_LOCALITY_ALL == 0 {
+        return Localities::ZeroOnly;
+    }
+    // A TPM that has them is not the same as a platform that decodes them:
+    // the chipset owns the address range, and only locality 0 is open under
+    // all circumstances (_Intel TXT Software Development Guide, table 25_).
+    let addr = (locality_base(DCE_LOCALITY) + TPM_ACCESS_OFFSET) as *const u8;
+    // Safety: the locality 2 window is 4 KiB of MMIO fixed by the chipset,
+    // and this offset is a valid byte register under either layout. An
+    // undecoded window reads all ones rather than faulting.
+    let access = unsafe { addr.read_volatile() };
+    if access == 0xFF || access & TPM_ACCESS_VALID_STS == 0 {
+        return Localities::NotDecoded;
+    }
+    Localities::All
+}
+
+/// What the TPM and the chipset between them offer above locality 0.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Localities {
+    All,
+    /// The TPM answers for locality 0 alone, which a firmware TPM also does.
+    ZeroOnly,
+    /// The TPM claims five, but the platform does not answer for locality 2.
+    NotDecoded,
+    /// A TPM 1.2 device, which predates the register this reads.
+    Unknown,
+}
+
+/// Reports whether the localities a launch needs are there.
+fn report_localities(found: Localities) {
+    match found {
+        Localities::All => check::pass!(
+            "tpm.locality",
+            "five localities, and locality {DCE_LOCALITY} answers"
+        ),
+        // The one thing software can prove here. SKINIT measures through
+        // locality 4 and the DCE extends PCR 17 and 18 from locality 2, so
+        // neither can happen on this TPM however the rest of the platform
+        // looks.
+        Localities::ZeroOnly => check::fail!(
+            "tpm.locality",
+            "locality 0 only, so no dynamic launch can measure anything here"
+        ),
+        Localities::NotDecoded => check::warn!(
+            "tpm.locality",
+            "the TPM reports five localities but nothing answers at locality \
+             {DCE_LOCALITY} ({:#x}), which the chipset decodes",
+            locality_base(DCE_LOCALITY)
+        ),
+        Localities::Unknown => check::skip!(
+            "tpm.locality",
+            "a TPM 1.2 device predates the register that reports locality \
+             support"
+        ),
+    }
+}
+
 /// Runs the TPM check and reports it.
 pub fn report() {
     match probe() {
         Probe::NotPresent => {
             check::fail!("tpm.present", "nothing answered at locality 0 (0xFED40000)");
+            check::skip!(
+                "tpm.locality",
+                "no TPM answered, so there is nothing to ask"
+            );
         }
         Probe::Present { family, interface } => {
             check::pass!(
                 "tpm.present",
                 "locality 0 answered, {family:?} {interface:?}"
             );
-            check::warn!(
-                "tpm.discrete",
-                "software cannot tell a discrete TPM from a firmware TPM, \
-                 and SKINIT requires a discrete one, verify manually"
-            );
+            let localities = localities(family);
+            report_localities(localities);
+            // Nothing to verify by hand once the TPM has ruled itself out:
+            // an fTPM is one way to get locality 0 only, and a discrete TPM
+            // that reports it would be just as unusable.
+            if localities != Localities::ZeroOnly {
+                check::warn!(
+                    "tpm.discrete",
+                    "software cannot tell a discrete TPM from a firmware \
+                     TPM, and SKINIT requires a discrete one, verify manually"
+                );
+            }
         }
     }
 }
