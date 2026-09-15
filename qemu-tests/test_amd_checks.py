@@ -12,10 +12,11 @@ asserted in `test_platform_checks.py`.
 Assertions key on a check's identifier and verdict via `results`/`verdicts`,
 not on its wording, except where a test needs a value out of the detail text.
 
-Two branches here are unreachable under QEMU rather than merely untaken.
+Three branches here are unreachable under QEMU rather than merely untaken.
 The MMCONFIG check only ever sees an unimplemented MSR reading zero, so
-neither enabled outcome can be produced, and the `SKINIT` check only ever
-sees the feature absent.
+neither enabled outcome can be produced. The IOMMU check only ever sees the
+enable bit clear, so it never passes. The `SKINIT` check only ever sees the
+feature absent.
 
 QEMU 8.2.2 refuses to set the `skinit` CPUID feature bit under both TCG and
 KVM ("TCG doesn't support requested feature" / "host doesn't support
@@ -104,13 +105,29 @@ def test_no_iommu_without_the_device(default_boot: str):
 def test_iommu_is_found_by_its_capability(amd_iommu_boot: str):
     # The address is QEMU's choice, so assert the capability offset came out,
     # which is what anything programming the IOMMU works from.
-    passes = [
-        detail for tag, detail in results(amd_iommu_boot, "amd.iommu") if tag == "PASS"
+    found = [
+        detail
+        for _, detail in results(amd_iommu_boot, "amd.iommu")
+        if "capability block at" in detail
     ]
-    assert len(passes) == 1, "expected exactly one IOMMU with the device attached"
-    match = re.search(r"capability block at (0x[0-9a-f]+)", passes[0])
+    assert len(found) == 1, "expected exactly one IOMMU with the device attached"
+    match = re.search(r"capability block at (0x[0-9a-f]+)", found[0])
     assert match is not None, "no capability offset reported"
     assert int(match.group(1), 16) >= 0x40, "capability cannot precede the header"
+
+
+def test_iommu_left_disabled_by_firmware_warns(amd_iommu_boot: str):
+    # QEMU leaves the capability's enable bit clear and read-only, which SKL
+    # treats as no IOMMU at all. So the found IOMMU is a warning, never a pass,
+    # and the pass path is unreachable under QEMU.
+    ((tag, detail),) = [
+        result
+        for result in results(amd_iommu_boot, "amd.iommu")
+        if "capability block at" in result[1]
+    ]
+    assert tag == "WARN"
+    assert "enable bit clear" in detail
+    assert "PASS" not in verdicts(amd_iommu_boot, "amd.iommu")
 
 
 def test_iommu_away_from_the_launch_address_is_reported(amd_iommu_boot: str):

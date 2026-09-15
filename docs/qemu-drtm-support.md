@@ -16,13 +16,13 @@ so the page stays a reference rather than growing a section per discovery.
 
 ## What QEMU already models
 
-| Piece                       | State                                                            |
-|-----------------------------|------------------------------------------------------------------|
-| TPM 2.0, TIS and CRB        | Works through `swtpm`, both interfaces in the suite              |
-| AMD IOMMU                   | `amd-iommu` device, in the test matrix, at whatever slot is free |
-| PCI configuration space     | Read through the root bridge protocol, extended space included   |
-| CPU vendor and CPUID leaves | Selected by `-cpu`, enough to drive the vendor gate              |
-| Machine-check architecture  | `IA32_MCG_CAP` reports 10 banks, all readable                    |
+| Piece                       | State                                                                              |
+|-----------------------------|------------------------------------------------------------------------------------|
+| TPM 2.0, TIS and CRB        | Works through `swtpm`, both interfaces in the suite                                |
+| AMD IOMMU                   | `amd-iommu` device, in the test matrix, at whatever slot is free, enable bit clear |
+| PCI configuration space     | Read through the root bridge protocol, extended space included                     |
+| CPU vendor and CPUID leaves | Selected by `-cpu`, enough to drive the vendor gate                                |
+| Machine-check architecture  | `IA32_MCG_CAP` reports 10 banks, all readable                                      |
 
 ## What QEMU does not model
 
@@ -85,6 +85,11 @@ currently runs on no input but zero. A writable register honouring the
 documented field layout would be enough. Note the KVM path would need its
 own change, since the kernel pins it to zero on purpose.
 
+**Set the `amd-iommu` enable bit.** `amdvi_pci_realize()` writes the
+capability's base address low register with bit 0 clear, and read-only
+(`hw/i386/amd_iommu.c`). Firmware sets that bit on hardware, and without it
+the IOMMU check can only warn. One line would make its pass path reachable.
+
 ### Needed before a launch could run at all
 
 1. **The `SKINIT` instruction**, including the hash transaction it drives:
@@ -110,6 +115,7 @@ Observations from real boots. Newest first.
 
 | Date       | Observation                                                                                                               |
 |------------|---------------------------------------------------------------------------------------------------------------------------|
+| 2026-09-16 | `amd-iommu` reads its capability's enable bit clear, so a launch would treat it as disabled by firmware                   |
 | 2026-09-16 | `amd-iommu` answers `1022:0000`, so an AMD vendor ID alone would take it for a Secure Processor                           |
 | 2026-09-16 | No guest configuration answers with any Secure Processor device ID, so the PSP check only reaches its not-found branch    |
 | 2026-09-15 | Dasharo publishes `EFI_PCI_ROOT_BRIDGE_IO_PROTOCOL`, one handle on segment 0, and config reads through it work            |

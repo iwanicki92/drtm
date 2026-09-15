@@ -140,8 +140,9 @@ def intel_cpu_boot(run_log_dir: Path, efi_binary: Path) -> str:
 def amd_iommu_boot(run_log_dir: Path, efi_binary: Path) -> str:
     """Serial output of one boot with QEMU's `amd-iommu` device attached.
 
-    The only configuration where an IOMMU is there to be found at all, so the
-    pass path of `amd.iommu` is reachable nowhere else.
+    The only configuration where an IOMMU is there to be found at all. QEMU
+    leaves its enable bit clear, so even here `amd.iommu` warns rather than
+    passes.
     """
     return boot_and_capture(efi_binary, run_log_dir / "boot-amd-iommu", iommu=True)
 

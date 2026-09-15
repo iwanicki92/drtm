@@ -48,7 +48,7 @@ pub struct Function {
 }
 
 impl Function {
-    const fn address(self) -> PciIoAddress {
+    pub const fn address(self) -> PciIoAddress {
         PciIoAddress::new(self.bus, self.device, self.function)
     }
 }

@@ -17,6 +17,12 @@ use crate::pci::{self, Devices, Function};
 const CAPABILITY_ID_SECURE_DEVICE: u8 = 0x0F;
 const CAPABILITY_TYPE_IOMMU: u8 = 3;
 
+/// Bit 0 of the IOMMU Base Address Low register, capability offset `0x04`.
+/// Firmware sets it once the MMIO base is programmed, which locks the block
+/// (_AMD IOMMU specification, section 3.2_).
+const CAPABILITY_REG_BASE_LOW: u8 = 0x04;
+const BASE_LOW_ENABLE: u32 = 1 << 0;
+
 /// The Secure Kernel Loader sets up the IOMMU at this fixed address and no
 /// other, whatever else the scan turns up
 /// (`secure-kernel-loader:include/iommu.h`).
@@ -29,9 +35,9 @@ const SKL_IOMMU: Function = Function {
 
 /// Reports every AMD IOMMU configuration space offers.
 ///
-/// Not a gate. A missing IOMMU costs DMA protection, which is a weaker
-/// launch rather than no launch, so it warns where a real precondition
-/// would fail.
+/// Not a gate. A missing or firmware-disabled IOMMU costs DMA protection,
+/// which is a weaker launch rather than no launch, so it warns where a real
+/// precondition would fail.
 pub fn report(devices: &Devices) {
     let mut found = 0;
     let mut at_skl_address = false;
@@ -45,11 +51,33 @@ pub fn report(devices: &Devices) {
             }
             found += 1;
             at_skl_address |= function == SKL_IOMMU;
-            check::pass!(
-                "amd.iommu",
-                "at {function}, capability block at {:#04x}",
-                capability.offset
-            );
+            // A block that would run past the header's 256 bytes is malformed
+            // and counts as disabled, rather than overflowing the offset.
+            let enabled = capability
+                .offset
+                .checked_add(CAPABILITY_REG_BASE_LOW)
+                .and_then(|register| {
+                    pci.read_one::<u32>(function.address().with_register(register))
+                        .ok()
+                })
+                .is_some_and(|base_low| base_low & BASE_LOW_ENABLE != 0);
+            if enabled {
+                check::pass!(
+                    "amd.iommu",
+                    "at {function}, capability block at {:#04x}",
+                    capability.offset
+                );
+            } else {
+                // The Secure Kernel Loader refuses to program it and launches
+                // without DMA protection (`secure-kernel-loader:iommu.c`).
+                check::warn!(
+                    "amd.iommu",
+                    "at {function}, capability block at {:#04x}, enable bit \
+                     clear, so firmware left it off and a launch would not \
+                     program it",
+                    capability.offset
+                );
+            }
         });
     });
 
