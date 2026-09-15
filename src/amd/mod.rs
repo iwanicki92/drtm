@@ -5,6 +5,7 @@
 //! AMD-specific DRTM (`SKINIT`) precondition checks.
 
 pub mod checks;
+pub mod iommu;
 pub mod memory;
 pub mod mmconfig;
 
@@ -42,4 +43,5 @@ pub fn report() {
     }
 
     mmconfig::report();
+    iommu::report();
 }

@@ -95,3 +95,33 @@ def test_no_iommu_without_the_device(default_boot: str):
     # discriminates rather than always reporting one.
     assert "capability 0f type 3" not in default_boot
     assert "class 080600" not in default_boot
+
+
+def test_iommu_is_found_by_its_capability(amd_iommu_boot: str):
+    # The address is QEMU's choice, so assert the capability offset came out,
+    # which is what anything programming the IOMMU works from.
+    match = re.search(
+        r"\[PASS\] AMD IOMMU at (\S+), capability block at (0x[0-9a-f]+)",
+        amd_iommu_boot,
+    )
+    assert match is not None, "no IOMMU reported with an attached amd-iommu"
+    assert int(match.group(2), 16) >= 0x40, "capability cannot precede the header"
+
+
+def test_iommu_away_from_the_launch_address_is_reported(amd_iommu_boot: str):
+    # QEMU never puts it at 0:00.2, the one address SKL programs, so this
+    # branch is exercised on every boot with the device attached.
+    assert "[WARN] no IOMMU at 0000:00:00.2" in amd_iommu_boot
+
+
+def test_missing_iommu_warns_rather_than_fails(default_boot: str):
+    # A missing IOMMU costs DMA protection, which is a weaker launch rather
+    # than no launch, so it must not read as a failed precondition.
+    assert "[WARN] no AMD IOMMU in configuration space" in default_boot
+    assert "[FAIL] no AMD IOMMU" not in default_boot
+
+
+def test_iommu_check_runs_after_the_vendor_gate(intel_cpu_boot: str):
+    # Capability 0Fh is AMD's, so the check sits in phase 3 and an Intel boot
+    # must not report on it either way.
+    assert "AMD IOMMU" not in intel_cpu_boot
