@@ -108,8 +108,8 @@ pub fn for_each_capability(
 
 /// Calls `visit` for every function every root bridge answers for.
 ///
-/// Every bus each bridge decodes, not just bus 0: an AMD server puts one
-/// IOMMU per root complex, and those sit on buses of their own.
+/// Every bus each bridge decodes, not just bus 0. An AMD server has
+/// several IOMMUs, on buses of their own rather than all on bus 0.
 pub fn for_each_function(mut visit: impl FnMut(&PciIoAccessPci<'_>, Function)) {
     let handles = match boot::locate_handle_buffer(SearchType::ByProtocol(&PciRootBridgeIo::GUID)) {
         Ok(handles) => handles,
