@@ -10,9 +10,7 @@
 use core::arch::asm;
 use core::arch::x86_64::__cpuid;
 
-use log::{error, info, warn};
-
-use crate::msr;
+use crate::{check, msr};
 
 /// `CPUID.1:EDX` bit 9. A local APIC is present, which is what makes
 /// `IA32_APIC_BASE` readable.
@@ -88,19 +86,20 @@ fn read_eflags() -> u64 {
 fn report_bsp() {
     match on_bsp() {
         Bsp::Yes => {
-            info!("[PASS] running on the bootstrap processor (IA32_APIC_BASE[8])");
+            check::pass!("cpu.bsp", "IA32_APIC_BASE[8] set");
         }
         Bsp::No => {
-            error!(
-                "[FAIL] not running on the bootstrap processor \
-                 (IA32_APIC_BASE[8] clear), a dynamic launch must be issued \
-                 by the BSP"
+            check::fail!(
+                "cpu.bsp",
+                "IA32_APIC_BASE[8] clear, and a dynamic launch must be \
+                 issued by the bootstrap processor"
             );
         }
         Bsp::Unknown => {
-            warn!(
-                "[WARN] no local APIC (CPUID.1:EDX[9] clear), so whether this \
-                 is the bootstrap processor cannot be read"
+            check::warn!(
+                "cpu.bsp",
+                "no local APIC (CPUID.1:EDX[9] clear), so which processor \
+                 this is cannot be read"
             );
         }
     }
@@ -125,13 +124,17 @@ fn report_control_registers() {
         (eflags & EFLAGS_VM != 0, "EFLAGS.VM set, virtual-8086 mode"),
     ] {
         if deviates {
-            warn!("[WARN] {description}, a launch would have to correct this");
+            check::warn!(
+                "cpu.launch_state",
+                "{description}, a launch would have to correct this"
+            );
             deviations += 1;
         }
     }
     if deviations == 0 {
-        info!(
-            "[PASS] CR0 and EFLAGS already as a launch needs them \
+        check::pass!(
+            "cpu.launch_state",
+            "CR0 and EFLAGS already as a launch needs them \
              (CD, NW, VM clear, NE set)"
         );
     }
@@ -144,9 +147,10 @@ fn report_control_registers() {
 fn report_machine_check() {
     let features = __cpuid(0x1).edx;
     if features & CPUID_MCE_BIT == 0 || features & CPUID_MCA_BIT == 0 {
-        warn!(
-            "[WARN] no machine-check architecture (CPUID.1:EDX[7] or [14] \
-             clear), so the machine-check preconditions cannot be read"
+        check::warn!(
+            "cpu.machine_check",
+            "no machine-check architecture (CPUID.1:EDX[7] or [14] clear), \
+             so the preconditions cannot be read"
         );
         return;
     }
@@ -159,7 +163,10 @@ fn report_machine_check() {
 
     let in_progress = status & MCG_STATUS_MCIP != 0;
     if in_progress {
-        error!("[FAIL] machine check in progress (IA32_MCG_STATUS.MCIP set)");
+        check::fail!(
+            "cpu.machine_check",
+            "machine check in progress (IA32_MCG_STATUS.MCIP set)"
+        );
     }
 
     let mut logged = 0;
@@ -168,13 +175,19 @@ fn report_machine_check() {
         // range names a bank the CPU implements.
         let bank_status = unsafe { msr::read(IA32_MC0_STATUS + 4 * bank) };
         if bank_status & MCI_STATUS_VALID != 0 {
-            error!("[FAIL] IA32_MC{bank}_STATUS holds a logged error ({bank_status:#018x})");
+            check::fail!(
+                "cpu.machine_check",
+                "IA32_MC{bank}_STATUS holds a logged error ({bank_status:#018x})"
+            );
             logged += 1;
         }
     }
 
     if !in_progress && logged == 0 {
-        info!("[PASS] no machine check in progress, all {banks} status banks clear");
+        check::pass!(
+            "cpu.machine_check",
+            "no machine check in progress, all {banks} status banks clear"
+        );
     }
 }
 

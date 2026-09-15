@@ -9,8 +9,9 @@ pub mod iommu;
 pub mod memory;
 pub mod mmconfig;
 
-use log::{error, info};
 use memory::SlbRegion;
+
+use crate::check;
 
 /// Runs every AMD check and reports it.
 ///
@@ -19,25 +20,26 @@ use memory::SlbRegion;
 /// the wrong path.
 pub fn report() {
     if checks::skinit_supported() {
-        info!("[PASS] SKINIT CPUID bit set (CPUID.80000001:ECX[12])");
+        check::pass!("amd.skinit", "CPUID.80000001:ECX[12] set");
     } else {
-        error!(
-            "[FAIL] SKINIT CPUID bit not set (CPUID.80000001:ECX[12]), \
-             SKINIT unsupported on this CPU"
+        check::fail!(
+            "amd.skinit",
+            "CPUID.80000001:ECX[12] clear, SKINIT unsupported on this CPU"
         );
     }
 
     match memory::probe_slb_region() {
         SlbRegion::Available(address) => {
-            info!(
-                "[PASS] 64 KiB-aligned SLB region available below 4 GiB \
+            check::pass!(
+                "amd.slb",
+                "64 KiB-aligned region available below 4 GiB \
                  (probed at {address:#x})"
             );
         }
         SlbRegion::Unavailable(status) => {
-            error!(
-                "[FAIL] no 64 KiB-aligned SLB region available below \
-                 4 GiB ({status:?})"
+            check::fail!(
+                "amd.slb",
+                "no 64 KiB-aligned region available below 4 GiB ({status:?})"
             );
         }
     }

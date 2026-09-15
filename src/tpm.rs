@@ -8,7 +8,7 @@
 //! discrete TPM, and the register layout here is the TCG PC Client Platform
 //! TPM Profile, not an AMD interface.
 
-use log::{error, info, warn};
+use crate::check;
 
 /// Base of the TPM's locality 0 MMIO window on the PC platform. Fixed by
 /// the chipset, not discovered (TCG PC Client Platform TPM Profile for
@@ -154,14 +154,17 @@ pub fn probe() -> Probe {
 pub fn report() {
     match probe() {
         Probe::NotPresent => {
-            error!("[FAIL] no TPM answered at locality 0 (0xFED40000)");
+            check::fail!("tpm.present", "nothing answered at locality 0 (0xFED40000)");
         }
         Probe::Present { family, interface } => {
-            info!("[PASS] TPM present at locality 0: {family:?} {interface:?}");
-            warn!(
-                "[WARN] software cannot tell a discrete TPM from a \
-                 firmware TPM, and SKINIT requires a discrete one, verify \
-                 manually"
+            check::pass!(
+                "tpm.present",
+                "locality 0 answered, {family:?} {interface:?}"
+            );
+            check::warn!(
+                "tpm.discrete",
+                "software cannot tell a discrete TPM from a firmware TPM, \
+                 and SKINIT requires a discrete one, verify manually"
             );
         }
     }

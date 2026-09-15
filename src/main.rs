@@ -6,6 +6,7 @@
 #![no_std]
 
 mod amd;
+mod check;
 mod cpu_state;
 mod logging;
 mod msr;
@@ -13,7 +14,7 @@ mod pci;
 mod platform;
 mod tpm;
 
-use log::{info, warn};
+use log::info;
 use platform::Vendor;
 use uefi::prelude::*;
 
@@ -36,14 +37,15 @@ fn main() -> Status {
     // Phase 3: the vendor's own preconditions.
     match cpu.vendor {
         Vendor::Amd => amd::report(),
-        Vendor::Intel => warn!(
-            "[SKIP] AMD checks, this CPU is {}, and the Intel TXT path \
-             is not implemented",
+        Vendor::Intel => check::skip!(
+            "amd.checks",
+            "this CPU is {}, and the Intel TXT path is not implemented",
             cpu.name()
         ),
-        Vendor::Other => warn!(
-            "[SKIP] AMD checks, this CPU is {}, which is neither AMD \
-             nor Intel, so no DRTM path applies",
+        Vendor::Other => check::skip!(
+            "amd.checks",
+            "this CPU is {}, which is neither AMD nor Intel, so no DRTM \
+             path applies",
             cpu.name()
         ),
     }

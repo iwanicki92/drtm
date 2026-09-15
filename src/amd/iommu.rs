@@ -8,8 +8,7 @@
 //! no list of IOMMU device IDs and the capability offset is what anything
 //! programming the IOMMU works from.
 
-use log::{info, warn};
-
+use crate::check;
 use crate::pci::{self, Function};
 
 /// AMD puts both the IOMMU and the older Device Exclusion Vector under
@@ -45,32 +44,35 @@ pub fn report() {
             }
             found += 1;
             at_skl_address |= function == SKL_IOMMU;
-            info!(
-                "[PASS] AMD IOMMU at {function}, capability block at \
-                 {:#04x}",
+            check::pass!(
+                "amd.iommu",
+                "at {function}, capability block at {:#04x}",
                 capability.offset
             );
         });
     });
 
     if found == 0 {
-        warn!(
-            "[WARN] no AMD IOMMU in configuration space, so a launch here \
-             would have no IOMMU to protect memory with"
+        check::warn!(
+            "amd.iommu",
+            "none in configuration space, so a launch here would have no \
+             IOMMU to protect memory with"
         );
         return;
     }
     if !at_skl_address {
-        warn!(
-            "[WARN] no IOMMU at {SKL_IOMMU}, the fixed address the Secure \
-             Kernel Loader sets one up at, so it would configure none"
+        check::warn!(
+            "amd.iommu",
+            "none at {SKL_IOMMU}, the fixed address the Secure Kernel \
+             Loader sets one up at, so it would configure none"
         );
     }
     if found > 1 {
-        warn!(
-            "[WARN] {found} IOMMUs. The Secure Kernel Loader configures \
-             only the one at {SKL_IOMMU}, so its deny-all device table \
-             reaches no other"
+        check::warn!(
+            "amd.iommu",
+            "{found} found. The Secure Kernel Loader configures only the \
+             one at {SKL_IOMMU}, so its deny-all device table reaches no \
+             other"
         );
     }
 }

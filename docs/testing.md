@@ -39,6 +39,7 @@ growing parameters. Tests sharing a boot fail together if it does.
 | `intel_cpu_boot` | No TPM device, Intel CPU model (`Skylake-Client`)  |
 | `tpm_tis_boot`   | `swtpm`-backed TPM 2.0 on the FIFO (TIS) interface |
 | `tpm_crb_boot`   | `swtpm`-backed TPM 2.0 on the CRB interface        |
+| `amd_iommu_boot` | QEMU's `amd-iommu` device attached, AMD CPU model  |
 
 No configuration reports `SKINIT` support, since QEMU will not set that
 feature bit on any CPU model (see [DRTM under QEMU](#drtm-under-qemu)). The
@@ -53,6 +54,20 @@ Each boot reads serial output until `drtm: checks complete`, the last line
 than hanging midway. The binary writes to the serial device itself rather
 than through the UEFI text console, which hard-wraps at 80 columns mid-word,
 so a line arrives whole however long it is.
+
+## What tests assert on
+
+Every check reports as `[TAG] <identifier>: <detail>`, where the tag is
+`PASS`, `FAIL`, `WARN` or `SKIP` and the identifier is a stable dotted name
+with the area first (`cpu.bsp`, `amd.iommu`). `src/check.rs` holds the
+macros that produce it.
+
+Tests key on the tag and the identifier, through `results` and `verdicts` in
+`conftest.py`, so rewording a check's detail text is not a test failure. A
+test that needs a value the check computed, such as the SLB address or the
+machine-check bank count, scrapes it out of the detail and says so. An
+identifier that reports nothing yields an empty list, which is how a skipped
+phase or a vendor gate is asserted.
 
 For each boot, `qemu-tests/qemu_vm.py` builds a scratch working directory
 (under the system temp dir, removed on exit) containing:

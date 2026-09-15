@@ -140,9 +140,8 @@ def intel_cpu_boot(run_log_dir: Path, efi_binary: Path) -> str:
 def amd_iommu_boot(run_log_dir: Path, efi_binary: Path) -> str:
     """Serial output of one boot with QEMU's `amd-iommu` device attached.
 
-    The only configuration where an IOMMU is there to be found at all, so it
-    is what the IOMMU check will need. Until that check exists this fixture
-    only proves the device does not disturb the rest of the boot.
+    The only configuration where an IOMMU is there to be found at all, so the
+    pass path of `amd.iommu` is reachable nowhere else.
     """
     return boot_and_capture(efi_binary, run_log_dir / "boot-amd-iommu", iommu=True)
 
@@ -161,6 +160,32 @@ def tpm_crb_boot(run_log_dir: Path, efi_binary: Path) -> str:
     interface.
     """
     return boot_and_capture(efi_binary, run_log_dir / "boot-tpm-crb", tpm="crb")
+
+
+# Every check reports as `[TAG] <identifier>: <detail>` (see `src/check.rs`).
+# Tests key on the tag and the identifier, so rewording a detail is not a test
+# failure. `_RESULT_RE` is what ties the two ends of that contract together.
+_RESULT_RE = r"\[(PASS|FAIL|WARN|SKIP)\] {identifier}: (.*)"
+
+
+def results(capture: str, identifier: str) -> list[tuple[str, str]]:
+    """Every result `identifier` reported, as (tag, detail) pairs in order.
+
+    Empty when the check did not report at all, which is what a vendor gate
+    or a phase that never ran looks like.
+    """
+    pattern = _RESULT_RE.format(identifier=re.escape(identifier))
+    return [
+        (match.group(1), match.group(2).strip())
+        for match in re.finditer(pattern, capture)
+    ]
+
+
+def verdicts(capture: str, identifier: str) -> list[str]:
+    """Just the tags from `results`, for the common case of not caring what
+    the detail said.
+    """
+    return [tag for tag, _ in results(capture, identifier)]
 
 
 _reports: list[pytest.TestReport] = []

@@ -100,7 +100,6 @@ Observations from real boots. Newest first.
 |------------|---------------------------------------------------------------------------------------------------------------------------|
 | 2026-09-15 | Dasharo publishes `EFI_PCI_ROOT_BRIDGE_IO_PROTOCOL`, one handle on segment 0, and config reads through it work            |
 | 2026-09-15 | That protocol reaches extended config space too: the e1000 answers `14020001` at offset 0x100                             |
-| 2026-09-15 | Opening a root bridge with EXCLUSIVE kills the console, since it disconnects the firmware's PCI bus driver                |
 | 2026-09-15 | `amd-iommu` lands at `0:03.0` in the full test configuration and `0:01.0` with `-nodefaults`, so its address is not fixed |
 | 2026-09-15 | `amd-iommu` attaches to the Dasharo q35 guest without disturbing the boot, with class 0806h and capability 0Fh type 3     |
 | 2026-09-15 | `MSR 0xC0010058` reads zero on six AMD models and on `Skylake-Client` with the gate bypassed, never faulting              |

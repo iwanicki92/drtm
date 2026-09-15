@@ -8,9 +8,7 @@
 //! A window a 32-bit consumer cannot reach fails silently rather than
 //! loudly, which is why the window is reported wherever it sits.
 
-use log::{info, warn};
-
-use crate::msr;
+use crate::{check, msr};
 
 /// `MSR 0xC0010058`, the MMIO configuration base address register. Bit 0
 /// enables the window and bits 5:2 select its size. Linux has carried it
@@ -65,27 +63,30 @@ pub fn probe() -> MmioConfig {
 pub fn report() {
     match probe() {
         MmioConfig::Disabled => {
-            info!(
-                "[SKIP] MMIO configuration space window, MSR 0xC0010058 has \
-                 its enable bit clear, so this platform places the window \
-                 some other way (a chipset register plus ACPI MCFG)"
+            check::skip!(
+                "amd.mmconfig",
+                "MSR 0xC0010058 has its enable bit clear, so this platform \
+                 places the window some other way (a chipset register plus \
+                 ACPI MCFG)"
             );
         }
         MmioConfig::Enabled { base, buses } => {
             let end = base + buses * BYTES_PER_BUS;
             if end <= FOUR_GIB {
-                info!(
-                    "[PASS] MMIO configuration space at {base:#x}..{end:#x} \
-                     ({buses} buses), reachable by a 32-bit consumer"
+                check::pass!(
+                    "amd.mmconfig",
+                    "window at {base:#x}..{end:#x} ({buses} buses), \
+                     reachable by a 32-bit consumer"
                 );
             } else {
                 // Not a failure here, which never drops to 32 bits. It is
                 // still worth saying: the consumer that does reads RAM as
                 // configuration space rather than getting an error.
-                warn!(
-                    "[WARN] MMIO configuration space at {base:#x}..{end:#x} \
-                     ({buses} buses) is not entirely below 4 GiB, a 32-bit \
-                     consumer would read memory in its place"
+                check::warn!(
+                    "amd.mmconfig",
+                    "window at {base:#x}..{end:#x} ({buses} buses) is not \
+                     entirely below 4 GiB, a 32-bit consumer would read \
+                     memory in its place"
                 );
             }
         }

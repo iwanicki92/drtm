@@ -10,11 +10,13 @@
 
 use core::fmt;
 
-use log::{debug, trace, warn};
+use log::{debug, trace};
 use uefi::Identify;
 use uefi::boot::{self, OpenProtocolAttributes, OpenProtocolParams, SearchType};
 use uefi::proto::pci::PciIoAddress;
 use uefi::proto::pci::root_bridge::{PciIoAccessPci, PciRootBridgeIo};
+
+use crate::check;
 
 /// Configuration space offsets, all within the first 256 bytes so the legacy
 /// window is enough (PCI Local Bus Specification 3.0, section 6.1).
@@ -114,9 +116,10 @@ pub fn for_each_function(mut visit: impl FnMut(&PciIoAccessPci<'_>, Function)) {
     let handles = match boot::locate_handle_buffer(SearchType::ByProtocol(&PciRootBridgeIo::GUID)) {
         Ok(handles) => handles,
         Err(error) => {
-            warn!(
-                "[WARN] no PCI root bridge protocol ({:?}), so nothing can be \
-                 read out of configuration space",
+            check::warn!(
+                "pci.root_bridge",
+                "protocol not published ({:?}), so nothing can be read out \
+                 of configuration space",
                 error.status()
             );
             return;
@@ -140,8 +143,9 @@ pub fn for_each_function(mut visit: impl FnMut(&PciIoAccessPci<'_>, Function)) {
         let mut bridge = match bridge {
             Ok(bridge) => bridge,
             Err(error) => {
-                warn!(
-                    "[WARN] a PCI root bridge would not open ({:?})",
+                check::warn!(
+                    "pci.root_bridge",
+                    "one bridge would not open ({:?})",
                     error.status()
                 );
                 continue;
