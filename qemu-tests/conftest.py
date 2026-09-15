@@ -165,7 +165,7 @@ def tpm_crb_boot(run_log_dir: Path, efi_binary: Path) -> str:
 # Every check reports as `[TAG] <identifier>: <detail>` (see `src/check.rs`).
 # Tests key on the tag and the identifier, so rewording a detail is not a test
 # failure. `_RESULT_RE` is what ties the two ends of that contract together.
-_RESULT_RE = r"\[(PASS|FAIL|WARN|SKIP)\] {identifier}: (.*)"
+_RESULT_RE = r"\[(PASS|FAIL|WARN|SKIP|INFO)\] {identifier}: (.*)"
 
 
 def results(capture: str, identifier: str) -> list[tuple[str, str]]:

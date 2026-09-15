@@ -57,10 +57,11 @@ so a line arrives whole however long it is.
 
 ## What tests assert on
 
-Every check reports as `[TAG] <identifier>: <detail>`, where the tag is
-`PASS`, `FAIL`, `WARN` or `SKIP` and the identifier is a stable dotted name
-with the area first (`cpu.bsp`, `amd.iommu`). `src/check.rs` holds the
-macros that produce it.
+Every check reports as `[TAG] <identifier>: <detail>`, where the identifier
+is a stable dotted name with the area first (`cpu.bsp`, `amd.iommu`) and the
+tag is one of five. `PASS`, `FAIL` and `WARN` are verdicts, `SKIP` means the
+check did not run, and `INFO` is for a check that reports a platform fact
+without gating anything. `src/check.rs` holds the macros that produce them.
 
 Tests key on the tag and the identifier, through `results` and `verdicts` in
 `conftest.py`, so rewording a check's detail text is not a test failure. A

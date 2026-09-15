@@ -182,6 +182,15 @@ pub fn for_each_function(mut visit: impl FnMut(&PciIoAccessPci<'_>, Function)) {
     }
 }
 
+/// `function`'s vendor and device ID, the pair every device is identified
+/// by. Reads as `(0xFFFF, 0xFFFF)` where nothing answers.
+pub fn ids(pci: &PciIoAccessPci<'_>, function: Function) -> (u16, u16) {
+    let id = pci
+        .read_one::<u32>(function.address().with_register(REG_ID))
+        .unwrap_or(u32::MAX);
+    (id as u16, (id >> 16) as u16)
+}
+
 /// Whether anything answers at `function`.
 ///
 /// An absent function reads all ones, the bus returning nothing rather than
@@ -196,19 +205,12 @@ fn present(pci: &PciIoAccessPci<'_>, function: Function) -> bool {
 /// Reports every function the root bridges answer for.
 pub fn report() {
     for_each_function(|pci, function| {
-        let address = function.address();
-        let id = pci
-            .read_one::<u32>(address.with_register(REG_ID))
-            .unwrap_or(0);
+        let (vendor, device) = ids(pci, function);
         let class = pci
-            .read_one::<u32>(address.with_register(REG_CLASS))
+            .read_one::<u32>(function.address().with_register(REG_CLASS))
             .unwrap_or(0)
             >> 8;
-        trace!(
-            "[SCAN] {function} id {:04x}:{:04x} class {class:06x}",
-            id as u16,
-            (id >> 16) as u16
-        );
+        trace!("[SCAN] {function} id {vendor:04x}:{device:04x} class {class:06x}");
         for_each_capability(pci, function, |capability| {
             trace!(
                 "[SCAN]   capability {:02x} type {} at {:02x}",

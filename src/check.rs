@@ -39,7 +39,19 @@ macro_rules! check_skip {
     };
 }
 
+/// A fact about the platform that gates nothing, for a check that reports
+/// rather than judges. Earns its own tag by not claiming a verdict it cannot
+/// support, and can become a pass or a fail once it can.
+macro_rules! check_info {
+    ($id:literal, $($detail:tt)*) => {
+        log::info!("[INFO] {}: {}", $id, format_args!($($detail)*))
+    };
+}
+
 // Defined under `check_` names and renamed here, because a plain
 // `macro_rules! warn` cannot be re-exported: the bare name is ambiguous with
 // the built-in `warn` attribute.
-pub(crate) use {check_fail as fail, check_pass as pass, check_skip as skip, check_warn as warn};
+pub(crate) use {
+    check_fail as fail, check_info as info, check_pass as pass, check_skip as skip,
+    check_warn as warn,
+};

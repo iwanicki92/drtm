@@ -132,3 +132,34 @@ def test_iommu_check_runs_after_the_vendor_gate(intel_cpu_boot: str):
     # Capability 0Fh is AMD's, so the check sits in phase 3 and an Intel boot
     # must not report on it either way.
     assert verdicts(intel_cpu_boot, "amd.iommu") == []
+
+
+def test_psp_check_reports_no_secure_processor(default_boot: str):
+    # QEMU models no PSP, so the not-found branch is the only one any boot
+    # here can reach. The matching branches are unreachable until hardware.
+    ((tag, detail),) = results(default_boot, "amd.psp")
+    assert tag == "INFO"
+    assert "no AMD Secure Processor" in detail
+
+
+def test_an_amd_device_that_is_not_a_psp_is_not_matched(amd_iommu_boot: str):
+    # QEMU's amd-iommu answers 1022:0000, AMD's vendor ID with a device ID
+    # that is not in the table. So this exercises the half of the match that
+    # discriminates, which the vendor test alone would let through.
+    assert "id 1022:0000" in amd_iommu_boot
+    ((tag, detail),) = results(amd_iommu_boot, "amd.psp")
+    assert tag == "INFO"
+    assert "no AMD Secure Processor" in detail
+
+
+def test_psp_check_never_judges_the_platform(default_boot: str, amd_iommu_boot: str):
+    # Classic SKINIT does not go through the PSP, and which platforms need
+    # the PSP path is an open question, so no outcome here is a verdict.
+    for capture in (default_boot, amd_iommu_boot):
+        assert set(verdicts(capture, "amd.psp")) == {"INFO"}
+
+
+def test_psp_check_runs_after_the_vendor_gate(intel_cpu_boot: str):
+    # The device table is entirely AMD vendor IDs, so the check sits in
+    # phase 3 and an Intel boot must not report on it at all.
+    assert verdicts(intel_cpu_boot, "amd.psp") == []

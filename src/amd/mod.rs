@@ -8,6 +8,7 @@ pub mod checks;
 pub mod iommu;
 pub mod memory;
 pub mod mmconfig;
+pub mod psp;
 
 use memory::SlbRegion;
 
@@ -46,4 +47,5 @@ pub fn report() {
 
     mmconfig::report();
     iommu::report();
+    psp::report();
 }
