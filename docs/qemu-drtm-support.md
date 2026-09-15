@@ -16,12 +16,12 @@ so the page stays a reference rather than growing a section per discovery.
 
 ## What QEMU already models
 
-| Piece                       | State                                                          |
-|-----------------------------|----------------------------------------------------------------|
-| TPM 2.0, TIS and CRB        | Works through `swtpm`, both interfaces in the suite            |
-| AMD IOMMU                   | `amd-iommu` device, in the test matrix, at `0:1.0` not `0:0.2` |
-| CPU vendor and CPUID leaves | Selected by `-cpu`, enough to drive the vendor gate            |
-| Machine-check architecture  | `IA32_MCG_CAP` reports 10 banks, all readable                  |
+| Piece                       | State                                                            |
+|-----------------------------|------------------------------------------------------------------|
+| TPM 2.0, TIS and CRB        | Works through `swtpm`, both interfaces in the suite              |
+| AMD IOMMU                   | `amd-iommu` device, in the test matrix, at whatever slot is free |
+| CPU vendor and CPUID leaves | Selected by `-cpu`, enough to drive the vendor gate              |
+| Machine-check architecture  | `IA32_MCG_CAP` reports 10 banks, all readable                    |
 
 ## What QEMU does not model
 
@@ -96,10 +96,14 @@ start.
 
 Observations from real boots. Newest first.
 
-| Date       | Observation                                                                                                     |
-|------------|-----------------------------------------------------------------------------------------------------------------|
-| 2026-09-15 | `amd-iommu` attaches to the Dasharo q35 guest without disturbing the boot, and sits at `0:1.0` with class 0806h |
-| 2026-09-15 | `MSR 0xC0010058` reads zero on six AMD models and on `Skylake-Client` with the gate bypassed, never faulting    |
-| 2026-09-15 | Dasharo's firmware leaves `CR0.NE` clear, so that check warns on every boot                                     |
-| 2026-09-15 | `IA32_MCG_CAP` reports 10 banks, all clean and all readable                                                     |
-| 2026-09-13 | A line written to the serial device arrives whole, while the UEFI text console wraps at 80 columns              |
+| Date       | Observation                                                                                                               |
+|------------|---------------------------------------------------------------------------------------------------------------------------|
+| 2026-09-15 | Dasharo publishes `EFI_PCI_ROOT_BRIDGE_IO_PROTOCOL`, one handle on segment 0, and config reads through it work            |
+| 2026-09-15 | That protocol reaches extended config space too: the e1000 answers `14020001` at offset 0x100                             |
+| 2026-09-15 | Opening a root bridge with EXCLUSIVE kills the console, since it disconnects the firmware's PCI bus driver                |
+| 2026-09-15 | `amd-iommu` lands at `0:03.0` in the full test configuration and `0:01.0` with `-nodefaults`, so its address is not fixed |
+| 2026-09-15 | `amd-iommu` attaches to the Dasharo q35 guest without disturbing the boot, with class 0806h and capability 0Fh type 3     |
+| 2026-09-15 | `MSR 0xC0010058` reads zero on six AMD models and on `Skylake-Client` with the gate bypassed, never faulting              |
+| 2026-09-15 | Dasharo's firmware leaves `CR0.NE` clear, so that check warns on every boot                                               |
+| 2026-09-15 | `IA32_MCG_CAP` reports 10 banks, all clean and all readable                                                               |
+| 2026-09-13 | A line written to the serial device arrives whole, while the UEFI text console wraps at 80 columns                        |
