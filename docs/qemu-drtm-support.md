@@ -16,12 +16,12 @@ so the page stays a reference rather than growing a section per discovery.
 
 ## What QEMU already models
 
-| Piece                       | State                                                     |
-|-----------------------------|-----------------------------------------------------------|
-| TPM 2.0, TIS and CRB        | Works through `swtpm`, both interfaces in the suite       |
-| AMD IOMMU                   | `amd-iommu` and `AMDVI-PCI` devices exist, untried so far |
-| CPU vendor and CPUID leaves | Selected by `-cpu`, enough to drive the vendor gate       |
-| Machine-check architecture  | `IA32_MCG_CAP` reports 10 banks, all readable             |
+| Piece                       | State                                                          |
+|-----------------------------|----------------------------------------------------------------|
+| TPM 2.0, TIS and CRB        | Works through `swtpm`, both interfaces in the suite            |
+| AMD IOMMU                   | `amd-iommu` device, in the test matrix, at `0:1.0` not `0:0.2` |
+| CPU vendor and CPUID leaves | Selected by `-cpu`, enough to drive the vendor gate            |
+| Machine-check architecture  | `IA32_MCG_CAP` reports 10 banks, all readable                  |
 
 ## What QEMU does not model
 
@@ -67,15 +67,11 @@ Ranked by what it would buy against what it would cost.
 
 ### Useful now, for the precondition checks
 
-1. **Model `MSR 0xC0010058`.** Small, and the only thing standing between
-    us and exercising both enabled outcomes of the MMCONFIG check, whose
-    arithmetic currently runs on no input but zero. A writable register
-    honouring the documented field layout would be enough. Note the KVM
-    path would need its own change, since the kernel pins it to zero on
-    purpose.
-2. **Put the `amd-iommu` device in the test matrix.** It exists and we
-    have never booted with it. Cheaper than any emulator change and it is
-    what the IOMMU check will need.
+**Model `MSR 0xC0010058`.** Small, and the only thing standing between us
+and exercising both enabled outcomes of the MMCONFIG check, whose arithmetic
+currently runs on no input but zero. A writable register honouring the
+documented field layout would be enough. Note the KVM path would need its
+own change, since the kernel pins it to zero on purpose.
 
 ### Needed before a launch could run at all
 
@@ -100,9 +96,10 @@ start.
 
 Observations from real boots. Newest first.
 
-| Date       | Observation                                                                                                  |
-|------------|--------------------------------------------------------------------------------------------------------------|
-| 2026-09-15 | `MSR 0xC0010058` reads zero on six AMD models and on `Skylake-Client` with the gate bypassed, never faulting |
-| 2026-09-15 | Dasharo's firmware leaves `CR0.NE` clear, so that check warns on every boot                                  |
-| 2026-09-15 | `IA32_MCG_CAP` reports 10 banks, all clean and all readable                                                  |
-| 2026-09-13 | A line written to the serial device arrives whole, while the UEFI text console wraps at 80 columns           |
+| Date       | Observation                                                                                                     |
+|------------|-----------------------------------------------------------------------------------------------------------------|
+| 2026-09-15 | `amd-iommu` attaches to the Dasharo q35 guest without disturbing the boot, and sits at `0:1.0` with class 0806h |
+| 2026-09-15 | `MSR 0xC0010058` reads zero on six AMD models and on `Skylake-Client` with the gate bypassed, never faulting    |
+| 2026-09-15 | Dasharo's firmware leaves `CR0.NE` clear, so that check warns on every boot                                     |
+| 2026-09-15 | `IA32_MCG_CAP` reports 10 banks, all clean and all readable                                                     |
+| 2026-09-13 | A line written to the serial device arrives whole, while the UEFI text console wraps at 80 columns              |

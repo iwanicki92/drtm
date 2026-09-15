@@ -100,6 +100,7 @@ def boot_and_capture(
     log_dir: Path,
     tpm: str | None = None,
     cpu: str = DEFAULT_CPU,
+    iommu: bool = False,
 ) -> str:
     """Boots `efi_binary` once and returns everything it printed.
 
@@ -108,7 +109,7 @@ def boot_and_capture(
     matching parameter here and on `QemuVm`.
     """
     log_dir.mkdir(parents=True, exist_ok=True)
-    with QemuVm(efi_binary, log_dir=log_dir, tpm=tpm, cpu=cpu) as vm:
+    with QemuVm(efi_binary, log_dir=log_dir, tpm=tpm, cpu=cpu, iommu=iommu) as vm:
         return vm.read_serial_until(CHECKS_COMPLETE, timeout=BOOT_TIMEOUT)
 
 
@@ -133,6 +134,17 @@ def intel_cpu_boot(run_log_dir: Path, efi_binary: Path) -> str:
     return boot_and_capture(
         efi_binary, run_log_dir / "boot-intel-cpu", cpu="Skylake-Client"
     )
+
+
+@pytest.fixture(scope="session")
+def amd_iommu_boot(run_log_dir: Path, efi_binary: Path) -> str:
+    """Serial output of one boot with QEMU's `amd-iommu` device attached.
+
+    The only configuration where an IOMMU is there to be found at all, so it
+    is what the IOMMU check will need. Until that check exists this fixture
+    only proves the device does not disturb the rest of the boot.
+    """
+    return boot_and_capture(efi_binary, run_log_dir / "boot-amd-iommu", iommu=True)
 
 
 @pytest.fixture(scope="session")

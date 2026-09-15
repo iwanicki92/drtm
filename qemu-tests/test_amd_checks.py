@@ -4,9 +4,10 @@
 
 """Exercises the AMD-gated checks (`src/amd/`).
 
-These run only on an AMD CPU, so they all take `default_boot`, which QEMU
-gives an `EPYC` model. That the skip path really skips them is asserted in
-`test_platform_checks.py`.
+These run only on an AMD CPU, so they take a boot fixture QEMU gives an
+`EPYC` model: `default_boot` for the checks themselves, `amd_iommu_boot`
+where an IOMMU has to be present. That the skip path really skips them is
+asserted in `test_platform_checks.py`.
 
 Two branches here are unreachable under QEMU rather than merely untaken.
 The MMCONFIG check only ever sees an unimplemented MSR reading zero, so
@@ -65,3 +66,12 @@ def test_mmio_config_window_is_not_reported_as_a_failure(default_boot: str):
     # The whole point of the third outcome. A platform that does not use this
     # MSR is not a platform that failed a check.
     assert "[FAIL] MMIO configuration space" not in default_boot
+
+
+def test_the_checks_survive_an_attached_iommu(amd_iommu_boot: str):
+    # No IOMMU check exists yet, so this only proves the device attaches and
+    # the guest still boots to the end, which is what the IOMMU check will
+    # be built on top of.
+    assert "[PASS] 64 KiB-aligned SLB region available below 4 GiB" in amd_iommu_boot
+    assert "[FAIL] SKINIT CPUID bit not set" in amd_iommu_boot
+    assert "checks complete" in amd_iommu_boot

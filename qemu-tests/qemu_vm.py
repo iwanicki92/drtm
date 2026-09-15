@@ -79,6 +79,10 @@ class QemuVm:
     `cpu` is passed straight to `-cpu`, so it decides the vendor string and
     feature bits the guest sees. Any name `qemu-system-x86_64 -cpu help`
     lists works.
+
+    `iommu` attaches QEMU's `amd-iommu`, which shows up as an AMD function
+    carrying the secure-device capability an IOMMU scan looks for. QEMU puts
+    it at `0:1.0`, not the `0:0.2` of real silicon.
     """
 
     def __init__(
@@ -87,6 +91,7 @@ class QemuVm:
         log_dir: Path,
         tpm: str | None = None,
         cpu: str = DEFAULT_CPU,
+        iommu: bool = False,
     ):
         if tpm not in (None, "tis", "crb"):
             raise ValueError(f"tpm must be None, 'tis' or 'crb', got {tpm!r}")
@@ -94,6 +99,7 @@ class QemuVm:
         self.log_dir = Path(log_dir)
         self.tpm = tpm
         self.cpu = cpu
+        self.iommu = iommu
         self._workdir = None
         self._process = None
         self._swtpm_process = None
@@ -164,6 +170,9 @@ class QemuVm:
                 "-device",
                 f"tpm-{self.tpm},tpmdev=tpm0",
             ]
+
+        if self.iommu:
+            args += ["-device", "amd-iommu"]
 
         if _use_kvm():
             args.append("-enable-kvm")
