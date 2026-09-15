@@ -75,3 +75,23 @@ def test_the_checks_survive_an_attached_iommu(amd_iommu_boot: str):
     assert "[PASS] 64 KiB-aligned SLB region available below 4 GiB" in amd_iommu_boot
     assert "[FAIL] SKINIT CPUID bit not set" in amd_iommu_boot
     assert "checks complete" in amd_iommu_boot
+
+
+def test_pci_scan_finds_the_iommu(amd_iommu_boot: str):
+    # Class 0806h is the IOMMU subclass. QEMU puts the device at whatever
+    # slot is free, so match on what it is rather than where it sits.
+    match = re.search(r"\[SCAN\] \S+ id 1022:[0-9a-f]{4} class 080600", amd_iommu_boot)
+    assert match is not None, "the scan reported no IOMMU-class AMD function"
+
+
+def test_pci_scan_reports_the_iommu_capability(amd_iommu_boot: str):
+    # Capability 0Fh with type 3 is what identifies an AMD IOMMU, and it is
+    # how the check will find it. Type lives in bits 18:16 of the header.
+    assert "[SCAN]   capability 0f type 3 at" in amd_iommu_boot
+
+
+def test_no_iommu_without_the_device(default_boot: str):
+    # The same scan on a guest with no IOMMU, so a pass above means the scan
+    # discriminates rather than always reporting one.
+    assert "capability 0f type 3" not in default_boot
+    assert "class 080600" not in default_boot

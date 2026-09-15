@@ -111,3 +111,29 @@ def test_tpm_warns_that_discreteness_is_unverifiable(tpm_tis_boot: str):
     # A pass must never read as "SKINIT will work here": software cannot
     # tell a discrete TPM from a firmware one, and SKINIT needs a discrete.
     assert "[WARN] software cannot tell a discrete TPM" in tpm_tis_boot
+
+
+def test_pci_root_bridge_protocol_is_available(default_boot: str):
+    # Everything read out of configuration space depends on the firmware
+    # publishing this. QEMU's q35 has one root bridge, hence one handle.
+    assert "[SCAN] PCI root bridges: 1" in default_boot
+
+
+def test_pci_scan_finds_the_host_bridge(default_boot: str):
+    # 8086:29c0 is the Q35 MCH, at 0:00.0 on every boot, so it is the one
+    # device the scan can be held to by name.
+    assert "[SCAN] 0000:00:00.0 id 8086:29c0 class 060000" in default_boot
+
+
+def test_pci_scan_walks_capability_lists(default_boot: str):
+    # A device with no capabilities would still print its identity line, so
+    # assert some list was actually walked rather than silently skipped.
+    assert re.search(
+        r"\[SCAN\]   capability [0-9a-f]{2} type \d at [0-9a-f]{2}", default_boot
+    )
+
+
+def test_pci_scan_runs_on_a_non_amd_cpu(intel_cpu_boot: str):
+    # Configuration space is not a vendor-specific interface, so this runs in
+    # phase 2 rather than behind the AMD gate.
+    assert "[SCAN] PCI root bridges: 1" in intel_cpu_boot
