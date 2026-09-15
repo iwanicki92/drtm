@@ -13,9 +13,11 @@ use log::{info, warn};
 use crate::msr;
 
 /// `MSR 0xC0010058`, the MMIO configuration base address register. Bit 0
-/// enables the window and bits 5:2 select its size. Only the Processor
-/// Programming Reference documents it, and reading it on a non-AMD CPU
-/// raises `#GP`.
+/// enables the window and bits 5:2 select its size. Linux has carried it
+/// since family 10h as `MSR_FAM10H_MMIO_CONF_BASE`, but only the Processor
+/// Programming Reference gives the base field's width. Reading it on a
+/// non-AMD CPU raises `#GP` on silicon, though not under QEMU, which does
+/// not model the register and returns zero whatever the vendor.
 const MMIO_CONFIG_BASE_MSR: u32 = 0xC001_0058;
 const MMIO_CONFIG_ENABLE: u64 = 1;
 const BUS_RANGE_SHIFT: u32 = 2;
@@ -36,7 +38,8 @@ const FOUR_GIB: u64 = 1 << 32;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MmioConfig {
     /// The enable bit is clear, so the platform describes the window some
-    /// other way. Not a failure, and what QEMU's Q35 does.
+    /// other way. Not a failure. Also what QEMU always reports, from its CPU
+    /// emulation rather than the chipset, so a boot there proves nothing.
     Disabled,
     Enabled {
         base: u64,
