@@ -51,6 +51,8 @@ reporting) can be built without re-litigating them later:
     no second console. Output should carry a human-readable form and a
     machine-parseable form, but as two exclusive modes of one binary rather
     than both at once, since they share the single stream the operator is
-    reading. The mode is chosen at runtime from a config file on the ESP,
-    because the removable-media boot path this tool uses passes it no
-    arguments. Exact format is still open.
+    reading. The mode is chosen at runtime from `drtm.conf` beside the
+    binary on the ESP, because the removable-media boot path this tool uses
+    passes it no arguments. That file already carries `level=`, which sets
+    how much is printed. Exact format of the machine-parseable mode is still
+    open.

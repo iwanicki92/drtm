@@ -5,8 +5,11 @@
 #![no_main]
 #![no_std]
 
+extern crate alloc;
+
 mod amd;
 mod check;
+mod config;
 mod cpu_state;
 mod logging;
 mod msr;
@@ -22,6 +25,9 @@ use uefi::prelude::*;
 fn main() -> Status {
     uefi::helpers::init().unwrap();
     logging::init();
+    let config = config::Config::load();
+    log::set_max_level(config.level);
+    config.report();
 
     info!("hello from UEFI");
 

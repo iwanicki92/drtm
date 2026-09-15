@@ -1,0 +1,44 @@
+# SPDX-FileCopyrightText: 2026 iwanicki92 <iwanicki92@gmail.com>
+#
+# SPDX-License-Identifier: Apache-2.0
+
+"""Exercises `drtm.conf`, the file beside the binary that sets the log level.
+
+No boot exists for these alone. The TPM boots only assert on `tpm.*`
+results, which every level prints, so they carry the two config states the
+other boots cannot: `tpm_crb_boot` has no file, `tpm_tis_boot` a bad one.
+"""
+
+from conftest import CHECKS_COMPLETE, results, verdicts
+
+
+def test_without_a_config_the_scan_is_not_printed(tpm_crb_boot: str):
+    # The default is `info`, so the per-device dump stays out of the way.
+    assert "[SCAN]" not in tpm_crb_boot
+    assert CHECKS_COMPLETE in tpm_crb_boot
+
+
+def test_without_a_config_every_check_still_reports(tpm_crb_boot: str):
+    assert verdicts(tpm_crb_boot, "tpm.present") == ["PASS"]
+    assert verdicts(tpm_crb_boot, "amd.iommu") == ["WARN"]
+
+
+def test_a_missing_config_is_not_a_warning(tpm_crb_boot: str):
+    assert verdicts(tpm_crb_boot, "config") == []
+
+
+def test_raising_the_level_prints_the_scan(default_boot: str):
+    assert "[SCAN] PCI root bridges: 1" in default_boot
+
+
+def test_an_unknown_level_is_reported_with_its_line(tpm_tis_boot: str):
+    # The value and where it sits are what someone fixing the file needs.
+    ((tag, detail),) = results(tpm_tis_boot, "config")
+    assert tag == "WARN"
+    assert "line 2" in detail
+    assert "verbose" in detail
+
+
+def test_an_unknown_level_falls_back_to_the_default(tpm_tis_boot: str):
+    assert "[SCAN]" not in tpm_tis_boot
+    assert CHECKS_COMPLETE in tpm_tis_boot

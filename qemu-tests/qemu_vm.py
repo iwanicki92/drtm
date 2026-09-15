@@ -83,6 +83,9 @@ class QemuVm:
     `iommu` attaches QEMU's `amd-iommu`, which shows up as an AMD function
     carrying the secure-device capability an IOMMU scan looks for. QEMU puts
     it at `0:1.0`, not the `0:0.2` of real silicon.
+
+    `config` is written beside the binary as `drtm.conf`. Leave it `None` for
+    no file at all, which is what a stick carrying only the binary looks like.
     """
 
     def __init__(
@@ -92,6 +95,7 @@ class QemuVm:
         tpm: str | None = None,
         cpu: str = DEFAULT_CPU,
         iommu: bool = False,
+        config: str | None = None,
     ):
         if tpm not in (None, "tis", "crb"):
             raise ValueError(f"tpm must be None, 'tis' or 'crb', got {tpm!r}")
@@ -100,6 +104,7 @@ class QemuVm:
         self.tpm = tpm
         self.cpu = cpu
         self.iommu = iommu
+        self.config = config
         self._workdir = None
         self._process = None
         self._swtpm_process = None
@@ -122,6 +127,8 @@ class QemuVm:
         esp_dir = Path(self._workdir) / "esp" / "EFI" / "BOOT"
         esp_dir.mkdir(parents=True)
         shutil.copy(self.efi_binary, esp_dir / "BOOTX64.EFI")
+        if self.config is not None:
+            (esp_dir / "drtm.conf").write_text(self.config)
 
         firmware = Path(self._workdir) / "firmware.rom"
         shutil.copy(cached_firmware_path(), firmware)

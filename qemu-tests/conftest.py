@@ -33,6 +33,14 @@ _MAX_RUN_NUMBER = 9999
 # capture holds every check's result rather than a partially booted guest.
 CHECKS_COMPLETE = "drtm: checks complete"
 
+# The `drtm.conf` most boots get. Tests assert on `[SCAN]` lines, which sit
+# below the default `info` level, so a boot without this would not print them.
+FULL_OUTPUT = "level=trace\n"
+
+# A value `level=` does not accept, on line 2 behind a comment so the reported
+# line number is not trivially 1.
+BAD_LEVEL = "# drtm.conf\nlevel=verbose\n"
+
 # Generous on purpose. Measured boot-to-marker is ~11s under TCG and ~23s
 # under KVM on a nested-virtualisation host, but this only has to be tight
 # enough to catch a genuinely stuck guest. Being slow to report a real hang
@@ -101,6 +109,7 @@ def boot_and_capture(
     tpm: str | None = None,
     cpu: str = DEFAULT_CPU,
     iommu: bool = False,
+    config: str | None = FULL_OUTPUT,
 ) -> str:
     """Boots `efi_binary` once and returns everything it printed.
 
@@ -109,7 +118,9 @@ def boot_and_capture(
     matching parameter here and on `QemuVm`.
     """
     log_dir.mkdir(parents=True, exist_ok=True)
-    with QemuVm(efi_binary, log_dir=log_dir, tpm=tpm, cpu=cpu, iommu=iommu) as vm:
+    with QemuVm(
+        efi_binary, log_dir=log_dir, tpm=tpm, cpu=cpu, iommu=iommu, config=config
+    ) as vm:
         return vm.read_serial_until(CHECKS_COMPLETE, timeout=BOOT_TIMEOUT)
 
 
@@ -151,16 +162,26 @@ def amd_iommu_boot(run_log_dir: Path, efi_binary: Path) -> str:
 def tpm_tis_boot(run_log_dir: Path, efi_binary: Path) -> str:
     """Serial output of one boot with an `swtpm`-backed TPM 2.0 on the FIFO
     (TIS) interface.
+
+    Its `drtm.conf` names a level that does not exist. The TPM tests only
+    read results, so this boot also covers a config that has to be refused.
     """
-    return boot_and_capture(efi_binary, run_log_dir / "boot-tpm-tis", tpm="tis")
+    return boot_and_capture(
+        efi_binary, run_log_dir / "boot-tpm-tis", tpm="tis", config=BAD_LEVEL
+    )
 
 
 @pytest.fixture(scope="session")
 def tpm_crb_boot(run_log_dir: Path, efi_binary: Path) -> str:
     """Serial output of one boot with an `swtpm`-backed TPM 2.0 on the CRB
     interface.
+
+    Boots with no `drtm.conf`, which the TPM tests do not notice, so this
+    boot also covers the defaults.
     """
-    return boot_and_capture(efi_binary, run_log_dir / "boot-tpm-crb", tpm="crb")
+    return boot_and_capture(
+        efi_binary, run_log_dir / "boot-tpm-crb", tpm="crb", config=None
+    )
 
 
 # Every check reports as `[TAG] <identifier>: <detail>` (see `src/check.rs`).

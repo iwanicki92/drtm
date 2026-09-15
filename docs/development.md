@@ -46,6 +46,25 @@ would then show every line twice. The QEMU suite only ever builds the
 default, so the other two combinations are checked by `cargo build` and
 nothing else.
 
+## Runtime configuration
+
+`drtm.conf` sits beside the binary on the ESP, next to `BOOTX64.EFI`, and is
+read at startup. It is optional: with no file the defaults apply.
+
+```text
+# how much to print: off, error, warn, info, debug, trace
+level=info
+```
+
+`level=info` is the default and prints one line per check. `debug` adds the
+PCI root bridge count, and `trace` the whole configuration space dump the
+IOMMU and Secure Processor checks read.
+
+A line that is not `key=value`, an unknown key and an unusable value are
+each reported as a `config` warning naming the line, and the default is kept.
+A file this tool cannot read is never a reason to refuse to run, since
+producing diagnostics on a machine that is already misbehaving is the point.
+
 ## Task runner
 
 Build, lint, and test are wrapped in a [Taskfile](https://taskfile.dev/)

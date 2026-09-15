@@ -33,13 +33,13 @@ tests assert against. A configuration needing different QEMU arguments gets
 its own fixture calling `boot_and_capture`, rather than the existing ones
 growing parameters. Tests sharing a boot fail together if it does.
 
-| Fixture          | Configuration                                      |
-|------------------|----------------------------------------------------|
-| `default_boot`   | No TPM device, AMD CPU model (`EPYC`)              |
-| `intel_cpu_boot` | No TPM device, Intel CPU model (`Skylake-Client`)  |
-| `tpm_tis_boot`   | `swtpm`-backed TPM 2.0 on the FIFO (TIS) interface |
-| `tpm_crb_boot`   | `swtpm`-backed TPM 2.0 on the CRB interface        |
-| `amd_iommu_boot` | QEMU's `amd-iommu` device attached, AMD CPU model  |
+| Fixture          | Configuration                                      | `drtm.conf`     |
+|------------------|----------------------------------------------------|-----------------|
+| `default_boot`   | No TPM device, AMD CPU model (`EPYC`)              | `level=trace`   |
+| `intel_cpu_boot` | No TPM device, Intel CPU model (`Skylake-Client`)  | `level=trace`   |
+| `tpm_tis_boot`   | `swtpm`-backed TPM 2.0 on the FIFO (TIS) interface | `level=verbose` |
+| `tpm_crb_boot`   | `swtpm`-backed TPM 2.0 on the CRB interface        | none            |
+| `amd_iommu_boot` | QEMU's `amd-iommu` device attached, AMD CPU model  | `level=trace`   |
 
 No configuration reports `SKINIT` support, since QEMU will not set that
 feature bit on any CPU model (see [DRTM under QEMU](#drtm-under-qemu)). The
@@ -48,6 +48,14 @@ at all: `default_boot` is AMD so every check runs, while `intel_cpu_boot`
 covers the path where the AMD checks are skipped and the vendor-independent
 ones still run. Both TPM interfaces are tested because the check reports
 them differently, and an earlier bug got CRB wrong while passing on TIS.
+
+The binary reads `drtm.conf` from beside itself on the ESP, so `QemuVm`
+writes one into the scratch ESP. Most boots raise the level to `trace`,
+because the `[SCAN]` dump the PCI tests assert on sits below the default
+`info`. The two TPM boots only read results, which print at any level, so
+they carry the other two states: `tpm_crb_boot` has no file at all and
+`tpm_tis_boot` an unusable level, which must be refused without stopping the
+run. `test_config.py` asserts on those two.
 
 Each boot reads serial output until `drtm: checks complete`, the last line
 `src/main.rs` prints, which proves the binary got past every check rather

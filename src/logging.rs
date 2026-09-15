@@ -23,14 +23,6 @@ use uefi::boot::{self, OpenProtocolAttributes, OpenProtocolParams, ScopedProtoco
 use uefi::proto::console::serial::Serial;
 use uefi::{Handle, system};
 
-/// Verbosity until something asks for another. Everything up to `trace` is
-/// compiled in, so raising it needs no rebuild.
-///
-/// `trace` rather than `info` only because nothing can ask yet. It drops to
-/// `info` when `drtm.conf` arrives, and the levels records already carry are
-/// what makes that a one-line change.
-const DEFAULT_LEVEL: LevelFilter = LevelFilter::Trace;
-
 /// Which sinks to write each record to, from the `sink-serial` and
 /// `sink-console` cargo features.
 ///
@@ -52,12 +44,15 @@ static LOGGER: Logger = Logger;
 struct Logger;
 
 /// Installs the logger. Call once, after `uefi::helpers::init()`.
+///
+/// Everything up to `trace` is compiled in and let through, until `drtm.conf`
+/// has been read and sets the level.
 pub fn init() {
     if let Ok(handle) = boot::get_handle_for_protocol::<Serial>() {
         SERIAL.store(handle.as_ptr(), Ordering::Relaxed);
     }
     log::set_logger(&LOGGER).expect("a logger is already installed");
-    log::set_max_level(DEFAULT_LEVEL);
+    log::set_max_level(LevelFilter::Trace);
 }
 
 /// Opens the serial device for one write.
