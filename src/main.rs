@@ -32,11 +32,12 @@ fn main() -> Status {
     // Phase 2: checks that hold regardless of which DRTM path applies.
     cpu_state::report();
     tpm::report();
-    pci::report();
+    let devices = pci::scan();
+    pci::report(&devices);
 
     // Phase 3: the vendor's own preconditions.
     match cpu.vendor {
-        Vendor::Amd => amd::report(),
+        Vendor::Amd => amd::report(&devices),
         Vendor::Intel => check::skip!(
             "amd.checks",
             "this CPU is {}, and the Intel TXT path is not implemented",

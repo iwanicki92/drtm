@@ -20,6 +20,7 @@ so the page stays a reference rather than growing a section per discovery.
 |-----------------------------|------------------------------------------------------------------|
 | TPM 2.0, TIS and CRB        | Works through `swtpm`, both interfaces in the suite              |
 | AMD IOMMU                   | `amd-iommu` device, in the test matrix, at whatever slot is free |
+| PCI configuration space     | Read through the root bridge protocol, extended space included   |
 | CPU vendor and CPUID leaves | Selected by `-cpu`, enough to drive the vendor gate              |
 | Machine-check architecture  | `IA32_MCG_CAP` reports 10 banks, all readable                    |
 
@@ -52,6 +53,17 @@ know this register, as `MSR_FAM10H_MMIO_CONF_BASE`, and deliberately reads
 it as zero rather than exposing the host's value, while rejecting any
 nonzero write with `#GP` (`arch/x86/kvm/`). So the window reads disabled on
 both accelerators, and no guest firmware could enable it.
+
+**The AMD Secure Processor.** No device in the QEMU tree carries any of the
+Secure Processor IDs the loaders match on, and `hw/misc/` has no PSP model
+at all. So the PSP check only ever reaches its not-found branch here, and
+the mailbox that would say whether the DRTM service is enabled has nothing
+to answer it.
+
+The `amd-iommu` device is the nearest thing to a false positive, answering
+`1022:0000`: AMD's vendor ID with a device ID no table lists. That makes it
+worth keeping in the matrix for this check too, since it exercises the half
+of the match that discriminates.
 
 **An AMD northbridge.** The x86 host bridges QEMU ships are `i440fx.c` and
 `q35.c`, both Intel (`hw/pci-host/`). Q35 carries extended configuration
@@ -98,6 +110,8 @@ Observations from real boots. Newest first.
 
 | Date       | Observation                                                                                                               |
 |------------|---------------------------------------------------------------------------------------------------------------------------|
+| 2026-09-16 | `amd-iommu` answers `1022:0000`, so an AMD vendor ID alone would take it for a Secure Processor                           |
+| 2026-09-16 | No guest configuration answers with any Secure Processor device ID, so the PSP check only reaches its not-found branch    |
 | 2026-09-15 | Dasharo publishes `EFI_PCI_ROOT_BRIDGE_IO_PROTOCOL`, one handle on segment 0, and config reads through it work            |
 | 2026-09-15 | That protocol reaches extended config space too: the e1000 answers `14020001` at offset 0x100                             |
 | 2026-09-15 | `amd-iommu` lands at `0:03.0` in the full test configuration and `0:01.0` with `-nodefaults`, so its address is not fixed |

@@ -11,7 +11,7 @@
 use core::fmt;
 
 use crate::check;
-use crate::pci::{self, Function};
+use crate::pci::{Devices, Function};
 
 /// AMD's PCI vendor ID, the only one any Secure Processor answers with.
 const VENDOR_AMD: u16 = 0x1022;
@@ -75,16 +75,15 @@ fn lookup(vendor: u16, device: u16) -> Option<Drtm> {
 /// Never a pass or a fail. The device ID says which mailbox a loader would
 /// drive, not whether the PSP's firmware would answer: that takes a mailbox
 /// command, which would change platform state rather than observe it.
-pub fn report() {
+pub fn report(devices: &Devices) {
     let mut found = 0;
-    pci::for_each_function(|pci, function| {
-        let (vendor, device) = pci::ids(pci, function);
-        let Some(drtm) = lookup(vendor, device) else {
-            return;
+    for entry in devices.iter() {
+        let Some(drtm) = lookup(entry.vendor, entry.device) else {
+            continue;
         };
         found += 1;
-        describe(function, device, drtm);
-    });
+        describe(entry.function, entry.device, drtm);
+    }
 
     if found == 0 {
         check::info!(

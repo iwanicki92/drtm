@@ -9,7 +9,7 @@
 //! programming the IOMMU works from.
 
 use crate::check;
-use crate::pci::{self, Function};
+use crate::pci::{self, Devices, Function};
 
 /// AMD puts both the IOMMU and the older Device Exclusion Vector under
 /// capability ID `0x0F`, so the type field is what separates them
@@ -32,10 +32,11 @@ const SKL_IOMMU: Function = Function {
 /// Not a gate. A missing IOMMU costs DMA protection, which is a weaker
 /// launch rather than no launch, so it warns where a real precondition
 /// would fail.
-pub fn report() {
+pub fn report(devices: &Devices) {
     let mut found = 0;
     let mut at_skl_address = false;
-    pci::for_each_function(|pci, function| {
+    pci::for_each_device(devices, |pci, device| {
+        let function = device.function;
         pci::for_each_capability(pci, function, |capability| {
             if capability.id != CAPABILITY_ID_SECURE_DEVICE
                 || capability.kind != CAPABILITY_TYPE_IOMMU

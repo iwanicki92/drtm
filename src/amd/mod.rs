@@ -13,13 +13,14 @@ pub mod psp;
 use memory::SlbRegion;
 
 use crate::check;
+use crate::pci::Devices;
 
 /// Runs every AMD check and reports it.
 ///
 /// Only called once the CPU has been identified as AMD, so a failure here
 /// means an AMD machine that cannot do a dynamic launch, not a machine on
 /// the wrong path.
-pub fn report() {
+pub fn report(devices: &Devices) {
     if checks::skinit_supported() {
         check::pass!("amd.skinit", "CPUID.80000001:ECX[12] set");
     } else {
@@ -46,6 +47,6 @@ pub fn report() {
     }
 
     mmconfig::report();
-    iommu::report();
-    psp::report();
+    iommu::report(devices);
+    psp::report(devices);
 }

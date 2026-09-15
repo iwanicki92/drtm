@@ -63,6 +63,58 @@ impl fmt::Display for Function {
     }
 }
 
+/// Upper bound on what one scan records. QEMU's q35 answers for about ten
+/// functions and a large server for a few hundred, so this is a guard
+/// against a runaway scan rather than a limit anything should meet.
+const MAX_FUNCTIONS: usize = 256;
+
+/// One function that answered, with the identity checks match on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Device {
+    pub function: Function,
+    pub vendor: u16,
+    pub device: u16,
+}
+
+/// Fills the unused tail of a [`Devices`], which `count` keeps anything
+/// from reading.
+const ABSENT: Device = Device {
+    function: Function {
+        segment: 0,
+        bus: 0,
+        device: 0,
+        function: 0,
+    },
+    vendor: 0,
+    device: 0,
+};
+
+/// What one walk of configuration space found.
+///
+/// Built once by [`scan`] and handed to every check, so the walk that costs
+/// something happens once however many checks read configuration space.
+pub struct Devices {
+    entries: [Device; MAX_FUNCTIONS],
+    len: usize,
+}
+
+impl Devices {
+    fn push(&mut self, device: Device) {
+        if self.len < MAX_FUNCTIONS {
+            self.entries[self.len] = device;
+            self.len += 1;
+        }
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = &Device> {
+        self.entries[..self.len].iter()
+    }
+
+    pub fn count(&self) -> usize {
+        self.len
+    }
+}
+
 /// One entry of a function's capability list.
 ///
 /// `kind` is bits 18:16 of the header, which AMD uses to tell apart the two
@@ -108,11 +160,8 @@ pub fn for_each_capability(
     }
 }
 
-/// Calls `visit` for every function every root bridge answers for.
-///
-/// Every bus each bridge decodes, not just bus 0. An AMD server has
-/// several IOMMUs, on buses of their own rather than all on bus 0.
-pub fn for_each_function(mut visit: impl FnMut(&PciIoAccessPci<'_>, Function)) {
+/// Opens every PCI root bridge in turn and calls `visit` with it.
+fn for_each_bridge(mut visit: impl FnMut(&PciIoAccessPci<'_>, u32)) {
     let handles = match boot::locate_handle_buffer(SearchType::ByProtocol(&PciRootBridgeIo::GUID)) {
         Ok(handles) => handles,
         Err(error) => {
@@ -125,8 +174,6 @@ pub fn for_each_function(mut visit: impl FnMut(&PciIoAccessPci<'_>, Function)) {
             return;
         }
     };
-    debug!("[SCAN] PCI root bridges: {}", handles.len());
-
     for handle in handles.iter() {
         let params = OpenProtocolParams {
             handle: *handle,
@@ -152,7 +199,24 @@ pub fn for_each_function(mut visit: impl FnMut(&PciIoAccessPci<'_>, Function)) {
             }
         };
         let segment = bridge.segment_nr();
-        let pci = bridge.pci();
+        visit(&bridge.pci(), segment);
+    }
+}
+
+/// Finds every function every root bridge answers for.
+///
+/// Every bus each bridge decodes, not just bus 0. An AMD server has several
+/// IOMMUs, on buses of their own rather than all on bus 0. That is what
+/// makes this the expensive part, and why one scan is shared by every check
+/// rather than run once per check.
+pub fn scan() -> Devices {
+    let mut devices = Devices {
+        entries: [ABSENT; MAX_FUNCTIONS],
+        len: 0,
+    };
+    let mut bridges = 0;
+    for_each_bridge(|pci, segment| {
+        bridges += 1;
         for bus in 0..=u8::MAX {
             for device in 0..32u8 {
                 let zero = Function {
@@ -161,10 +225,10 @@ pub fn for_each_function(mut visit: impl FnMut(&PciIoAccessPci<'_>, Function)) {
                     device,
                     function: 0,
                 };
-                if !present(&pci, zero) {
+                let Some(entry) = probe(pci, zero) else {
                     continue;
-                }
-                visit(&pci, zero);
+                };
+                devices.push(entry);
                 let header = pci
                     .read_one::<u8>(zero.address().with_register(REG_HEADER_TYPE))
                     .unwrap_or(0);
@@ -172,46 +236,67 @@ pub fn for_each_function(mut visit: impl FnMut(&PciIoAccessPci<'_>, Function)) {
                     continue;
                 }
                 for function in 1..8u8 {
-                    let other = Function { function, ..zero };
-                    if present(&pci, other) {
-                        visit(&pci, other);
+                    if let Some(entry) = probe(pci, Function { function, ..zero }) {
+                        devices.push(entry);
                     }
                 }
             }
         }
+    });
+    debug!("[SCAN] PCI root bridges: {bridges}");
+
+    if devices.count() == MAX_FUNCTIONS {
+        check::warn!(
+            "pci.scan",
+            "stopped at {MAX_FUNCTIONS} functions, so every check reading \
+             configuration space saw only that many"
+        );
     }
+    devices
 }
 
-/// `function`'s vendor and device ID, the pair every device is identified
-/// by. Reads as `(0xFFFF, 0xFFFF)` where nothing answers.
-pub fn ids(pci: &PciIoAccessPci<'_>, function: Function) -> (u16, u16) {
-    let id = pci
-        .read_one::<u32>(function.address().with_register(REG_ID))
-        .unwrap_or(u32::MAX);
-    (id as u16, (id >> 16) as u16)
+/// Calls `visit` for every function `devices` holds, with the root bridge
+/// that answers for it open. Probes nothing: [`scan`] already did.
+pub fn for_each_device(devices: &Devices, mut visit: impl FnMut(&PciIoAccessPci<'_>, &Device)) {
+    for_each_bridge(|pci, segment| {
+        for device in devices.iter() {
+            if device.function.segment == segment {
+                visit(pci, device);
+            }
+        }
+    });
 }
 
-/// Whether anything answers at `function`.
+/// Reads `function`'s identity, or `None` where nothing answers.
 ///
 /// An absent function reads all ones, the bus returning nothing rather than
 /// a device answering.
-fn present(pci: &PciIoAccessPci<'_>, function: Function) -> bool {
-    match pci.read_one::<u32>(function.address().with_register(REG_ID)) {
-        Ok(id) => id != u32::MAX,
-        Err(_) => false,
+fn probe(pci: &PciIoAccessPci<'_>, function: Function) -> Option<Device> {
+    let id = pci
+        .read_one::<u32>(function.address().with_register(REG_ID))
+        .ok()?;
+    if id == u32::MAX {
+        return None;
     }
+    Some(Device {
+        function,
+        vendor: id as u16,
+        device: (id >> 16) as u16,
+    })
 }
 
-/// Reports every function the root bridges answer for.
-pub fn report() {
-    for_each_function(|pci, function| {
-        let (vendor, device) = ids(pci, function);
+/// Reports every function the scan found.
+pub fn report(devices: &Devices) {
+    for_each_device(devices, |pci, device| {
         let class = pci
-            .read_one::<u32>(function.address().with_register(REG_CLASS))
+            .read_one::<u32>(device.function.address().with_register(REG_CLASS))
             .unwrap_or(0)
             >> 8;
-        trace!("[SCAN] {function} id {vendor:04x}:{device:04x} class {class:06x}");
-        for_each_capability(pci, function, |capability| {
+        trace!(
+            "[SCAN] {} id {:04x}:{:04x} class {class:06x}",
+            device.function, device.vendor, device.device
+        );
+        for_each_capability(pci, device.function, |capability| {
             trace!(
                 "[SCAN]   capability {:02x} type {} at {:02x}",
                 capability.id, capability.kind, capability.offset
