@@ -6,15 +6,16 @@ SPDX-License-Identifier: Apache-2.0
 
 # DRTM support in QEMU
 
-What QEMU models of the AMD DRTM path, what it does not, and what would
-have to exist before more of that path could be exercised here. How the
-test suite drives QEMU is in `testing.md`. This page is about the
-emulator's limits.
+What upstream QEMU models of the AMD DRTM path, what our own build adds on
+top, and what would have to exist before more of that path could be
+exercised here. Everything said about upstream was checked against
+`v11.1.1`, which is what our build branches from. How the test suite drives
+QEMU, and how to build it, is in `testing.md`.
 
 Observations from our own boots go in [Findings](#findings), one row each,
 so the page stays a reference rather than growing a section per discovery.
 
-## What QEMU already models
+## What upstream models
 
 | Piece                       | State                                                                              |
 |-----------------------------|------------------------------------------------------------------------------------|
@@ -24,29 +25,31 @@ so the page stays a reference rather than growing a section per discovery.
 | CPU vendor and CPUID leaves | Selected by `-cpu`, enough to drive the vendor gate                                |
 | Machine-check architecture  | `IA32_MCG_CAP` reports 10 banks, all readable                                      |
 
-## What QEMU does not model
+## What upstream does not model
 
 **The `SKINIT` instruction.** The TCG decoder raises `#UD` for it
 unconditionally, under the comment "If not intercepted, not implemented"
-(QEMU 8.2.2, `target/i386/tcg/translate.c`). Code reaching the instruction
-takes an undefined-opcode exception rather than crashing, so no separate
-no-DRTM build variant is needed to avoid one.
+(`target/i386/tcg/translate.c`). Code reaching the instruction takes an
+undefined-opcode exception rather than crashing, so no separate no-DRTM
+build variant is needed to avoid one.
 
-**The `skinit` CPUID bit.** Refused on every CPU model, AMD's own included:
+**The `skinit` CPUID bit.** No CPU model carries it, AMD's own included:
+`CPUID_EXT3_SKINIT` is defined in `target/i386/cpu.h` and used nowhere else
+in the tree. Asking for it by name is refused too, since it is absent from
+`TCG_EXT3_FEATURES` (`target/i386/cpu.c`):
 
 ```text
 qemu-system-x86_64: warning: TCG doesn't support requested feature:
-CPUID.80000001H:ECX.skinit [bit 12]
+CPUID[eax=80000001h].ECX.skinit [bit 12]
 ```
 
-So only the "unsupported" branch of that check is reachable here.
+So on upstream only the "unsupported" branch of that check is reachable.
 
 **`MSR 0xC0010058`, the MMIO configuration base.** Absent from the whole
-QEMU tree at 8.2.2 and at master. A read falls into `helper_rdmsr`'s
-`default:` case, which returns zero without raising `#GP`
-(`target/i386/tcg/sysemu/misc_helper.c`, `system/` on master). Those
-helpers switch on the MSR number alone and have no notion of CPU vendor,
-so an AMD-only MSR does not fault on an Intel model either.
+QEMU tree. A read falls into `helper_rdmsr`'s `default:` case, which returns
+zero without raising `#GP` (`target/i386/tcg/system/misc_helper.c`). Those
+helpers switch on the MSR number alone and have no notion of CPU vendor, so
+an AMD-only MSR does not fault on an Intel model either.
 
 Under KVM the result is the same for a different reason. The kernel does
 know this register, as `MSR_FAM10H_MMIO_CONF_BASE`, and deliberately reads
@@ -61,9 +64,9 @@ the mailbox that would say whether the DRTM service is enabled has nothing
 to answer it.
 
 The `amd-iommu` device is the nearest thing to a false positive, answering
-`1022:0000`: AMD's vendor ID with a device ID no table lists. That makes it
-worth keeping in the matrix for this check too, since it exercises the half
-of the match that discriminates.
+`1022:1419`: AMD's vendor ID with a device ID no loader's table lists. That
+makes it worth keeping in the matrix for this check too, since it exercises
+the half of the match that discriminates.
 
 **An AMD northbridge.** The x86 host bridges QEMU ships are `i440fx.c` and
 `q35.c`, both Intel (`hw/pci-host/`). Q35 carries extended configuration
@@ -73,11 +76,30 @@ space through the MCH's `PCIEXBAR` at config offset `0x60`
 `qemu-q35` target in coreboot writes `PCIEXBAR` and is built as an Intel
 platform whatever the CPU model.
 
-## What would make more of the path testable
+## What our build adds
+
+Patches carried on the `drtm` branch of our QEMU fork, described by what
+they make observable rather than by their diff. Both are opt-in, so a guest
+that does not ask for them behaves as it would upstream.
+
+**The `skinit` CPUID bit can be asked for.** `-cpu EPYC,+skinit` then
+reports the feature instead of being refused. The instruction still raises
+`#UD`, so this advertises a capability the CPU does not have: enough for
+code that checks for `SKINIT` before attempting a launch, and nothing past
+that.
+
+**`amd-iommu` can report its capability as enabled.**
+`-device amd-iommu,firmware-enabled=on` sets bit 0 of the capability's base
+address low register, which firmware sets once it has programmed the MMIO
+base. Nothing in a QEMU guest does that, and the Dasharo firmware we boot
+is an Intel platform build that would not touch an AMD IOMMU, so without
+this the bit can only ever read clear.
+
+## What would still be needed
 
 Ranked by what it would buy against what it would cost.
 
-### Useful now, for the precondition checks
+### For the precondition checks
 
 **Model `MSR 0xC0010058`.** Small, and the only thing standing between us
 and exercising both enabled outcomes of the MMCONFIG check, whose arithmetic
@@ -85,12 +107,7 @@ currently runs on no input but zero. A writable register honouring the
 documented field layout would be enough. Note the KVM path would need its
 own change, since the kernel pins it to zero on purpose.
 
-**Set the `amd-iommu` enable bit.** `amdvi_pci_realize()` writes the
-capability's base address low register with bit 0 clear, and read-only
-(`hw/i386/amd_iommu.c`). Firmware sets that bit on hardware, and without it
-the IOMMU check can only warn. One line would make its pass path reachable.
-
-### Needed before a launch could run at all
+### Before a launch could run at all
 
 1. **The `SKINIT` instruction**, including the hash transaction it drives:
     hashing the Secure Loader Block, extending PCR 17, and entering the SL
@@ -102,7 +119,11 @@ the IOMMU check can only warn. One line would make its pass path reachable.
     a hardware interface rather than an ordinary command. Whether `swtpm`
     and libtpms implement it is untested and would need checking before
     assuming the TPM half comes for free.
-3. **`SL_DEV` or its family 17h successor**, for anything that wants to
+3. **A writable IOMMU enable bit.** Our property sets it at realize and
+    leaves it read-only, which is enough to observe but not to program. The
+    Secure Kernel Loader sets up the IOMMU itself and expects the bit to
+    take a write (RW1S), along with the capability-block lock that implies.
+4. **`SL_DEV` or its family 17h successor**, for anything that wants to
     observe the DMA protection a launch establishes.
 
 Emulating DRTM in QEMU is out of scope for this project. This list exists
@@ -111,19 +132,23 @@ start.
 
 ## Findings
 
-Observations from real boots. Newest first.
+Observations from real boots. Newest first. `QEMU` says which build the
+observation belongs to, since the older rows were taken on Debian's 8.2.2
+and some of them no longer hold.
 
-| Date       | Observation                                                                                                               |
-|------------|---------------------------------------------------------------------------------------------------------------------------|
-| 2026-09-16 | `tpm-crb` reports `CapLocality` clear and `tpm-tis` set, so both locality outcomes are reachable                          |
-| 2026-09-16 | `amd-iommu` reads its capability's enable bit clear, so a launch would treat it as disabled by firmware                   |
-| 2026-09-16 | `amd-iommu` answers `1022:0000`, so an AMD vendor ID alone would take it for a Secure Processor                           |
-| 2026-09-16 | No guest configuration answers with any Secure Processor device ID, so the PSP check only reaches its not-found branch    |
-| 2026-09-15 | Dasharo publishes `EFI_PCI_ROOT_BRIDGE_IO_PROTOCOL`, one handle on segment 0, and config reads through it work            |
-| 2026-09-15 | That protocol reaches extended config space too: the e1000 answers `14020001` at offset 0x100                             |
-| 2026-09-15 | `amd-iommu` lands at `0:03.0` in the full test configuration and `0:01.0` with `-nodefaults`, so its address is not fixed |
-| 2026-09-15 | `amd-iommu` attaches to the Dasharo q35 guest without disturbing the boot, with class 0806h and capability 0Fh type 3     |
-| 2026-09-15 | `MSR 0xC0010058` reads zero on six AMD models and on `Skylake-Client` with the gate bypassed, never faulting              |
-| 2026-09-15 | Dasharo's firmware leaves `CR0.NE` clear, so that check warns on every boot                                               |
-| 2026-09-15 | `IA32_MCG_CAP` reports 10 banks, all clean and all readable                                                               |
-| 2026-09-13 | A line written to the serial device arrives whole, while the UEFI text console wraps at 80 columns                        |
+| Date       | QEMU   | Observation                                                                                                               |
+|------------|--------|---------------------------------------------------------------------------------------------------------------------------|
+| 2026-09-16 | ours   | `-device amd-iommu,firmware-enabled=on` makes `amd.iommu` pass, the first boot to reach that branch                       |
+| 2026-09-16 | ours   | `-cpu EPYC,+skinit` makes `amd.skinit` pass, the first boot to reach that branch                                          |
+| 2026-09-16 | 11.1.1 | `amd-iommu` answers `1022:1419`, so an AMD vendor ID alone would take it for a Secure Processor                           |
+| 2026-09-16 | 8.2.2  | `tpm-crb` reports `CapLocality` clear and `tpm-tis` set, so both locality outcomes are reachable                          |
+| 2026-09-16 | 8.2.2  | `amd-iommu` reads its capability's enable bit clear, so a launch would treat it as disabled by firmware                   |
+| 2026-09-16 | 8.2.2  | No guest configuration answers with any Secure Processor device ID, so the PSP check only reaches its not-found branch    |
+| 2026-09-15 | 8.2.2  | Dasharo publishes `EFI_PCI_ROOT_BRIDGE_IO_PROTOCOL`, one handle on segment 0, and config reads through it work            |
+| 2026-09-15 | 8.2.2  | That protocol reaches extended config space too: the e1000 answers `14020001` at offset 0x100                             |
+| 2026-09-15 | 8.2.2  | `amd-iommu` lands at `0:03.0` in the full test configuration and `0:01.0` with `-nodefaults`, so its address is not fixed |
+| 2026-09-15 | 8.2.2  | `amd-iommu` attaches to the Dasharo q35 guest without disturbing the boot, with class 0806h and capability 0Fh type 3     |
+| 2026-09-15 | 8.2.2  | `MSR 0xC0010058` reads zero on six AMD models and on `Skylake-Client` with the gate bypassed, never faulting              |
+| 2026-09-15 | 8.2.2  | Dasharo's firmware leaves `CR0.NE` clear, so that check warns on every boot                                               |
+| 2026-09-15 | 8.2.2  | `IA32_MCG_CAP` reports 10 banks, all clean and all readable                                                               |
+| 2026-09-13 | 8.2.2  | A line written to the serial device arrives whole, while the UEFI text console wraps at 80 columns                        |

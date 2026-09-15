@@ -24,6 +24,32 @@ uv run --project qemu-tests pytest qemu-tests
 The first run downloads Dasharo's QEMU Q35 firmware image into
 `qemu-tests/dl-cache/` (a few MB, gitignored, cached after that).
 
+### The QEMU build
+
+The suite needs our own QEMU, not a distribution one. Two checks reach
+outcomes upstream cannot produce: `amd.skinit` passing needs a CPU allowed
+to report the feature bit, and `amd.iommu` passing needs an `amd-iommu`
+whose capability reads enabled. What those patches do, and what is still
+missing, is in [qemu-drtm-support.md](qemu-drtm-support.md).
+
+```sh
+git clone <fork> qemu
+cd qemu && git checkout drtm
+mkdir build && cd build
+../configure --target-list=x86_64-softmmu --enable-tpm --disable-docs
+make -j"$(nproc)"
+```
+
+`DRTM_QEMU_BINARY` then points the suite at it, by path or by name:
+
+```sh
+DRTM_QEMU_BINARY=../qemu/build/qemu-system-x86_64 \
+    uv run --project qemu-tests pytest qemu-tests
+```
+
+Unset, it falls back to `qemu-system-x86_64` on `PATH`, which boots and
+runs every check but fails the tests covering those two branches.
+
 ## How the VM is set up
 
 Booting takes around 11 seconds, so tests do not boot QEMU themselves. A
@@ -33,21 +59,25 @@ tests assert against. A configuration needing different QEMU arguments gets
 its own fixture calling `boot_and_capture`, rather than the existing ones
 growing parameters. Tests sharing a boot fail together if it does.
 
-| Fixture          | Configuration                                      | `drtm.conf`     |
-|------------------|----------------------------------------------------|-----------------|
-| `default_boot`   | No TPM device, AMD CPU model (`EPYC`)              | `level=trace`   |
-| `intel_cpu_boot` | No TPM device, Intel CPU model (`Skylake-Client`)  | `level=trace`   |
-| `tpm_tis_boot`   | `swtpm`-backed TPM 2.0 on the FIFO (TIS) interface | `level=verbose` |
-| `tpm_crb_boot`   | `swtpm`-backed TPM 2.0 on the CRB interface        | none            |
-| `amd_iommu_boot` | QEMU's `amd-iommu` device attached, AMD CPU model  | `level=trace`   |
+| Fixture                  | Configuration                                        | `drtm.conf`     |
+|--------------------------|------------------------------------------------------|-----------------|
+| `default_boot`           | No TPM device, `EPYC,+skinit`                        | `level=trace`   |
+| `intel_cpu_boot`         | No TPM device, Intel CPU model (`Skylake-Client`)    | `level=trace`   |
+| `tpm_tis_boot`           | `swtpm`-backed TPM 2.0 on the FIFO (TIS) interface   | `level=verbose` |
+| `tpm_crb_boot`           | `swtpm`-backed TPM 2.0 on the CRB interface          | none            |
+| `amd_iommu_boot`         | `amd-iommu` attached, capability disabled, `EPYC`    | `level=trace`   |
+| `amd_iommu_enabled_boot` | `amd-iommu` attached, capability enabled by firmware | `level=trace`   |
 
-No configuration reports `SKINIT` support, since QEMU will not set that
-feature bit on any CPU model (see [DRTM under QEMU](#drtm-under-qemu)). The
-CPU model does decide the vendor string, and that selects which checks run
+The CPU model decides the vendor string, and that selects which checks run
 at all: `default_boot` is AMD so every check runs, while `intel_cpu_boot`
 covers the path where the AMD checks are skipped and the vendor-independent
 ones still run. Both TPM interfaces are tested because the check reports
 them differently, and an earlier bug got CRB wrong while passing on TIS.
+
+Two pairs exist only to reach both outcomes of one check without adding
+boots. `default_boot` asks for `+skinit` and `amd_iommu_boot` does not, so
+the `SKINIT` check is exercised either way, and the two IOMMU boots differ
+only in whether the capability reads enabled.
 
 The binary reads `drtm.conf` from beside itself on the ESP, so `QemuVm`
 writes one into the scratch ESP. Most boots raise the level to `trace`,

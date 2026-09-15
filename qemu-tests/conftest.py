@@ -20,7 +20,7 @@ from datetime import datetime
 from pathlib import Path
 
 import pytest
-from qemu_vm import DEFAULT_CPU, QemuVm
+from qemu_vm import DEFAULT_CPU, SKINIT_CPU, QemuVm
 
 REPO_ROOT = Path(__file__).parent.parent
 EFI_BINARY = REPO_ROOT / "target" / "x86_64-unknown-uefi" / "debug" / "drtm.efi"
@@ -108,7 +108,7 @@ def boot_and_capture(
     log_dir: Path,
     tpm: str | None = None,
     cpu: str = DEFAULT_CPU,
-    iommu: bool = False,
+    iommu: str | None = None,
     config: str | None = FULL_OUTPUT,
 ) -> str:
     """Boots `efi_binary` once and returns everything it printed.
@@ -127,12 +127,13 @@ def boot_and_capture(
 @pytest.fixture(scope="session")
 def default_boot(run_log_dir: Path, efi_binary: Path) -> str:
     """Serial output of one boot under QEMU's default configuration: no TPM
-    device attached, and an AMD CPU model.
+    device attached, and an AMD CPU model reporting `skinit`.
 
     AMD by default so this fixture runs every check rather than skipping the
-    vendor-specific ones, which is most of them.
+    vendor-specific ones, which is most of them. The feature bit has to be
+    asked for by name, and only our QEMU accepts it.
     """
-    return boot_and_capture(efi_binary, run_log_dir / "boot-default")
+    return boot_and_capture(efi_binary, run_log_dir / "boot-default", cpu=SKINIT_CPU)
 
 
 @pytest.fixture(scope="session")
@@ -149,13 +150,28 @@ def intel_cpu_boot(run_log_dir: Path, efi_binary: Path) -> str:
 
 @pytest.fixture(scope="session")
 def amd_iommu_boot(run_log_dir: Path, efi_binary: Path) -> str:
-    """Serial output of one boot with QEMU's `amd-iommu` device attached.
+    """Serial output of one boot with QEMU's `amd-iommu` device attached and
+    its capability left disabled, as upstream QEMU always leaves it.
 
-    The only configuration where an IOMMU is there to be found at all. QEMU
-    leaves its enable bit clear, so even here `amd.iommu` warns rather than
-    passes.
+    So `amd.iommu` warns here. This boot also keeps the plain `EPYC` model,
+    which is where the `skinit` check's unsupported path is exercised.
     """
-    return boot_and_capture(efi_binary, run_log_dir / "boot-amd-iommu", iommu=True)
+    return boot_and_capture(
+        efi_binary, run_log_dir / "boot-amd-iommu", iommu="disabled"
+    )
+
+
+@pytest.fixture(scope="session")
+def amd_iommu_enabled_boot(run_log_dir: Path, efi_binary: Path) -> str:
+    """Serial output of one boot with an `amd-iommu` whose capability is
+    enabled, which is what firmware does on a machine that has one.
+
+    The only configuration where `amd.iommu` can pass, and only our QEMU
+    offers it.
+    """
+    return boot_and_capture(
+        efi_binary, run_log_dir / "boot-amd-iommu-enabled", iommu="enabled"
+    )
 
 
 @pytest.fixture(scope="session")

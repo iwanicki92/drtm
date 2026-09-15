@@ -12,17 +12,14 @@ asserted in `test_platform_checks.py`.
 Assertions key on a check's identifier and verdict via `results`/`verdicts`,
 not on its wording, except where a test needs a value out of the detail text.
 
-Three branches here are unreachable under QEMU rather than merely untaken.
-The MMCONFIG check only ever sees an unimplemented MSR reading zero, so
-neither enabled outcome can be produced. The IOMMU check only ever sees the
-enable bit clear, so it never passes. The `SKINIT` check only ever sees the
-feature absent.
+One branch here is unreachable rather than merely untaken: the MMCONFIG
+check only ever sees an unimplemented MSR reading zero, so neither enabled
+outcome can be produced.
 
-QEMU 8.2.2 refuses to set the `skinit` CPUID feature bit under both TCG and
-KVM ("TCG doesn't support requested feature" / "host doesn't support
-requested feature"), on every CPU model tried, including AMD's own `EPYC`.
-So only the "unsupported" branch of that check can be exercised here, see
-the design spec for detail.
+The `SKINIT` and IOMMU checks reach both outcomes, but only on the QEMU
+build `docs/testing.md` describes. No upstream CPU model carries the
+`skinit` CPUID bit and upstream refuses it when asked for by name, and
+upstream's `amd-iommu` leaves its capability's enable bit clear.
 """
 
 import re
@@ -34,8 +31,14 @@ from conftest import CHECKS_COMPLETE, results, verdicts
 SLB_SIZE = 64 * 1024
 
 
-def test_skinit_check_fails_on_an_amd_cpu_without_the_feature(default_boot: str):
-    assert verdicts(default_boot, "amd.skinit") == ["FAIL"]
+def test_skinit_check_passes_on_an_amd_cpu_with_the_feature(default_boot: str):
+    assert verdicts(default_boot, "amd.skinit") == ["PASS"]
+
+
+def test_skinit_check_fails_on_an_amd_cpu_without_the_feature(amd_iommu_boot: str):
+    # The plain `EPYC` model, so this is the same check on a CPU that does not
+    # report the feature. Both outcomes rest on the one CPUID bit.
+    assert verdicts(amd_iommu_boot, "amd.skinit") == ["FAIL"]
 
 
 def test_slb_region_is_available(default_boot: str):
@@ -117,9 +120,8 @@ def test_iommu_is_found_by_its_capability(amd_iommu_boot: str):
 
 
 def test_iommu_left_disabled_by_firmware_warns(amd_iommu_boot: str):
-    # QEMU leaves the capability's enable bit clear and read-only, which SKL
-    # treats as no IOMMU at all. So the found IOMMU is a warning, never a pass,
-    # and the pass path is unreachable under QEMU.
+    # An enable bit left clear is what SKL treats as no IOMMU at all, so the
+    # IOMMU it found is a warning rather than a pass.
     ((tag, detail),) = [
         result
         for result in results(amd_iommu_boot, "amd.iommu")
@@ -128,6 +130,17 @@ def test_iommu_left_disabled_by_firmware_warns(amd_iommu_boot: str):
     assert tag == "WARN"
     assert "enable bit clear" in detail
     assert "PASS" not in verdicts(amd_iommu_boot, "amd.iommu")
+
+
+def test_iommu_enabled_by_firmware_passes(amd_iommu_enabled_boot: str):
+    # The same device with its enable bit set, which is the one configuration
+    # a launch would actually program.
+    ((tag, _),) = [
+        result
+        for result in results(amd_iommu_enabled_boot, "amd.iommu")
+        if "capability block at" in result[1]
+    ]
+    assert tag == "PASS"
 
 
 def test_iommu_away_from_the_launch_address_is_reported(amd_iommu_boot: str):
@@ -160,10 +173,10 @@ def test_psp_check_reports_no_secure_processor(default_boot: str):
 
 
 def test_an_amd_device_that_is_not_a_psp_is_not_matched(amd_iommu_boot: str):
-    # QEMU's amd-iommu answers 1022:0000, AMD's vendor ID with a device ID
+    # QEMU's amd-iommu answers 1022:1419, AMD's vendor ID with a device ID
     # that is not in the table. So this exercises the half of the match that
     # discriminates, which the vendor test alone would let through.
-    assert "id 1022:0000" in amd_iommu_boot
+    assert "id 1022:1419" in amd_iommu_boot
     ((tag, detail),) = results(amd_iommu_boot, "amd.psp")
     assert tag == "INFO"
     assert "no AMD Secure Processor" in detail

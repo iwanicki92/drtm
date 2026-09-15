@@ -24,15 +24,25 @@ from qmp_client import QmpClient
 _VARSTORE_ZERO_BYTES = 256
 
 # QEMU CPU model used unless a caller asks for another. AMD, so the guest
-# reads AuthenticAMD and runs the AMD checks rather than skipping them. QEMU
-# still refuses to set the SKINIT feature bit on this or any other model.
+# reads AuthenticAMD and runs the AMD checks rather than skipping them. No
+# QEMU model carries the SKINIT feature bit, so it has to be asked for.
 DEFAULT_CPU = "EPYC"
+SKINIT_CPU = f"{DEFAULT_CPU},+skinit"
 
 
 def _free_tcp_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind(("127.0.0.1", 0))
         return s.getsockname()[1]
+
+
+def _binary() -> str:
+    """Which `qemu-system-x86_64` to run, honouring `DRTM_QEMU_BINARY`.
+
+    A path, or a name to find on `PATH`. The checks that need a patched QEMU
+    are why this exists, see `docs/testing.md`.
+    """
+    return os.environ.get("DRTM_QEMU_BINARY", "qemu-system-x86_64")
 
 
 def _use_kvm() -> bool:
@@ -82,7 +92,9 @@ class QemuVm:
 
     `iommu` attaches QEMU's `amd-iommu`, which shows up as an AMD function
     carrying the secure-device capability an IOMMU scan looks for. QEMU puts
-    it at `0:1.0`, not the `0:0.2` of real silicon.
+    it at `0:1.0`, not the `0:0.2` of real silicon. `"disabled"` leaves the
+    capability's enable bit clear as upstream QEMU does, `"enabled"` sets it
+    the way firmware would.
 
     `config` is written beside the binary as `drtm.conf`. Leave it `None` for
     no file at all, which is what a stick carrying only the binary looks like.
@@ -94,11 +106,15 @@ class QemuVm:
         log_dir: Path,
         tpm: str | None = None,
         cpu: str = DEFAULT_CPU,
-        iommu: bool = False,
+        iommu: str | None = None,
         config: str | None = None,
     ):
         if tpm not in (None, "tis", "crb"):
             raise ValueError(f"tpm must be None, 'tis' or 'crb', got {tpm!r}")
+        if iommu not in (None, "disabled", "enabled"):
+            raise ValueError(
+                f"iommu must be None, 'disabled' or 'enabled', got {iommu!r}"
+            )
         self.efi_binary = Path(efi_binary)
         self.log_dir = Path(log_dir)
         self.tpm = tpm
@@ -145,7 +161,7 @@ class QemuVm:
         os.unlink(qmp_sock)
 
         args = [
-            "qemu-system-x86_64",
+            _binary(),
             "-machine",
             "q35,smm=on",
             "-cpu",
@@ -179,7 +195,8 @@ class QemuVm:
             ]
 
         if self.iommu:
-            args += ["-device", "amd-iommu"]
+            enabled = "on" if self.iommu == "enabled" else "off"
+            args += ["-device", f"amd-iommu,firmware-enabled={enabled}"]
 
         if _use_kvm():
             args.append("-enable-kvm")
