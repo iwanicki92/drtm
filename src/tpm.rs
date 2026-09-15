@@ -214,9 +214,7 @@ fn report_localities(found: Localities) {
         // looks.
         Localities::ZeroOnly => check::fail!(
             "tpm.locality",
-            "locality 0 only, so no dynamic launch can measure anything \
-             here. A firmware TPM reports this, and firmware setup is where \
-             a platform offering a discrete one switches to it"
+            "locality 0 only, so no dynamic launch can measure anything here"
         ),
         Localities::NotDecoded => check::warn!(
             "tpm.locality",
@@ -251,8 +249,7 @@ pub fn report() {
             check::warn!(
                 "tpm.discrete",
                 "software cannot tell a discrete TPM from a firmware TPM, \
-                 and SKINIT requires a discrete one. Firmware setup is where \
-                 a platform offering both chooses"
+                 and SKINIT requires a discrete one, verify manually"
             );
         }
     }
