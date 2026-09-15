@@ -154,18 +154,12 @@ Robot-Framework-specific bits stripped.
 
 ## DRTM under QEMU
 
-QEMU does not support real DRTM launches, and this is deliberate rather than
-a gap that will close. `+skinit` is refused on every CPU model (TCG and KVM
-both report the feature unsupported), and QEMU's TCG decoder raises `#UD`
-for `SKINIT` unconditionally, under the comment "If not intercepted, not
-implemented" (QEMU 8.2.2, `target/i386/tcg/translate.c`).
-
-So code reaching the instruction takes an undefined opcode exception, not a
-crash, and no separate no-DRTM build variant is needed to avoid one. Nothing
-past that point is testable here either, so a launch path has to keep the
+QEMU models no part of a real DRTM launch, so a launch path has to keep the
 surrounding work (SLB construction, memory layout, header validation)
-exercisable without executing `SKINIT`. Dasharo's own TrenchBoot QEMU tests
-never get that far: GRUB stops at its own precondition checks.
+exercisable without executing `SKINIT`. Which pieces are missing, and what
+each check can therefore prove here, is in `qemu-drtm-support.md`. Dasharo's
+own TrenchBoot QEMU tests never get further: GRUB stops at its own
+precondition checks.
 
 Dasharo's `trenchboot/*.robot` tests are a useful model for DRTM-aware test
 structure later. They run against a fully booted Linux and read PCRs from
@@ -173,5 +167,5 @@ structure later. They run against a fully booted Linux and read PCRs from
 `/sys/kernel/security/slaunch/eventlog`, though not applicable verbatim
 since we don't boot a full OS.
 
-A separate future project may add simple DRTM emulation to QEMU itself.
-That is out of scope here.
+Adding DRTM emulation to QEMU is out of scope here. `qemu-drtm-support.md`
+records what it would take, for whoever picks it up.
