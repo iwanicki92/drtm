@@ -114,9 +114,11 @@ is the launch itself.
     without it.
 2. **The TPM side of that transaction.** `SKINIT` measures through locality
     4 with `_TPM_Hash_Start` / `_TPM_Hash_Data` / `_TPM_Hash_End`, which is
-    a hardware interface rather than an ordinary command. Whether `swtpm`
-    and libtpms implement it is untested and would need checking before
-    assuming the TPM half comes for free.
+    a hardware interface rather than an ordinary command. The `swtpm`
+    control channel already carries all three as `CMD_HASH_START`,
+    `CMD_HASH_DATA` and `CMD_HASH_END` (`backends/tpm/tpm_ioctl.h`), but
+    QEMU sends none of them, and the TIS device ignores every write to the
+    locality 4 window (`hw/tpm/tpm_tis_common.c`).
 3. **A writable IOMMU enable bit.** Our property sets it at realize and
     leaves it read-only, which is enough to observe but not to program. The
     Secure Kernel Loader sets up the IOMMU itself and expects the bit to
