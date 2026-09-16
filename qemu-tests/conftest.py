@@ -25,6 +25,7 @@ from qemu_vm import (
     MMCONFIG_ABOVE_4GIB,
     MMCONFIG_BELOW_4GIB,
     QemuVm,
+    unsupported_binary,
 )
 
 REPO_ROOT = Path(__file__).parent.parent
@@ -254,6 +255,14 @@ _session_start = 0.0
 def pytest_sessionstart(session: pytest.Session) -> None:
     global _session_start
     _session_start = time.monotonic()
+    # Upstream QEMU refuses the default boot's options, which would otherwise
+    # surface as every test erroring on a boot that never started.
+    reason = unsupported_binary()
+    if reason is not None:
+        pytest.exit(
+            f"This suite needs our QEMU build, see docs/testing.md: {reason}",
+            returncode=1,
+        )
 
 
 def pytest_runtest_logreport(report: pytest.TestReport) -> None:

@@ -48,8 +48,10 @@ DRTM_QEMU_BINARY=../qemu/build/qemu-system-x86_64 \
     uv run --project qemu-tests pytest qemu-tests
 ```
 
-Unset, it falls back to `qemu-system-x86_64` on `PATH`, which boots and
-runs every check but fails the tests covering those branches.
+Unset, it falls back to `qemu-system-x86_64` on `PATH`. Before any test,
+the suite starts that binary paused with the options only our build
+accepts, and stops with the reason if it turns them down, so a
+distribution QEMU fails once rather than in every boot fixture.
 
 ## How the VM is set up
 

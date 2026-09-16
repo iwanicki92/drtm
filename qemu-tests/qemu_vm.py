@@ -76,6 +76,58 @@ def _use_kvm() -> bool:
     return os.access("/dev/kvm", os.R_OK | os.W_OK)
 
 
+def _amd_iommu(enabled: bool) -> str:
+    return f"amd-iommu,firmware-enabled={'on' if enabled else 'off'}"
+
+
+# Starting paused and quitting takes well under a second.
+_PROBE_TIMEOUT = 30.0
+
+
+def unsupported_binary() -> str | None:
+    """Why the QEMU in use cannot run this suite, or `None` if it can.
+
+    Starts it paused with every option only our build accepts. Upstream
+    refuses the two properties outright but drops `skinit` with a warning.
+    """
+    args = [
+        _binary(),
+        "-machine",
+        "q35",
+        "-accel",
+        "tcg",
+        "-nodefaults",
+        "-display",
+        "none",
+        "-S",
+        "-monitor",
+        "stdio",
+        "-cpu",
+        MMCONFIG_BELOW_4GIB,
+        "-device",
+        _amd_iommu(enabled=True),
+    ]
+    try:
+        probe = subprocess.run(
+            args,
+            input="quit\n",
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=_PROBE_TIMEOUT,
+        )
+    except FileNotFoundError:
+        return f"{_binary()} was not found"
+    except subprocess.TimeoutExpired:
+        return f"{_binary()} did not quit within {_PROBE_TIMEOUT:.0f}s"
+    if probe.returncode != 0:
+        lines = probe.stderr.strip().splitlines()
+        return lines[-1] if lines else f"it exited with {probe.returncode}"
+    if "skinit" in probe.stderr:
+        return "it does not report the skinit CPUID bit"
+    return None
+
+
 class QemuVm:
     """Runs one UEFI binary as the only boot entry on a scratch ESP.
 
@@ -202,8 +254,7 @@ class QemuVm:
             ]
 
         if self.iommu:
-            enabled = "on" if self.iommu == "enabled" else "off"
-            args += ["-device", f"amd-iommu,firmware-enabled={enabled}"]
+            args += ["-device", _amd_iommu(self.iommu == "enabled")]
 
         if _use_kvm():
             args.append("-enable-kvm")
