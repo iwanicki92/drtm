@@ -103,7 +103,7 @@ reports a window rather than backing one, which is what software reading it
 to locate configuration space needs and nothing more.
 
 **A function can answer with a Secure Processor ID.**
-`-device amd-psp-stub` adds an AMD function with the Turin ASP's device ID,
+`-device amd-psp` adds an AMD function with the Turin ASP's device ID,
 `156e`, and `device-id=` picks any other. Nothing sits behind it, no BAR and
 no mailbox, so it is found in configuration space and can answer nothing
 else.
@@ -144,7 +144,7 @@ and some of them no longer hold.
 
 | Date       | QEMU   | Observation                                                                                                               |
 |------------|--------|---------------------------------------------------------------------------------------------------------------------------|
-| 2026-09-17 | ours   | `-device amd-psp-stub` makes `amd.psp` identify an ASP, the first boot to reach that branch                               |
+| 2026-09-17 | ours   | `-device amd-psp` makes `amd.psp` identify an ASP, the first boot to reach that branch                                    |
 | 2026-09-17 | ours   | A corrected error injected with `mce` before the firmware runs is still logged when `drtm` reads the banks                |
 | 2026-09-17 | ours   | Dasharo gives a `pxb-pcie` its own root bridge handle, and each handle refuses buses it does not own                      |
 | 2026-09-16 | ours   | `-cpu EPYC,mmio-conf-base=...` reaches both enabled outcomes of `amd.mmconfig`, which had only ever been skipped          |

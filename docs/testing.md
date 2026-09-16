@@ -70,7 +70,7 @@ growing parameters. Tests sharing a boot fail together if it does.
 | `tpm_tis_boot`             | `swtpm`-backed TPM 2.0 on the FIFO (TIS) interface   | `level=trace`   |
 | `tpm_crb_boot`             | `swtpm`-backed TPM 2.0 on the CRB interface          | none            |
 | `amd_iommu_boot`           | `amd-iommu` disabled, `EPYC`, second root bridge     | `level=trace`   |
-| `amd_iommu_enabled_boot`   | `amd-iommu` enabled by firmware, `amd-psp-stub`      | `level=verbose` |
+| `amd_iommu_enabled_boot`   | `amd-iommu` enabled by firmware, `amd-psp`           | `level=verbose` |
 | `mmconfig_above_4gib_boot` | MMIO configuration window crossing 4 GiB             | `level=trace`   |
 | `machine_check_error_boot` | Corrected error in machine-check bank 1 from reset   | `level=trace`   |
 
@@ -86,7 +86,7 @@ Several boots exist only to reach a second outcome of one check.
 leaves the configuration window disabled, which is where that check's third
 outcome comes from. It also carries a second root bridge, as a server has,
 so the scan is held to reading each function once. The enabled IOMMU boot
-differs in the capability and adds the Secure Processor stub, and
+differs in the capability and adds a Secure Processor, and
 `mmconfig_above_4gib_boot` differs only in where the window sits.
 `machine_check_error_boot` starts QEMU paused and logs an error through its
 `mce` monitor command before the firmware runs.

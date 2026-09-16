@@ -220,7 +220,7 @@ def amd_iommu_enabled_boot(run_log_dir: Path, efi_binary: Path) -> str:
     The only configuration where `amd.iommu` can pass, and only our QEMU
     offers it. Its tests only read results, so the boot also carries a
     `drtm.conf` naming a level that does not exist, and a Secure Processor
-    stub with the Turin ASP's device ID.
+    device with the Turin ASP's device ID.
     """
     return boot_and_capture(
         efi_binary,

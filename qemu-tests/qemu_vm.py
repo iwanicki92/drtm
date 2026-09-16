@@ -112,7 +112,7 @@ def unsupported_binary() -> str | None:
         "-device",
         _amd_iommu(enabled=True),
         "-device",
-        "amd-psp-stub",
+        "amd-psp",
     ]
     try:
         probe = subprocess.run(
@@ -165,8 +165,8 @@ class QemuVm:
     `extra_root_bridge` adds a second PCI host bridge (`pxb-pcie`) with a
     root port on bus 0x20, the way a server has one per NUMA node.
 
-    `psp` attaches our QEMU's `amd-psp-stub`, a function answering with that
-    AMD device ID and nothing behind it.
+    `psp` attaches our QEMU's `amd-psp`, a function answering with that AMD
+    device ID and nothing behind it.
 
     `corrected_error_bank` names a machine-check bank to hold a corrected
     error from reset on. QEMU starts paused, logs it, then runs.
@@ -287,7 +287,7 @@ class QemuVm:
             ]
 
         if self.psp is not None:
-            args += ["-device", f"amd-psp-stub,device-id={self.psp:#x}"]
+            args += ["-device", f"amd-psp,device-id={self.psp:#x}"]
 
         if self.corrected_error_bank is not None:
             args.append("-S")

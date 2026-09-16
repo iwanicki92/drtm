@@ -211,7 +211,7 @@ def test_an_amd_device_that_is_not_a_psp_is_not_matched(amd_iommu_boot: str):
 
 
 def test_a_secure_processor_is_identified(amd_iommu_enabled_boot: str):
-    # Our QEMU's stub answers with the Turin ASP's ID and nothing else, so
+    # Our QEMU's amd-psp answers with the Turin ASP's ID and nothing else, so
     # the ID is all the check can go on.
     ((tag, detail),) = results(amd_iommu_enabled_boot, "amd.psp")
     assert tag == "INFO"
