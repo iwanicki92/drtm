@@ -136,6 +136,16 @@ def test_locality_check_passes_where_the_tpm_offers_five(tpm_tis_boot: str):
     assert verdicts(tpm_tis_boot, "tpm.locality") == ["PASS"]
 
 
+def test_every_locality_access_register_is_logged(tpm_tis_boot: str):
+    # QEMU's TIS device decodes all five windows, so each reads valid. On a
+    # platform that locks some, this line is where the all-ones show up.
+    match = re.search(r"\[SCAN\] TPM_ACCESS by locality: \[(.*)\]", tpm_tis_boot)
+    assert match
+    values = [int(value, 16) for value in match.group(1).split(", ")]
+    assert len(values) == 5
+    assert all(value & 0x80 and value != 0xFF for value in values)
+
+
 def test_locality_check_fails_where_the_tpm_offers_only_one(tpm_crb_boot: str):
     # QEMU's CRB device reports CapLocality clear, the same thing a firmware
     # TPM reports, and it is the one way software can prove no launch is

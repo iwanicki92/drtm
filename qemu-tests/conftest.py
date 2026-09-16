@@ -189,24 +189,24 @@ def amd_iommu_enabled_boot(run_log_dir: Path, efi_binary: Path) -> str:
     enabled, which is what firmware does on a machine that has one.
 
     The only configuration where `amd.iommu` can pass, and only our QEMU
-    offers it.
+    offers it. Its `drtm.conf` names a level that does not exist. The IOMMU
+    tests only read results, so this boot also covers a config that has to
+    be refused.
     """
     return boot_and_capture(
-        efi_binary, run_log_dir / "boot-amd-iommu-enabled", iommu="enabled"
+        efi_binary,
+        run_log_dir / "boot-amd-iommu-enabled",
+        iommu="enabled",
+        config=BAD_LEVEL,
     )
 
 
 @pytest.fixture(scope="session")
 def tpm_tis_boot(run_log_dir: Path, efi_binary: Path) -> str:
     """Serial output of one boot with an `swtpm`-backed TPM 2.0 on the FIFO
-    (TIS) interface.
-
-    Its `drtm.conf` names a level that does not exist. The TPM tests only
-    read results, so this boot also covers a config that has to be refused.
+    (TIS) interface, the one layout with a register per locality.
     """
-    return boot_and_capture(
-        efi_binary, run_log_dir / "boot-tpm-tis", tpm="tis", config=BAD_LEVEL
-    )
+    return boot_and_capture(efi_binary, run_log_dir / "boot-tpm-tis", tpm="tis")
 
 
 @pytest.fixture(scope="session")

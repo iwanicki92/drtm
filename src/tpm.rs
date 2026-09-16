@@ -8,6 +8,8 @@
 //! discrete TPM, and the register layout here is the TCG PC Client Platform
 //! TPM Profile, not an AMD interface.
 
+use log::trace;
+
 use crate::check;
 
 /// Base of the TPM's locality 0 MMIO window on the PC platform. Fixed by
@@ -189,6 +191,19 @@ fn localities(family: Family) -> Localities {
     Localities::All
 }
 
+/// Logs `TPM_ACCESS` in each locality's window, so a run shows which ones
+/// answer and which read all ones. Reading it requests nothing (PTP table 31).
+fn trace_access() {
+    let access: [u8; 5] = core::array::from_fn(|locality| {
+        let addr = (locality_base(locality) + TPM_ACCESS_OFFSET) as *const u8;
+        // Safety: each window is 4 KiB of MMIO fixed by the chipset, this is
+        // a byte register under the FIFO layout, and an undecoded window
+        // reads all ones rather than faulting.
+        unsafe { addr.read_volatile() }
+    });
+    trace!("[SCAN] TPM_ACCESS by locality: {access:02x?}");
+}
+
 /// What the TPM and the chipset between them offer above locality 0.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Localities {
@@ -245,6 +260,9 @@ pub fn report() {
                 "tpm.present",
                 "locality 0 answered, {family:?} {interface:?}"
             );
+            if interface == Interface::Tis {
+                trace_access();
+            }
             report_localities(localities(family));
             check::warn!(
                 "tpm.discrete",
