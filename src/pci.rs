@@ -74,6 +74,8 @@ pub struct Device {
     pub function: Function,
     pub vendor: u16,
     pub device: u16,
+    /// Which root bridge handle found it, the one to read it through.
+    bridge: usize,
 }
 
 /// Fills the unused tail of a [`Devices`], which `count` keeps anything
@@ -87,6 +89,7 @@ const ABSENT: Device = Device {
     },
     vendor: 0,
     device: 0,
+    bridge: 0,
 };
 
 /// What one walk of configuration space found.
@@ -99,11 +102,17 @@ pub struct Devices {
 }
 
 impl Devices {
-    fn push(&mut self, device: Device) {
+    /// Records `device`, unless an earlier bridge already answered for the
+    /// same function. Returns whether it was new.
+    fn push(&mut self, device: Device) -> bool {
+        if self.iter().any(|seen| seen.function == device.function) {
+            return false;
+        }
         if self.len < MAX_FUNCTIONS {
             self.entries[self.len] = device;
             self.len += 1;
         }
+        true
     }
 
     pub fn iter(&self) -> impl Iterator<Item = &Device> {
@@ -160,8 +169,9 @@ pub fn for_each_capability(
     }
 }
 
-/// Opens every PCI root bridge in turn and calls `visit` with it.
-fn for_each_bridge(mut visit: impl FnMut(&PciIoAccessPci<'_>, u32)) {
+/// Opens every PCI root bridge in turn and calls `visit` with it, its
+/// segment and its position among the handles.
+fn for_each_bridge(mut visit: impl FnMut(&PciIoAccessPci<'_>, u32, usize)) {
     let handles = match boot::locate_handle_buffer(SearchType::ByProtocol(&PciRootBridgeIo::GUID)) {
         Ok(handles) => handles,
         Err(error) => {
@@ -174,7 +184,7 @@ fn for_each_bridge(mut visit: impl FnMut(&PciIoAccessPci<'_>, u32)) {
             return;
         }
     };
-    for handle in handles.iter() {
+    for (index, handle) in handles.iter().enumerate() {
         let params = OpenProtocolParams {
             handle: *handle,
             agent: boot::image_handle(),
@@ -199,7 +209,7 @@ fn for_each_bridge(mut visit: impl FnMut(&PciIoAccessPci<'_>, u32)) {
             }
         };
         let segment = bridge.segment_nr();
-        visit(&bridge.pci(), segment);
+        visit(&bridge.pci(), segment, index);
     }
 }
 
@@ -215,8 +225,14 @@ pub fn scan() -> Devices {
         len: 0,
     };
     let mut bridges = 0;
-    for_each_bridge(|pci, segment| {
+    let mut repeated = 0;
+    for_each_bridge(|pci, segment, bridge| {
         bridges += 1;
+        let mut record = |device| {
+            if !devices.push(device) {
+                repeated += 1;
+            }
+        };
         for bus in 0..=u8::MAX {
             for device in 0..32u8 {
                 let zero = Function {
@@ -225,10 +241,10 @@ pub fn scan() -> Devices {
                     device,
                     function: 0,
                 };
-                let Some(entry) = probe(pci, zero) else {
+                let Some(entry) = probe(pci, zero, bridge) else {
                     continue;
                 };
-                devices.push(entry);
+                record(entry);
                 let header = pci
                     .read_one::<u8>(zero.address().with_register(REG_HEADER_TYPE))
                     .unwrap_or(0);
@@ -236,14 +252,19 @@ pub fn scan() -> Devices {
                     continue;
                 }
                 for function in 1..8u8 {
-                    if let Some(entry) = probe(pci, Function { function, ..zero }) {
-                        devices.push(entry);
+                    if let Some(entry) = probe(pci, Function { function, ..zero }, bridge) {
+                        record(entry);
                     }
                 }
             }
         }
     });
     debug!("[SCAN] PCI root bridges: {bridges}");
+    // Firmware that does not hold each bridge to its own buses answers for
+    // every function through every bridge. Only the first answer is kept.
+    if repeated > 0 {
+        debug!("[SCAN] functions answering through more than one bridge: {repeated}");
+    }
 
     if devices.count() == MAX_FUNCTIONS {
         check::warn!(
@@ -258,9 +279,9 @@ pub fn scan() -> Devices {
 /// Calls `visit` for every function `devices` holds, with the root bridge
 /// that answers for it open. Probes nothing: [`scan`] already did.
 pub fn for_each_device(devices: &Devices, mut visit: impl FnMut(&PciIoAccessPci<'_>, &Device)) {
-    for_each_bridge(|pci, segment| {
+    for_each_bridge(|pci, _, bridge| {
         for device in devices.iter() {
-            if device.function.segment == segment {
+            if device.bridge == bridge {
                 visit(pci, device);
             }
         }
@@ -271,7 +292,7 @@ pub fn for_each_device(devices: &Devices, mut visit: impl FnMut(&PciIoAccessPci<
 ///
 /// An absent function reads all ones, the bus returning nothing rather than
 /// a device answering.
-fn probe(pci: &PciIoAccessPci<'_>, function: Function) -> Option<Device> {
+fn probe(pci: &PciIoAccessPci<'_>, function: Function, bridge: usize) -> Option<Device> {
     let id = pci
         .read_one::<u32>(function.address().with_register(REG_ID))
         .ok()?;
@@ -282,6 +303,7 @@ fn probe(pci: &PciIoAccessPci<'_>, function: Function) -> Option<Device> {
         function,
         vendor: id as u16,
         device: (id >> 16) as u16,
+        bridge,
     })
 }
 

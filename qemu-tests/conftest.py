@@ -116,6 +116,7 @@ def boot_and_capture(
     cpu: str = DEFAULT_CPU,
     iommu: str | None = None,
     config: str | None = FULL_OUTPUT,
+    extra_root_bridge: bool = False,
 ) -> str:
     """Boots `efi_binary` once and returns everything it printed.
 
@@ -125,7 +126,13 @@ def boot_and_capture(
     """
     log_dir.mkdir(parents=True, exist_ok=True)
     with QemuVm(
-        efi_binary, log_dir=log_dir, tpm=tpm, cpu=cpu, iommu=iommu, config=config
+        efi_binary,
+        log_dir=log_dir,
+        tpm=tpm,
+        cpu=cpu,
+        iommu=iommu,
+        config=config,
+        extra_root_bridge=extra_root_bridge,
     ) as vm:
         return vm.read_serial_until(CHECKS_COMPLETE, timeout=BOOT_TIMEOUT)
 
@@ -176,10 +183,14 @@ def amd_iommu_boot(run_log_dir: Path, efi_binary: Path) -> str:
     its capability left disabled, as upstream QEMU always leaves it.
 
     So `amd.iommu` warns here. This boot also keeps the plain `EPYC` model,
-    which is where the `skinit` check's unsupported path is exercised.
+    which is where the `skinit` check's unsupported path is exercised, and
+    has a second root bridge, so the IOMMU is one device among two bridges.
     """
     return boot_and_capture(
-        efi_binary, run_log_dir / "boot-amd-iommu", iommu="disabled"
+        efi_binary,
+        run_log_dir / "boot-amd-iommu",
+        iommu="disabled",
+        extra_root_bridge=True,
     )
 
 

@@ -138,6 +138,7 @@ and some of them no longer hold.
 
 | Date       | QEMU   | Observation                                                                                                               |
 |------------|--------|---------------------------------------------------------------------------------------------------------------------------|
+| 2026-09-17 | ours   | Dasharo gives a `pxb-pcie` its own root bridge handle, and each handle refuses buses it does not own                      |
 | 2026-09-16 | ours   | `-cpu EPYC,mmio-conf-base=...` reaches both enabled outcomes of `amd.mmconfig`, which had only ever been skipped          |
 | 2026-09-16 | ours   | `-device amd-iommu,firmware-enabled=on` makes `amd.iommu` pass, the first boot to reach that branch                       |
 | 2026-09-16 | ours   | `-cpu EPYC,+skinit` makes `amd.skinit` pass, the first boot to reach that branch                                          |

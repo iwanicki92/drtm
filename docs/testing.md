@@ -66,10 +66,10 @@ growing parameters. Tests sharing a boot fail together if it does.
 |----------------------------|------------------------------------------------------|-----------------|
 | `default_boot`             | No TPM device, `EPYC,+skinit`, window below 4 GiB    | `level=trace`   |
 | `intel_cpu_boot`           | No TPM device, Intel CPU model (`Skylake-Client`)    | `level=trace`   |
-| `tpm_tis_boot`             | `swtpm`-backed TPM 2.0 on the FIFO (TIS) interface   | `level=verbose` |
+| `tpm_tis_boot`             | `swtpm`-backed TPM 2.0 on the FIFO (TIS) interface   | `level=trace`   |
 | `tpm_crb_boot`             | `swtpm`-backed TPM 2.0 on the CRB interface          | none            |
-| `amd_iommu_boot`           | `amd-iommu` attached, capability disabled, `EPYC`    | `level=trace`   |
-| `amd_iommu_enabled_boot`   | `amd-iommu` attached, capability enabled by firmware | `level=trace`   |
+| `amd_iommu_boot`           | `amd-iommu` disabled, `EPYC`, second root bridge     | `level=trace`   |
+| `amd_iommu_enabled_boot`   | `amd-iommu` attached, capability enabled by firmware | `level=verbose` |
 | `mmconfig_above_4gib_boot` | MMIO configuration window crossing 4 GiB             | `level=trace`   |
 
 The CPU model decides the vendor string, and that selects which checks run
@@ -82,17 +82,19 @@ Several boots exist only to reach a second outcome of one check.
 `default_boot` asks for `+skinit` and `amd_iommu_boot` does not, so the
 `SKINIT` check is exercised both ways at no cost, and `amd_iommu_boot` also
 leaves the configuration window disabled, which is where that check's third
-outcome comes from. The two IOMMU boots differ only in whether the
-capability reads enabled, and `mmconfig_above_4gib_boot` only in where the
+outcome comes from. It also carries a second root bridge, as a server has,
+so the scan is held to reading each function once. The enabled IOMMU boot
+differs in the capability, and `mmconfig_above_4gib_boot` only in where the
 window sits.
 
 The binary reads `drtm.conf` from beside itself on the ESP, so `QemuVm`
 writes one into the scratch ESP. Most boots raise the level to `trace`,
 because the `[SCAN]` dump the PCI tests assert on sits below the default
-`info`. The two TPM boots only read results, which print at any level, so
-they carry the other two states: `tpm_crb_boot` has no file at all and
-`tpm_tis_boot` an unusable level, which must be refused without stopping the
-run. `test_config.py` asserts on those two.
+`info`. Two boots only read results, which print at any level, so they
+carry the other two states: `tpm_crb_boot` has no file at all and
+`amd_iommu_enabled_boot` an unusable level, which must be refused without
+stopping the run. `test_config.py` asserts on those two. `tpm_tis_boot`
+stays at `trace` for its per-locality `TPM_ACCESS` line.
 
 Each boot reads serial output until `drtm: checks complete`, the last line
 `src/main.rs` prints, which proves the binary got past every check rather

@@ -108,6 +108,18 @@ def test_pci_scan_reports_the_iommu_capability(amd_iommu_boot: str):
     assert "[SCAN]   capability 0f type 3 at" in amd_iommu_boot
 
 
+def test_pci_scan_reads_each_bridge_once(amd_iommu_boot: str):
+    # Each function is listed once, through the bridge whose bus it sits on,
+    # so its class reads back rather than failing as it would elsewhere.
+    functions = re.findall(r"\[SCAN\] (\S+) id ", amd_iommu_boot)
+    assert "[SCAN] PCI root bridges: 2" in amd_iommu_boot
+    assert len(functions) == len(set(functions))
+    assert re.search(
+        r"\[SCAN\] 0000:20:00\.0 id 1b36:000c class 060400", amd_iommu_boot
+    )
+    assert "class 000000" not in amd_iommu_boot
+
+
 def test_no_iommu_without_the_device(default_boot: str):
     # The same scan on a guest with no IOMMU, so a pass above means the scan
     # discriminates rather than always reporting one.

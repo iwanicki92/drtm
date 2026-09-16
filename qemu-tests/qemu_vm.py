@@ -155,6 +155,9 @@ class QemuVm:
     capability's enable bit clear as upstream QEMU does, `"enabled"` sets it
     the way firmware would.
 
+    `extra_root_bridge` adds a second PCI host bridge (`pxb-pcie`) with a
+    root port on bus 0x20, the way a server has one per NUMA node.
+
     `config` is written beside the binary as `drtm.conf`. Leave it `None` for
     no file at all, which is what a stick carrying only the binary looks like.
     """
@@ -167,6 +170,7 @@ class QemuVm:
         cpu: str = DEFAULT_CPU,
         iommu: str | None = None,
         config: str | None = None,
+        extra_root_bridge: bool = False,
     ):
         if tpm not in (None, "tis", "crb"):
             raise ValueError(f"tpm must be None, 'tis' or 'crb', got {tpm!r}")
@@ -180,6 +184,7 @@ class QemuVm:
         self.cpu = cpu
         self.iommu = iommu
         self.config = config
+        self.extra_root_bridge = extra_root_bridge
         self._workdir = None
         self._process = None
         self._swtpm_process = None
@@ -255,6 +260,14 @@ class QemuVm:
 
         if self.iommu:
             args += ["-device", _amd_iommu(self.iommu == "enabled")]
+
+        if self.extra_root_bridge:
+            args += [
+                "-device",
+                "pxb-pcie,id=pxb1,bus_nr=0x20",
+                "-device",
+                "pcie-root-port,id=rp1,bus=pxb1,chassis=1",
+            ]
 
         if _use_kvm():
             args.append("-enable-kvm")
