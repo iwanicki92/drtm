@@ -192,6 +192,37 @@ def test_iommu_check_runs_after_the_vendor_gate(intel_cpu_boot: str):
     assert verdicts(intel_cpu_boot, "amd.iommu") == []
 
 
+def test_iommu_table_lists_the_iommu(amd_iommu_boot: str, amd_iommu_enabled_boot: str):
+    # QEMU lists its one IOMMU under two IVHD types, so a count of one also
+    # shows the entries are merged. The enable bit plays no part.
+    for capture in (amd_iommu_boot, amd_iommu_enabled_boot):
+        ((tag, detail),) = results(capture, "amd.iommu_table")
+        assert tag == "INFO"
+        assert "listed in IVRS: 1, matching configuration space" in detail
+
+
+def test_iommu_missing_from_acpi_warns(machine_check_error_boot: str):
+    # Our QEMU's `ivrs=off` drops the table, while the IOMMU stays enabled in
+    # configuration space, so it is configured and still unusable to an OS.
+    assert verdicts(machine_check_error_boot, "amd.iommu") == ["PASS", "INFO"]
+    ((tag, detail),) = results(machine_check_error_boot, "amd.iommu_table")
+    assert tag == "WARN"
+    assert "no IVRS table" in detail
+
+
+def test_iommu_table_is_skipped_without_an_iommu(default_boot: str):
+    # `amd.iommu` already warns about the missing IOMMU, and a table has
+    # nothing to describe, so this check does not warn a second time.
+    ((tag, detail),) = results(default_boot, "amd.iommu_table")
+    assert tag == "SKIP"
+    assert "no IVRS table" in detail
+
+
+def test_iommu_table_check_runs_after_the_vendor_gate(intel_cpu_boot: str):
+    # IVRS is AMD's table, so an Intel boot must not report on it.
+    assert verdicts(intel_cpu_boot, "amd.iommu_table") == []
+
+
 def test_psp_check_reports_no_secure_processor(default_boot: str):
     # QEMU models no PSP, so the not-found branch is the only one any boot
     # here can reach. The matching branches are unreachable until hardware.

@@ -80,8 +80,9 @@ def _use_kvm() -> bool:
     return os.access("/dev/kvm", os.R_OK | os.W_OK)
 
 
-def _amd_iommu(enabled: bool) -> str:
-    return f"amd-iommu,firmware-enabled={'on' if enabled else 'off'}"
+def _amd_iommu(enabled: bool, ivrs: bool = True) -> str:
+    device = f"amd-iommu,firmware-enabled={'on' if enabled else 'off'}"
+    return device if ivrs else f"{device},ivrs=off"
 
 
 # Starting paused and quitting takes well under a second.
@@ -110,7 +111,7 @@ def unsupported_binary() -> str | None:
         "-cpu",
         MMCONFIG_BELOW_4GIB,
         "-device",
-        _amd_iommu(enabled=True),
+        _amd_iommu(enabled=True, ivrs=False),
         "-device",
         "amd-psp",
     ]
@@ -162,6 +163,9 @@ class QemuVm:
     capability's enable bit clear as upstream QEMU does, `"enabled"` sets it
     the way firmware would.
 
+    `ivrs=False` has our QEMU leave that IOMMU out of ACPI, so the guest sees
+    no IVRS table at all.
+
     `extra_root_bridge` adds a second PCI host bridge (`pxb-pcie`) with a
     root port on bus 0x20, the way a server has one per NUMA node.
 
@@ -182,6 +186,7 @@ class QemuVm:
         tpm: str | None = None,
         cpu: str = DEFAULT_CPU,
         iommu: str | None = None,
+        ivrs: bool = True,
         config: str | None = None,
         extra_root_bridge: bool = False,
         corrected_error_bank: int | None = None,
@@ -198,6 +203,7 @@ class QemuVm:
         self.tpm = tpm
         self.cpu = cpu
         self.iommu = iommu
+        self.ivrs = ivrs
         self.config = config
         self.extra_root_bridge = extra_root_bridge
         self.corrected_error_bank = corrected_error_bank
@@ -276,7 +282,7 @@ class QemuVm:
             ]
 
         if self.iommu:
-            args += ["-device", _amd_iommu(self.iommu == "enabled")]
+            args += ["-device", _amd_iommu(self.iommu == "enabled", self.ivrs)]
 
         if self.extra_root_bridge:
             args += [

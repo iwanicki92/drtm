@@ -8,8 +8,18 @@
 //! no list of IOMMU device IDs and the capability offset is what anything
 //! programming the IOMMU works from.
 
+use alloc::vec::Vec;
+
 use crate::check;
 use crate::pci::{self, Devices, Function};
+
+/// One IOMMU as configuration space shows it, which is also how the IVRS
+/// table names one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Iommu {
+    pub function: Function,
+    pub capability: u16,
+}
 
 /// AMD puts both the IOMMU and the older Device Exclusion Vector under
 /// capability ID `0x0F`, so the type field is what separates them
@@ -33,13 +43,13 @@ const SKL_IOMMU: Function = Function {
     function: 2,
 };
 
-/// Reports every AMD IOMMU configuration space offers.
+/// Reports every AMD IOMMU configuration space offers, and returns them.
 ///
 /// Not a gate. A missing or firmware-disabled IOMMU costs DMA protection,
 /// which is a weaker launch rather than no launch, so it warns where a real
 /// precondition would fail. Where a particular loader looks is only noted.
-pub fn report(devices: &Devices) {
-    let mut found = 0;
+pub fn report(devices: &Devices) -> Vec<Iommu> {
+    let mut found = Vec::new();
     let mut at_skl_address = false;
     pci::for_each_device(devices, |pci, device| {
         let function = device.function;
@@ -49,7 +59,10 @@ pub fn report(devices: &Devices) {
             {
                 return;
             }
-            found += 1;
+            found.push(Iommu {
+                function,
+                capability: capability.offset.into(),
+            });
             at_skl_address |= function == SKL_IOMMU;
             // A block that would run past the header's 256 bytes is malformed
             // and counts as disabled, rather than overflowing the offset.
@@ -79,13 +92,13 @@ pub fn report(devices: &Devices) {
         });
     });
 
-    if found == 0 {
+    if found.is_empty() {
         check::warn!(
             "amd.iommu",
             "none in configuration space, so a launch here would have no \
              IOMMU to protect memory with"
         );
-        return;
+        return found;
     }
     if !at_skl_address {
         check::info!(
@@ -93,11 +106,13 @@ pub fn report(devices: &Devices) {
             "none at {SKL_IOMMU}, where the Secure Kernel Loader expects one"
         );
     }
-    if found > 1 {
+    if found.len() > 1 {
         check::info!(
             "amd.iommu",
-            "{found} found, while the Secure Kernel Loader programs only the \
-             one at {SKL_IOMMU}"
+            "{} found, while the Secure Kernel Loader programs only the one \
+             at {SKL_IOMMU}",
+            found.len()
         );
     }
+    found
 }

@@ -6,6 +6,7 @@
 
 pub mod checks;
 pub mod iommu;
+pub mod ivrs;
 pub mod memory;
 pub mod mmconfig;
 pub mod psp;
@@ -47,6 +48,7 @@ pub fn report(devices: &Devices) {
     }
 
     mmconfig::report();
-    iommu::report(devices);
+    let iommus = iommu::report(devices);
+    ivrs::report(&iommus);
     psp::report(devices);
 }

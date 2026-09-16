@@ -7,6 +7,7 @@
 
 extern crate alloc;
 
+mod acpi;
 mod amd;
 mod check;
 mod config;

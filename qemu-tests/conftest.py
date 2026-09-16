@@ -115,6 +115,7 @@ def boot_and_capture(
     tpm: str | None = None,
     cpu: str = DEFAULT_CPU,
     iommu: str | None = None,
+    ivrs: bool = True,
     config: str | None = FULL_OUTPUT,
     extra_root_bridge: bool = False,
     corrected_error_bank: int | None = None,
@@ -133,6 +134,7 @@ def boot_and_capture(
         tpm=tpm,
         cpu=cpu,
         iommu=iommu,
+        ivrs=ivrs,
         config=config,
         extra_root_bridge=extra_root_bridge,
         corrected_error_bank=corrected_error_bank,
@@ -187,11 +189,15 @@ def machine_check_error_boot(run_log_dir: Path, efi_binary: Path) -> str:
     bank 1 before the firmware runs, as a warm reboot can leave one.
 
     The only configuration reaching the logged-error outcome of that check.
+    Its tests only read results, so the boot also carries an enabled
+    `amd-iommu` left out of ACPI, which leaves the guest no IVRS table.
     """
     return boot_and_capture(
         efi_binary,
         run_log_dir / "boot-machine-check-error",
         corrected_error_bank=1,
+        iommu="enabled",
+        ivrs=False,
     )
 
 

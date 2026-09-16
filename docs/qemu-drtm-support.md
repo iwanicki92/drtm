@@ -108,10 +108,17 @@ to locate configuration space needs and nothing more.
 no mailbox, so it is found in configuration space and can answer nothing
 else.
 
+**`amd-iommu` can stay out of ACPI.** `-device amd-iommu,ivrs=off` leaves
+the IVRS table out, which upstream writes whenever the device is present
+(`hw/i386/acpi-build.c`). The IOMMU still answers in configuration space,
+so this is a configured IOMMU no OS would find.
+
 ## What would still be needed
 
-Every precondition check now reaches every outcome it has, so what is left
-is the launch itself.
+Every precondition check reaches its outcomes, except that `amd.iommu_table`
+never meets an IVRS table that is malformed or disagrees with configuration
+space. Those take a deliberately wrong table, and are left to hardware. What
+is left is the launch itself.
 
 1. **The `SKINIT` instruction**, including the hash transaction it drives:
     hashing the Secure Loader Block, extending PCR 17, and entering the SL
@@ -144,6 +151,8 @@ and some of them no longer hold.
 
 | Date       | QEMU   | Observation                                                                                                               |
 |------------|--------|---------------------------------------------------------------------------------------------------------------------------|
+| 2026-09-17 | ours   | `-device amd-iommu,ivrs=off` leaves no IVRS table, so `amd.iommu_table` warns about an enabled IOMMU                      |
+| 2026-09-17 | ours   | Dasharo passes QEMU's IVRS through, and it lists the one IOMMU under two IVHD types                                       |
 | 2026-09-17 | ours   | `-device amd-psp` makes `amd.psp` identify an ASP, the first boot to reach that branch                                    |
 | 2026-09-17 | ours   | A corrected error injected with `mce` before the firmware runs is still logged when `drtm` reads the banks                |
 | 2026-09-17 | ours   | Dasharo gives a `pxb-pcie` its own root bridge handle, and each handle refuses buses it does not own                      |
