@@ -71,6 +71,7 @@ growing parameters. Tests sharing a boot fail together if it does.
 | `amd_iommu_boot`           | `amd-iommu` disabled, `EPYC`, second root bridge     | `level=trace`   |
 | `amd_iommu_enabled_boot`   | `amd-iommu` attached, capability enabled by firmware | `level=verbose` |
 | `mmconfig_above_4gib_boot` | MMIO configuration window crossing 4 GiB             | `level=trace`   |
+| `machine_check_error_boot` | Corrected error in machine-check bank 1 from reset   | `level=trace`   |
 
 The CPU model decides the vendor string, and that selects which checks run
 at all: `default_boot` is AMD so every check runs, while `intel_cpu_boot`
@@ -85,7 +86,8 @@ leaves the configuration window disabled, which is where that check's third
 outcome comes from. It also carries a second root bridge, as a server has,
 so the scan is held to reading each function once. The enabled IOMMU boot
 differs in the capability, and `mmconfig_above_4gib_boot` only in where the
-window sits.
+window sits. `machine_check_error_boot` starts QEMU paused and logs an
+error through its `mce` monitor command before the firmware runs.
 
 The binary reads `drtm.conf` from beside itself on the ESP, so `QemuVm`
 writes one into the scratch ESP. Most boots raise the level to `trace`,

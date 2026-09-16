@@ -90,6 +90,14 @@ def test_machine_check_banks_are_actually_read(default_boot: str):
     assert int(match.group(1)) > 0
 
 
+def test_a_logged_machine_check_error_fails(machine_check_error_boot: str):
+    # Dasharo leaves the banks as it found them, so the error logged before
+    # the firmware ran is still there, and named with its bank and value.
+    assert results(machine_check_error_boot, "cpu.machine_check") == [
+        ("FAIL", "IA32_MC1_STATUS holds a logged error (0x9000000000000000)")
+    ]
+
+
 def test_cpu_state_checks_run_on_a_non_amd_cpu(intel_cpu_boot: str):
     # CR0, EFLAGS and the machine-check MSRs are architectural, and Intel TXT
     # carries the same requirements, so these are phase 2 like the BSP check.

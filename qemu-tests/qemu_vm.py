@@ -29,6 +29,10 @@ _VARSTORE_ZERO_BYTES = 256
 DEFAULT_CPU = "EPYC"
 SKINIT_CPU = f"{DEFAULT_CPU},+skinit"
 
+# IA32_MCi_STATUS with VAL and EN set and UC clear: a corrected error, which
+# QEMU logs in the bank without raising #MC.
+CORRECTED_ERROR = 0x9000_0000_0000_0000
+
 # MSR 0xC0010058 as firmware would leave it, which nothing in this guest
 # programs, so our QEMU takes its reset value from the CPU model. Bit 0
 # enables the window, bits 5:2 hold log2 of the bus count, and bits 51:20
@@ -158,6 +162,9 @@ class QemuVm:
     `extra_root_bridge` adds a second PCI host bridge (`pxb-pcie`) with a
     root port on bus 0x20, the way a server has one per NUMA node.
 
+    `corrected_error_bank` names a machine-check bank to hold a corrected
+    error from reset on. QEMU starts paused, logs it, then runs.
+
     `config` is written beside the binary as `drtm.conf`. Leave it `None` for
     no file at all, which is what a stick carrying only the binary looks like.
     """
@@ -171,6 +178,7 @@ class QemuVm:
         iommu: str | None = None,
         config: str | None = None,
         extra_root_bridge: bool = False,
+        corrected_error_bank: int | None = None,
     ):
         if tpm not in (None, "tis", "crb"):
             raise ValueError(f"tpm must be None, 'tis' or 'crb', got {tpm!r}")
@@ -185,6 +193,7 @@ class QemuVm:
         self.iommu = iommu
         self.config = config
         self.extra_root_bridge = extra_root_bridge
+        self.corrected_error_bank = corrected_error_bank
         self._workdir = None
         self._process = None
         self._swtpm_process = None
@@ -269,6 +278,9 @@ class QemuVm:
                 "pcie-root-port,id=rp1,bus=pxb1,chassis=1",
             ]
 
+        if self.corrected_error_bank is not None:
+            args.append("-S")
+
         if _use_kvm():
             args.append("-enable-kvm")
 
@@ -283,6 +295,13 @@ class QemuVm:
         )
         self._qmp_sock_path = qmp_sock
         self.qmp = QmpClient(qmp_sock)
+        if self.corrected_error_bank is not None:
+            self._wait_for_qmp(qmp_sock)
+            # mce <cpu> <bank> <status> <mcg_status> <addr> <misc>
+            self.qmp.human_monitor_command(
+                f"mce 0 {self.corrected_error_bank} {CORRECTED_ERROR:#x} 0 0 0"
+            )
+            self.qmp.cont()
         self._serial_sock = self._connect_serial(serial_port)
         self._serial_sock.settimeout(0.2)
         self._serial_reader = threading.Thread(
@@ -342,6 +361,13 @@ class QemuVm:
                 )
             time.sleep(0.05)
         raise TimeoutError(f"swtpm never created its control socket at {sock}")
+
+    def _wait_for_qmp(self, path, timeout=5.0):
+        deadline = time.monotonic() + timeout
+        while not os.path.exists(path):
+            if time.monotonic() >= deadline:
+                raise TimeoutError("QEMU never created its QMP socket")
+            time.sleep(0.05)
 
     def _connect_serial(self, port, timeout=5.0):
         deadline = time.monotonic() + timeout

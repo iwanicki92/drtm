@@ -65,6 +65,12 @@ class QmpClient:
             return {"ack": json_objects[0], "event": json_objects[1]}
         return json_objects[0]
 
+    def human_monitor_command(self, command_line):
+        return self._send_cmd("human-monitor-command", **{"command-line": command_line})
+
+    def cont(self):
+        return self._send_cmd("cont")
+
     def system_reset(self):
         return self._send_cmd("system_reset")
 

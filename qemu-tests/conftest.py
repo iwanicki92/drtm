@@ -117,6 +117,7 @@ def boot_and_capture(
     iommu: str | None = None,
     config: str | None = FULL_OUTPUT,
     extra_root_bridge: bool = False,
+    corrected_error_bank: int | None = None,
 ) -> str:
     """Boots `efi_binary` once and returns everything it printed.
 
@@ -133,6 +134,7 @@ def boot_and_capture(
         iommu=iommu,
         config=config,
         extra_root_bridge=extra_root_bridge,
+        corrected_error_bank=corrected_error_bank,
     ) as vm:
         return vm.read_serial_until(CHECKS_COMPLETE, timeout=BOOT_TIMEOUT)
 
@@ -174,6 +176,20 @@ def intel_cpu_boot(run_log_dir: Path, efi_binary: Path) -> str:
     """
     return boot_and_capture(
         efi_binary, run_log_dir / "boot-intel-cpu", cpu="Skylake-Client"
+    )
+
+
+@pytest.fixture(scope="session")
+def machine_check_error_boot(run_log_dir: Path, efi_binary: Path) -> str:
+    """Serial output of one boot with a corrected error logged in machine-check
+    bank 1 before the firmware runs, as a warm reboot can leave one.
+
+    The only configuration reaching the logged-error outcome of that check.
+    """
+    return boot_and_capture(
+        efi_binary,
+        run_log_dir / "boot-machine-check-error",
+        corrected_error_bank=1,
     )
 
 
