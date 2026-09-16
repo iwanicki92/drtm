@@ -29,6 +29,13 @@ _VARSTORE_ZERO_BYTES = 256
 DEFAULT_CPU = "EPYC"
 SKINIT_CPU = f"{DEFAULT_CPU},+skinit"
 
+# MSR 0xC0010058 as firmware would leave it, which nothing in this guest
+# programs, so our QEMU takes its reset value from the CPU model. Bit 0
+# enables the window, bits 5:2 hold log2 of the bus count, and bits 51:20
+# the base. Both values cover 256 buses, one below 4 GiB and one crossing it.
+MMCONFIG_BELOW_4GIB = f"{SKINIT_CPU},mmio-conf-base=0xe0000021"
+MMCONFIG_ABOVE_4GIB = f"{DEFAULT_CPU},mmio-conf-base=0xf8000021"
+
 
 def _free_tcp_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:

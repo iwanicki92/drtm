@@ -20,7 +20,12 @@ from datetime import datetime
 from pathlib import Path
 
 import pytest
-from qemu_vm import DEFAULT_CPU, SKINIT_CPU, QemuVm
+from qemu_vm import (
+    DEFAULT_CPU,
+    MMCONFIG_ABOVE_4GIB,
+    MMCONFIG_BELOW_4GIB,
+    QemuVm,
+)
 
 REPO_ROOT = Path(__file__).parent.parent
 EFI_BINARY = REPO_ROOT / "target" / "x86_64-unknown-uefi" / "debug" / "drtm.efi"
@@ -127,13 +132,29 @@ def boot_and_capture(
 @pytest.fixture(scope="session")
 def default_boot(run_log_dir: Path, efi_binary: Path) -> str:
     """Serial output of one boot under QEMU's default configuration: no TPM
-    device attached, and an AMD CPU model reporting `skinit`.
+    device attached, and an AMD CPU model reporting `skinit` and an MMIO
+    configuration window below 4 GiB.
 
     AMD by default so this fixture runs every check rather than skipping the
-    vendor-specific ones, which is most of them. The feature bit has to be
-    asked for by name, and only our QEMU accepts it.
+    vendor-specific ones, which is most of them. Both of those CPU options
+    are ones only our QEMU accepts.
     """
-    return boot_and_capture(efi_binary, run_log_dir / "boot-default", cpu=SKINIT_CPU)
+    return boot_and_capture(
+        efi_binary, run_log_dir / "boot-default", cpu=MMCONFIG_BELOW_4GIB
+    )
+
+
+@pytest.fixture(scope="session")
+def mmconfig_above_4gib_boot(run_log_dir: Path, efi_binary: Path) -> str:
+    """Serial output of one boot whose MMIO configuration window does not fit
+    below 4 GiB.
+
+    The only configuration where that check warns. Nothing else here differs
+    from `default_boot`, down to the bus count.
+    """
+    return boot_and_capture(
+        efi_binary, run_log_dir / "boot-mmconfig-above-4gib", cpu=MMCONFIG_ABOVE_4GIB
+    )
 
 
 @pytest.fixture(scope="session")

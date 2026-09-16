@@ -12,14 +12,12 @@ asserted in `test_platform_checks.py`.
 Assertions key on a check's identifier and verdict via `results`/`verdicts`,
 not on its wording, except where a test needs a value out of the detail text.
 
-One branch here is unreachable rather than merely untaken: the MMCONFIG
-check only ever sees an unimplemented MSR reading zero, so neither enabled
-outcome can be produced.
-
-The `SKINIT` and IOMMU checks reach both outcomes, but only on the QEMU
-build `docs/testing.md` describes. No upstream CPU model carries the
-`skinit` CPUID bit and upstream refuses it when asked for by name, and
-upstream's `amd-iommu` leaves its capability's enable bit clear.
+Every branch here is reachable, but three checks need the QEMU build
+`docs/testing.md` describes. No upstream CPU model carries the `skinit`
+CPUID bit and upstream refuses it when asked for by name, upstream's
+`amd-iommu` leaves its capability's enable bit clear, and `MSR 0xC0010058`
+is absent from upstream entirely, so it reads zero and the MMCONFIG check
+only ever sees a disabled window.
 """
 
 import re
@@ -62,19 +60,28 @@ def test_slb_region_address_satisfies_skinit(default_boot: str):
 
 
 def test_mmio_config_window_is_reported(default_boot: str):
-    # QEMU 8.2.2 does not model MSR 0xC0010058: it reads as zero on every AMD
-    # model tried, and on an Intel one too, where hardware would raise #GP.
-    # So this asserts the enable-bit-clear branch is reached and worded as a
-    # skip, not that any platform really leaves the window disabled.
+    # The window MMCONFIG_BELOW_4GIB asks for: 256 buses from 0xe0000000, so
+    # it ends at 0xf0000000 and a 32-bit consumer reaches all of it.
     ((tag, detail),) = results(default_boot, "amd.mmconfig")
+    assert tag == "PASS"
+    assert "0xe0000000..0xf0000000" in detail
+    assert "256 buses" in detail
+
+
+def test_mmio_config_window_above_4gib_warns(mmconfig_above_4gib_boot: str):
+    # The same window moved up so its tail crosses 4 GiB, which is what a
+    # 32-bit consumer would read memory in place of.
+    ((tag, detail),) = results(mmconfig_above_4gib_boot, "amd.mmconfig")
+    assert tag == "WARN"
+    assert "0xf8000000..0x108000000" in detail
+
+
+def test_mmio_config_window_is_skipped_when_disabled(amd_iommu_boot: str):
+    # The boot that asks for no window at all, so the MSR reads zero. A
+    # platform that does not use this MSR has not failed a check.
+    ((tag, detail),) = results(amd_iommu_boot, "amd.mmconfig")
     assert tag == "SKIP"
     assert "enable bit clear" in detail
-
-
-def test_mmio_config_window_is_not_reported_as_a_failure(default_boot: str):
-    # The whole point of the third outcome. A platform that does not use this
-    # MSR is not a platform that failed a check.
-    assert "FAIL" not in verdicts(default_boot, "amd.mmconfig")
 
 
 def test_the_checks_survive_an_attached_iommu(amd_iommu_boot: str):

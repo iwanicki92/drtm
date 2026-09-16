@@ -26,11 +26,12 @@ The first run downloads Dasharo's QEMU Q35 firmware image into
 
 ### The QEMU build
 
-The suite needs our own QEMU, not a distribution one. Two checks reach
+The suite needs our own QEMU, not a distribution one. Three checks reach
 outcomes upstream cannot produce: `amd.skinit` passing needs a CPU allowed
-to report the feature bit, and `amd.iommu` passing needs an `amd-iommu`
-whose capability reads enabled. What those patches do, and what is still
-missing, is in [qemu-drtm-support.md](qemu-drtm-support.md).
+to report the feature bit, `amd.iommu` passing needs an `amd-iommu` whose
+capability reads enabled, and `amd.mmconfig` needs `MSR 0xC0010058` to hold
+a value at all. What those patches do, and what is still missing, is in
+[qemu-drtm-support.md](qemu-drtm-support.md).
 
 ```sh
 git clone <fork> qemu
@@ -48,7 +49,7 @@ DRTM_QEMU_BINARY=../qemu/build/qemu-system-x86_64 \
 ```
 
 Unset, it falls back to `qemu-system-x86_64` on `PATH`, which boots and
-runs every check but fails the tests covering those two branches.
+runs every check but fails the tests covering those branches.
 
 ## How the VM is set up
 
@@ -59,14 +60,15 @@ tests assert against. A configuration needing different QEMU arguments gets
 its own fixture calling `boot_and_capture`, rather than the existing ones
 growing parameters. Tests sharing a boot fail together if it does.
 
-| Fixture                  | Configuration                                        | `drtm.conf`     |
-|--------------------------|------------------------------------------------------|-----------------|
-| `default_boot`           | No TPM device, `EPYC,+skinit`                        | `level=trace`   |
-| `intel_cpu_boot`         | No TPM device, Intel CPU model (`Skylake-Client`)    | `level=trace`   |
-| `tpm_tis_boot`           | `swtpm`-backed TPM 2.0 on the FIFO (TIS) interface   | `level=verbose` |
-| `tpm_crb_boot`           | `swtpm`-backed TPM 2.0 on the CRB interface          | none            |
-| `amd_iommu_boot`         | `amd-iommu` attached, capability disabled, `EPYC`    | `level=trace`   |
-| `amd_iommu_enabled_boot` | `amd-iommu` attached, capability enabled by firmware | `level=trace`   |
+| Fixture                    | Configuration                                        | `drtm.conf`     |
+|----------------------------|------------------------------------------------------|-----------------|
+| `default_boot`             | No TPM device, `EPYC,+skinit`, window below 4 GiB    | `level=trace`   |
+| `intel_cpu_boot`           | No TPM device, Intel CPU model (`Skylake-Client`)    | `level=trace`   |
+| `tpm_tis_boot`             | `swtpm`-backed TPM 2.0 on the FIFO (TIS) interface   | `level=verbose` |
+| `tpm_crb_boot`             | `swtpm`-backed TPM 2.0 on the CRB interface          | none            |
+| `amd_iommu_boot`           | `amd-iommu` attached, capability disabled, `EPYC`    | `level=trace`   |
+| `amd_iommu_enabled_boot`   | `amd-iommu` attached, capability enabled by firmware | `level=trace`   |
+| `mmconfig_above_4gib_boot` | MMIO configuration window crossing 4 GiB             | `level=trace`   |
 
 The CPU model decides the vendor string, and that selects which checks run
 at all: `default_boot` is AMD so every check runs, while `intel_cpu_boot`
@@ -74,10 +76,13 @@ covers the path where the AMD checks are skipped and the vendor-independent
 ones still run. Both TPM interfaces are tested because the check reports
 them differently, and an earlier bug got CRB wrong while passing on TIS.
 
-Two pairs exist only to reach both outcomes of one check without adding
-boots. `default_boot` asks for `+skinit` and `amd_iommu_boot` does not, so
-the `SKINIT` check is exercised either way, and the two IOMMU boots differ
-only in whether the capability reads enabled.
+Several boots exist only to reach a second outcome of one check.
+`default_boot` asks for `+skinit` and `amd_iommu_boot` does not, so the
+`SKINIT` check is exercised both ways at no cost, and `amd_iommu_boot` also
+leaves the configuration window disabled, which is where that check's third
+outcome comes from. The two IOMMU boots differ only in whether the
+capability reads enabled, and `mmconfig_above_4gib_boot` only in where the
+window sits.
 
 The binary reads `drtm.conf` from beside itself on the ESP, so `QemuVm`
 writes one into the scratch ESP. Most boots raise the level to `trace`,

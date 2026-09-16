@@ -5,8 +5,8 @@
 //! Where the platform puts PCI MMIO configuration space.
 //!
 //! Read from an AMD-specific MSR, so this runs only after the vendor test.
-//! A window a 32-bit consumer cannot reach fails silently rather than
-//! loudly, which is why the window is reported wherever it sits.
+//! A window the Secure Kernel Loader cannot reach fails silently rather
+//! than loudly, which is why the window is reported wherever it sits.
 
 use crate::{check, msr};
 
@@ -14,8 +14,8 @@ use crate::{check, msr};
 /// enables the window and bits 5:2 select its size. Linux has carried it
 /// since family 10h as `MSR_FAM10H_MMIO_CONF_BASE`, but only the Processor
 /// Programming Reference gives the base field's width. Reading it on a
-/// non-AMD CPU raises `#GP` on silicon, though not under QEMU, which does
-/// not model the register and returns zero whatever the vendor.
+/// non-AMD CPU raises `#GP` on silicon, though not under QEMU, whose MSR
+/// helpers switch on the register number and know nothing of the vendor.
 const MMIO_CONFIG_BASE_MSR: u32 = 0xC001_0058;
 const MMIO_CONFIG_ENABLE: u64 = 1;
 const BUS_RANGE_SHIFT: u32 = 2;
@@ -36,8 +36,7 @@ const FOUR_GIB: u64 = 1 << 32;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MmioConfig {
     /// The enable bit is clear, so the platform describes the window some
-    /// other way. Not a failure. Also what QEMU always reports, from its CPU
-    /// emulation rather than the chipset, so a boot there proves nothing.
+    /// other way, such as a chipset register plus ACPI MCFG. Not a failure.
     Disabled,
     Enabled {
         base: u64,
@@ -79,14 +78,14 @@ pub fn report() {
                      reachable by a 32-bit consumer"
                 );
             } else {
-                // Not a failure here, which never drops to 32 bits. It is
-                // still worth saying: the consumer that does reads RAM as
-                // configuration space rather than getting an error.
+                // A loader defect rather than a broken platform, so not a
+                // failure: SKL keeps the base in a `u32` and drops `EDX`
+                // entirely (`secure-kernel-loader:pci.c`).
                 check::warn!(
                     "amd.mmconfig",
                     "window at {base:#x}..{end:#x} ({buses} buses) is not \
-                     entirely below 4 GiB, a 32-bit consumer would read \
-                     memory in its place"
+                     entirely below 4 GiB, which the Secure Kernel Loader \
+                     truncates and reads memory in place of"
                 );
             }
         }

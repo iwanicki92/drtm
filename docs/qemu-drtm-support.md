@@ -49,7 +49,8 @@ So on upstream only the "unsupported" branch of that check is reachable.
 QEMU tree. A read falls into `helper_rdmsr`'s `default:` case, which returns
 zero without raising `#GP` (`target/i386/tcg/system/misc_helper.c`). Those
 helpers switch on the MSR number alone and have no notion of CPU vendor, so
-an AMD-only MSR does not fault on an Intel model either.
+an AMD-only MSR does not fault on an Intel model either, and that stays true
+of our build.
 
 Under KVM the result is the same for a different reason. The kernel does
 know this register, as `MSR_FAM10H_MMIO_CONF_BASE`, and deliberately reads
@@ -79,7 +80,7 @@ platform whatever the CPU model.
 ## What our build adds
 
 Patches carried on the `drtm` branch of our QEMU fork, described by what
-they make observable rather than by their diff. Both are opt-in, so a guest
+they make observable rather than by their diff. All are opt-in, so a guest
 that does not ask for them behaves as it would upstream.
 
 **The `skinit` CPUID bit can be asked for.** `-cpu EPYC,+skinit` then
@@ -95,19 +96,16 @@ base. Nothing in a QEMU guest does that, and the Dasharo firmware we boot
 is an Intel platform build that would not touch an AMD IOMMU, so without
 this the bit can only ever read clear.
 
+**`MSR 0xC0010058` holds a value.** `-cpu EPYC,mmio-conf-base=0xe0000021`
+gives the MMIO configuration base register a reset value, since no firmware
+here programs it, and writes to it stick. Nothing is mapped: the register
+reports a window rather than backing one, which is what software reading it
+to locate configuration space needs and nothing more.
+
 ## What would still be needed
 
-Ranked by what it would buy against what it would cost.
-
-### For the precondition checks
-
-**Model `MSR 0xC0010058`.** Small, and the only thing standing between us
-and exercising both enabled outcomes of the MMCONFIG check, whose arithmetic
-currently runs on no input but zero. A writable register honouring the
-documented field layout would be enough. Note the KVM path would need its
-own change, since the kernel pins it to zero on purpose.
-
-### Before a launch could run at all
+Every precondition check now reaches every outcome it has, so what is left
+is the launch itself.
 
 1. **The `SKINIT` instruction**, including the hash transaction it drives:
     hashing the Secure Loader Block, extending PCR 17, and entering the SL
@@ -138,6 +136,7 @@ and some of them no longer hold.
 
 | Date       | QEMU   | Observation                                                                                                               |
 |------------|--------|---------------------------------------------------------------------------------------------------------------------------|
+| 2026-09-16 | ours   | `-cpu EPYC,mmio-conf-base=...` reaches both enabled outcomes of `amd.mmconfig`, which had only ever been skipped          |
 | 2026-09-16 | ours   | `-device amd-iommu,firmware-enabled=on` makes `amd.iommu` pass, the first boot to reach that branch                       |
 | 2026-09-16 | ours   | `-cpu EPYC,+skinit` makes `amd.skinit` pass, the first boot to reach that branch                                          |
 | 2026-09-16 | 11.1.1 | `amd-iommu` answers `1022:1419`, so an AMD vendor ID alone would take it for a Secure Processor                           |
