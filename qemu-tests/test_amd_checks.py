@@ -61,19 +61,22 @@ def test_slb_region_address_satisfies_skinit(default_boot: str):
 
 def test_mmio_config_window_is_reported(default_boot: str):
     # The window MMCONFIG_BELOW_4GIB asks for: 256 buses from 0xe0000000, so
-    # it ends at 0xf0000000 and a 32-bit consumer reaches all of it.
+    # it ends at 0xf0000000, below 4 GiB.
     ((tag, detail),) = results(default_boot, "amd.mmconfig")
-    assert tag == "PASS"
+    assert tag == "INFO"
     assert "0xe0000000..0xf0000000" in detail
     assert "256 buses" in detail
+    assert "below 4 GiB" in detail
 
 
-def test_mmio_config_window_above_4gib_warns(mmconfig_above_4gib_boot: str):
-    # The same window moved up so its tail crosses 4 GiB, which is what a
-    # 32-bit consumer would read memory in place of.
+def test_mmio_config_window_above_4gib_is_reported(mmconfig_above_4gib_boot: str):
+    # The same window moved up so its tail crosses 4 GiB. Where it sits
+    # decides how a launch reaches it, not whether one can happen, so this is
+    # a fact rather than a warning.
     ((tag, detail),) = results(mmconfig_above_4gib_boot, "amd.mmconfig")
-    assert tag == "WARN"
+    assert tag == "INFO"
     assert "0xf8000000..0x108000000" in detail
+    assert "not entirely below 4 GiB" in detail
 
 
 def test_mmio_config_window_is_skipped_when_disabled(amd_iommu_boot: str):
@@ -127,8 +130,8 @@ def test_iommu_is_found_by_its_capability(amd_iommu_boot: str):
 
 
 def test_iommu_left_disabled_by_firmware_warns(amd_iommu_boot: str):
-    # An enable bit left clear is what SKL treats as no IOMMU at all, so the
-    # IOMMU it found is a warning rather than a pass.
+    # An enable bit left clear means firmware never configured the IOMMU, so
+    # it protects nothing yet and is a warning rather than a pass.
     ((tag, detail),) = [
         result
         for result in results(amd_iommu_boot, "amd.iommu")
@@ -151,12 +154,18 @@ def test_iommu_enabled_by_firmware_passes(amd_iommu_enabled_boot: str):
 
 
 def test_iommu_away_from_the_launch_address_is_reported(amd_iommu_boot: str):
-    # QEMU never puts it at 0:00.2, the one address SKL sets an IOMMU up at,
-    # so this branch is exercised on every boot with the device attached.
-    warnings = [
-        detail for tag, detail in results(amd_iommu_boot, "amd.iommu") if tag == "WARN"
+    # QEMU never puts it at 0:00.2, where SKL expects one, so this branch is
+    # exercised on every boot with the device attached.
+    notes = [
+        detail for tag, detail in results(amd_iommu_boot, "amd.iommu") if tag == "INFO"
     ]
-    assert any("0000:00:00.2" in detail for detail in warnings), warnings
+    assert any("0000:00:00.2" in detail for detail in notes), notes
+
+
+def test_iommu_address_is_never_a_warning(amd_iommu_enabled_boot: str):
+    # No specification fixes where the IOMMU sits, so a configured one away
+    # from the address one loader expects leaves nothing to warn about.
+    assert "WARN" not in verdicts(amd_iommu_enabled_boot, "amd.iommu")
 
 
 def test_missing_iommu_warns_rather_than_fails(default_boot: str):

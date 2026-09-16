@@ -149,8 +149,8 @@ def mmconfig_above_4gib_boot(run_log_dir: Path, efi_binary: Path) -> str:
     """Serial output of one boot whose MMIO configuration window does not fit
     below 4 GiB.
 
-    The only configuration where that check warns. Nothing else here differs
-    from `default_boot`, down to the bus count.
+    The only configuration reaching that check's second enabled outcome.
+    Nothing else here differs from `default_boot`, down to the bus count.
     """
     return boot_and_capture(
         efi_binary, run_log_dir / "boot-mmconfig-above-4gib", cpu=MMCONFIG_ABOVE_4GIB

@@ -5,8 +5,8 @@
 //! Where the platform puts PCI MMIO configuration space.
 //!
 //! Read from an AMD-specific MSR, so this runs only after the vendor test.
-//! A window the Secure Kernel Loader cannot reach fails silently rather
-//! than loudly, which is why the window is reported wherever it sits.
+//! Reported rather than judged: where the window sits constrains how a
+//! launch reaches it, not whether the platform can launch.
 
 use crate::{check, msr};
 
@@ -72,20 +72,19 @@ pub fn report() {
         MmioConfig::Enabled { base, buses } => {
             let end = base + buses * BYTES_PER_BUS;
             if end <= FOUR_GIB {
-                check::pass!(
+                check::info!(
                     "amd.mmconfig",
-                    "window at {base:#x}..{end:#x} ({buses} buses), \
-                     reachable by a 32-bit consumer"
+                    "window at {base:#x}..{end:#x} ({buses} buses), below 4 GiB"
                 );
             } else {
-                // A loader defect rather than a broken platform, so not a
-                // failure: SKL keeps the base in a `u32` and drops `EDX`
-                // entirely (`secure-kernel-loader:pci.c`).
-                check::warn!(
+                // SKINIT leaves the CPU in 32-bit mode with paging off (_APM
+                // Vol 2, section 15.27_), and a loader unaware of this reads
+                // memory instead, as `secure-kernel-loader:pci.c` did.
+                check::info!(
                     "amd.mmconfig",
-                    "window at {base:#x}..{end:#x} ({buses} buses) is not \
-                     entirely below 4 GiB, which the Secure Kernel Loader \
-                     truncates and reads memory in place of"
+                    "window at {base:#x}..{end:#x} ({buses} buses), not \
+                     entirely below 4 GiB, which the 32-bit unpaged state \
+                     SKINIT leaves cannot address, so port I/O is needed"
                 );
             }
         }

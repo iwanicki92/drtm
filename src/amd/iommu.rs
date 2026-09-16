@@ -23,9 +23,9 @@ const CAPABILITY_TYPE_IOMMU: u8 = 3;
 const CAPABILITY_REG_BASE_LOW: u8 = 0x04;
 const BASE_LOW_ENABLE: u32 = 1 << 0;
 
-/// The Secure Kernel Loader sets up the IOMMU at this fixed address and no
-/// other, whatever else the scan turns up
-/// (`secure-kernel-loader:include/iommu.h`).
+/// Where the Secure Kernel Loader expects the IOMMU
+/// (`secure-kernel-loader:include/iommu.h`). No specification fixes an
+/// address, so this is reported and never judged.
 const SKL_IOMMU: Function = Function {
     segment: 0,
     bus: 0,
@@ -37,7 +37,7 @@ const SKL_IOMMU: Function = Function {
 ///
 /// Not a gate. A missing or firmware-disabled IOMMU costs DMA protection,
 /// which is a weaker launch rather than no launch, so it warns where a real
-/// precondition would fail.
+/// precondition would fail. Where a particular loader looks is only noted.
 pub fn report(devices: &Devices) {
     let mut found = 0;
     let mut at_skl_address = false;
@@ -68,13 +68,11 @@ pub fn report(devices: &Devices) {
                     capability.offset
                 );
             } else {
-                // The Secure Kernel Loader refuses to program it and launches
-                // without DMA protection (`secure-kernel-loader:iommu.c`).
                 check::warn!(
                     "amd.iommu",
                     "at {function}, capability block at {:#04x}, enable bit \
-                     clear, so firmware left it off and a launch would not \
-                     program it",
+                     clear, so firmware left it unconfigured and it protects \
+                     nothing until software programs it",
                     capability.offset
                 );
             }
@@ -90,18 +88,16 @@ pub fn report(devices: &Devices) {
         return;
     }
     if !at_skl_address {
-        check::warn!(
+        check::info!(
             "amd.iommu",
-            "none at {SKL_IOMMU}, the fixed address the Secure Kernel \
-             Loader sets one up at, so it would configure none"
+            "none at {SKL_IOMMU}, where the Secure Kernel Loader expects one"
         );
     }
     if found > 1 {
-        check::warn!(
+        check::info!(
             "amd.iommu",
-            "{found} found. The Secure Kernel Loader configures only the \
-             one at {SKL_IOMMU}, so its deny-all device table reaches no \
-             other"
+            "{found} found, while the Secure Kernel Loader programs only the \
+             one at {SKL_IOMMU}"
         );
     }
 }
