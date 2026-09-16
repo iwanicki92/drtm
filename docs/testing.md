@@ -26,11 +26,12 @@ The first run downloads Dasharo's QEMU Q35 firmware image into
 
 ### The QEMU build
 
-The suite needs our own QEMU, not a distribution one. Three checks reach
+The suite needs our own QEMU, not a distribution one. Four checks reach
 outcomes upstream cannot produce: `amd.skinit` passing needs a CPU allowed
 to report the feature bit, `amd.iommu` passing needs an `amd-iommu` whose
-capability reads enabled, and `amd.mmconfig` needs `MSR 0xC0010058` to hold
-a value at all. What those patches do, and what is still missing, is in
+capability reads enabled, `amd.mmconfig` needs `MSR 0xC0010058` to hold a
+value at all, and `amd.psp` needs a device with a Secure Processor ID.
+What those patches do, and what is still missing, is in
 [qemu-drtm-support.md](qemu-drtm-support.md).
 
 ```sh
@@ -69,7 +70,7 @@ growing parameters. Tests sharing a boot fail together if it does.
 | `tpm_tis_boot`             | `swtpm`-backed TPM 2.0 on the FIFO (TIS) interface   | `level=trace`   |
 | `tpm_crb_boot`             | `swtpm`-backed TPM 2.0 on the CRB interface          | none            |
 | `amd_iommu_boot`           | `amd-iommu` disabled, `EPYC`, second root bridge     | `level=trace`   |
-| `amd_iommu_enabled_boot`   | `amd-iommu` attached, capability enabled by firmware | `level=verbose` |
+| `amd_iommu_enabled_boot`   | `amd-iommu` enabled by firmware, `amd-psp-stub`      | `level=verbose` |
 | `mmconfig_above_4gib_boot` | MMIO configuration window crossing 4 GiB             | `level=trace`   |
 | `machine_check_error_boot` | Corrected error in machine-check bank 1 from reset   | `level=trace`   |
 
@@ -85,9 +86,10 @@ Several boots exist only to reach a second outcome of one check.
 leaves the configuration window disabled, which is where that check's third
 outcome comes from. It also carries a second root bridge, as a server has,
 so the scan is held to reading each function once. The enabled IOMMU boot
-differs in the capability, and `mmconfig_above_4gib_boot` only in where the
-window sits. `machine_check_error_boot` starts QEMU paused and logs an
-error through its `mce` monitor command before the firmware runs.
+differs in the capability and adds the Secure Processor stub, and
+`mmconfig_above_4gib_boot` differs only in where the window sits.
+`machine_check_error_boot` starts QEMU paused and logs an error through its
+`mce` monitor command before the firmware runs.
 
 The binary reads `drtm.conf` from beside itself on the ESP, so `QemuVm`
 writes one into the scratch ESP. Most boots raise the level to `trace`,

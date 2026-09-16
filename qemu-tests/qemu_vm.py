@@ -92,7 +92,8 @@ def unsupported_binary() -> str | None:
     """Why the QEMU in use cannot run this suite, or `None` if it can.
 
     Starts it paused with every option only our build accepts. Upstream
-    refuses the two properties outright but drops `skinit` with a warning.
+    refuses the properties and the device outright but drops `skinit` with
+    a warning.
     """
     args = [
         _binary(),
@@ -110,6 +111,8 @@ def unsupported_binary() -> str | None:
         MMCONFIG_BELOW_4GIB,
         "-device",
         _amd_iommu(enabled=True),
+        "-device",
+        "amd-psp-stub",
     ]
     try:
         probe = subprocess.run(
@@ -162,6 +165,9 @@ class QemuVm:
     `extra_root_bridge` adds a second PCI host bridge (`pxb-pcie`) with a
     root port on bus 0x20, the way a server has one per NUMA node.
 
+    `psp` attaches our QEMU's `amd-psp-stub`, a function answering with that
+    AMD device ID and nothing behind it.
+
     `corrected_error_bank` names a machine-check bank to hold a corrected
     error from reset on. QEMU starts paused, logs it, then runs.
 
@@ -179,6 +185,7 @@ class QemuVm:
         config: str | None = None,
         extra_root_bridge: bool = False,
         corrected_error_bank: int | None = None,
+        psp: int | None = None,
     ):
         if tpm not in (None, "tis", "crb"):
             raise ValueError(f"tpm must be None, 'tis' or 'crb', got {tpm!r}")
@@ -194,6 +201,7 @@ class QemuVm:
         self.config = config
         self.extra_root_bridge = extra_root_bridge
         self.corrected_error_bank = corrected_error_bank
+        self.psp = psp
         self._workdir = None
         self._process = None
         self._swtpm_process = None
@@ -277,6 +285,9 @@ class QemuVm:
                 "-device",
                 "pcie-root-port,id=rp1,bus=pxb1,chassis=1",
             ]
+
+        if self.psp is not None:
+            args += ["-device", f"amd-psp-stub,device-id={self.psp:#x}"]
 
         if self.corrected_error_bank is not None:
             args.append("-S")

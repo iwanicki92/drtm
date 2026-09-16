@@ -118,6 +118,7 @@ def boot_and_capture(
     config: str | None = FULL_OUTPUT,
     extra_root_bridge: bool = False,
     corrected_error_bank: int | None = None,
+    psp: int | None = None,
 ) -> str:
     """Boots `efi_binary` once and returns everything it printed.
 
@@ -135,6 +136,7 @@ def boot_and_capture(
         config=config,
         extra_root_bridge=extra_root_bridge,
         corrected_error_bank=corrected_error_bank,
+        psp=psp,
     ) as vm:
         return vm.read_serial_until(CHECKS_COMPLETE, timeout=BOOT_TIMEOUT)
 
@@ -216,15 +218,16 @@ def amd_iommu_enabled_boot(run_log_dir: Path, efi_binary: Path) -> str:
     enabled, which is what firmware does on a machine that has one.
 
     The only configuration where `amd.iommu` can pass, and only our QEMU
-    offers it. Its `drtm.conf` names a level that does not exist. The IOMMU
-    tests only read results, so this boot also covers a config that has to
-    be refused.
+    offers it. Its tests only read results, so the boot also carries a
+    `drtm.conf` naming a level that does not exist, and a Secure Processor
+    stub with the Turin ASP's device ID.
     """
     return boot_and_capture(
         efi_binary,
         run_log_dir / "boot-amd-iommu-enabled",
         iommu="enabled",
         config=BAD_LEVEL,
+        psp=0x156E,
     )
 
 

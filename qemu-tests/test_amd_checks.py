@@ -210,10 +210,21 @@ def test_an_amd_device_that_is_not_a_psp_is_not_matched(amd_iommu_boot: str):
     assert "no AMD Secure Processor" in detail
 
 
-def test_psp_check_never_judges_the_platform(default_boot: str, amd_iommu_boot: str):
+def test_a_secure_processor_is_identified(amd_iommu_enabled_boot: str):
+    # Our QEMU's stub answers with the Turin ASP's ID and nothing else, so
+    # the ID is all the check can go on.
+    ((tag, detail),) = results(amd_iommu_enabled_boot, "amd.psp")
+    assert tag == "INFO"
+    assert detail.startswith("1022:156e at 0000:00:")
+    assert "ASP, the interface a PSP launch would use" in detail
+
+
+def test_psp_check_never_judges_the_platform(
+    default_boot: str, amd_iommu_boot: str, amd_iommu_enabled_boot: str
+):
     # Classic SKINIT does not go through the PSP, and which platforms need
     # the PSP path is an open question, so no outcome here is a verdict.
-    for capture in (default_boot, amd_iommu_boot):
+    for capture in (default_boot, amd_iommu_boot, amd_iommu_enabled_boot):
         assert set(verdicts(capture, "amd.psp")) == {"INFO"}
 
 

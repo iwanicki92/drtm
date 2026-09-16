@@ -60,7 +60,7 @@ both accelerators, and no guest firmware could enable it.
 
 **The AMD Secure Processor.** No device in the QEMU tree carries any of the
 Secure Processor IDs the loaders match on, and `hw/misc/` has no PSP model
-at all. So the PSP check only ever reaches its not-found branch here, and
+at all. So on upstream the PSP check only reaches its not-found branch, and
 the mailbox that would say whether the DRTM service is enabled has nothing
 to answer it.
 
@@ -102,6 +102,12 @@ here programs it, and writes to it stick. Nothing is mapped: the register
 reports a window rather than backing one, which is what software reading it
 to locate configuration space needs and nothing more.
 
+**A function can answer with a Secure Processor ID.**
+`-device amd-psp-stub` adds an AMD function with the Turin ASP's device ID,
+`156e`, and `device-id=` picks any other. Nothing sits behind it, no BAR and
+no mailbox, so it is found in configuration space and can answer nothing
+else.
+
 ## What would still be needed
 
 Every precondition check now reaches every outcome it has, so what is left
@@ -138,6 +144,7 @@ and some of them no longer hold.
 
 | Date       | QEMU   | Observation                                                                                                               |
 |------------|--------|---------------------------------------------------------------------------------------------------------------------------|
+| 2026-09-17 | ours   | `-device amd-psp-stub` makes `amd.psp` identify an ASP, the first boot to reach that branch                               |
 | 2026-09-17 | ours   | A corrected error injected with `mce` before the firmware runs is still logged when `drtm` reads the banks                |
 | 2026-09-17 | ours   | Dasharo gives a `pxb-pcie` its own root bridge handle, and each handle refuses buses it does not own                      |
 | 2026-09-16 | ours   | `-cpu EPYC,mmio-conf-base=...` reaches both enabled outcomes of `amd.mmconfig`, which had only ever been skipped          |
