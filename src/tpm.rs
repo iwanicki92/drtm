@@ -186,7 +186,7 @@ fn localities(family: Family) -> Localities {
     // undecoded window reads all ones rather than faulting.
     let access = unsafe { addr.read_volatile() };
     if access == 0xFF || access & TPM_ACCESS_VALID_STS == 0 {
-        return Localities::NotDecoded;
+        return Localities::NoAnswer;
     }
     Localities::All
 }
@@ -210,8 +210,8 @@ enum Localities {
     All,
     /// The TPM answers for locality 0 alone, which a firmware TPM also does.
     ZeroOnly,
-    /// The TPM claims five, but the platform does not answer for locality 2.
-    NotDecoded,
+    /// The TPM claims five, but locality 2 does not answer before `SKINIT`.
+    NoAnswer,
     /// A TPM 1.2 device, which predates the register this reads.
     Unknown,
 }
@@ -231,10 +231,13 @@ fn report_localities(found: Localities) {
             "tpm.locality",
             "locality 0 only, so no dynamic launch can measure anything here"
         ),
-        Localities::NotDecoded => check::warn!(
+        // A platform launching through the PSP can read all ones here, so
+        // this says what was read and leaves the conclusion open.
+        Localities::NoAnswer => check::info!(
             "tpm.locality",
-            "the TPM reports five localities but nothing answers at locality \
-             {DCE_LOCALITY} ({:#x}), which the chipset decodes",
+            "the TPM reports five localities but locality {DCE_LOCALITY} \
+             ({:#x}) reads all ones before SKINIT, which may mean the platform \
+             does not decode it or that it is locked until a launch",
             locality_base(DCE_LOCALITY)
         ),
         Localities::Unknown => check::skip!(
