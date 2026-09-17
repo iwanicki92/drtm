@@ -75,6 +75,8 @@ growing parameters. Tests sharing a boot fail together if it does.
 | `mmconfig_above_4gib_boot` | MMIO configuration window crossing 4 GiB           | `level=trace`, `format=json` |
 | `machine_check_error_boot` | Machine-check error from reset, IOMMU not in ACPI  | `level=trace`, `format=json` |
 
+`level=verbose` is not a level, and that boot carries it on purpose.
+
 The CPU model decides the vendor string, and that selects which checks run
 at all: `default_boot` is AMD so every check runs, while `intel_cpu_boot`
 covers the path where the AMD checks are skipped and the vendor-independent
