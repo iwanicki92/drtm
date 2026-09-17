@@ -18,7 +18,7 @@ and an earlier bug got CRB wrong while passing on TIS.
 
 import re
 
-from conftest import messages, results, verdicts
+from conftest import fields, messages, results, verdicts
 
 
 def test_cpu_vendor_is_reported(default_boot: str):
@@ -83,11 +83,10 @@ def test_machine_check_state_permits_a_launch(default_boot: str):
 def test_machine_check_banks_are_actually_read(default_boot: str):
     # The pass line is reachable with zero banks, which would mean IA32_MCG_CAP
     # was misread and no bank was ever looked at. Assert the count is real.
-    ((tag, detail),) = results(default_boot, "cpu.machine_check")
+    ((tag, _),) = results(default_boot, "cpu.machine_check")
     assert tag == "PASS"
-    match = re.search(r"all (\d+) status banks clear", detail)
-    assert match is not None
-    assert int(match.group(1)) > 0
+    (read,) = fields(default_boot, "cpu.machine_check")
+    assert read["banks"] > 0
 
 
 def test_a_logged_machine_check_error_fails(machine_check_error_boot: str):

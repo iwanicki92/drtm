@@ -110,6 +110,8 @@ per-locality `TPM_ACCESS` line.
 
 `conftest.py` reads results through `results` and `verdicts`, which take
 either form, so a fixture can change form without its tests changing.
+`fields` reads the values a check named, which is how a test asserting on an
+address or a count avoids a regular expression over the detail text.
 `records` parses a JSON-mode capture and refuses a `drtm:` line that is not a
 usable record, since firmware shares this UART but never writes that prefix.
 

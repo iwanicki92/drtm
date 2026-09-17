@@ -49,6 +49,7 @@ pub fn report(found: &[Iommu]) {
             } else {
                 check::warn!(
                     "amd.iommu_table",
+                    found = check::count(found.len() as u64);
                     "{why}, so an OS uses none of the IOMMUs in configuration \
                      space ({})",
                     found.len()
@@ -79,6 +80,8 @@ pub fn report(found: &[Iommu]) {
         matched = false;
         check::warn!(
             "amd.iommu_table",
+            function = check::text!("{}", iommu.function),
+            capability = check::hex(iommu.capability);
             "IVRS does not list {} (capability block at {:#04x}), so an OS \
              leaves it unused",
             iommu.function,
@@ -89,6 +92,8 @@ pub fn report(found: &[Iommu]) {
         matched = false;
         check::warn!(
             "amd.iommu_table",
+            function = check::text!("{}", iommu.function),
+            capability = check::hex(iommu.capability);
             "IVRS lists {} (capability block at {:#04x}), which configuration \
              space does not show",
             iommu.function,
@@ -98,6 +103,7 @@ pub fn report(found: &[Iommu]) {
     if matched {
         check::info!(
             "amd.iommu_table",
+            listed = check::count(listed.len() as u64);
             "IOMMUs listed in IVRS: {}, matching configuration space",
             listed.len()
         );

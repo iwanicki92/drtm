@@ -101,16 +101,25 @@ fn describe(function: Function, device: u16, drtm: Drtm) {
         // for, and no other (`secure-kernel-loader:psp.c`).
         Drtm::V2 | Drtm::V3 | Drtm::Asp => check::info!(
             "amd.psp",
+            device = check::text!("{VENDOR_AMD:04x}:{device:04x}"),
+            function = check::text!("{function}"),
+            interface = check::text!("{drtm}");
             "{VENDOR_AMD:04x}:{device:04x} at {function}, {drtm}, the \
              interface a PSP launch would use"
         ),
         Drtm::V1 => check::info!(
             "amd.psp",
+            device = check::text!("{VENDOR_AMD:04x}:{device:04x}"),
+            function = check::text!("{function}"),
+            interface = check::text!("{drtm}");
             "{VENDOR_AMD:04x}:{device:04x} at {function}, {drtm}, which no \
              loader maps a mailbox for"
         ),
         Drtm::None => check::info!(
             "amd.psp",
+            device = check::text!("{VENDOR_AMD:04x}:{device:04x}"),
+            function = check::text!("{function}"),
+            interface = check::text!("{drtm}");
             "{VENDOR_AMD:04x}:{device:04x} at {function}, {drtm}"
         ),
     }

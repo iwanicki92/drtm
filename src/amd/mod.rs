@@ -35,6 +35,7 @@ pub fn report(devices: &Devices) {
         SlbRegion::Available(address) => {
             check::pass!(
                 "amd.slb",
+                address = check::hex(address);
                 "64 KiB-aligned region available below 4 GiB \
                  (probed at {address:#x})"
             );

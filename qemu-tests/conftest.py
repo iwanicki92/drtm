@@ -319,6 +319,20 @@ def results(capture: str, identifier: str) -> list[tuple[str, str]]:
     ]
 
 
+def fields(capture: str, identifier: str) -> list[dict]:
+    """The named values each of `identifier`'s results carried, in order.
+
+    A check whose result is a value names it here, so a test reads the value
+    instead of picking it back out of the detail. Empty for a text-mode boot,
+    which does not repeat what the detail already says.
+    """
+    return [
+        record.get("fields", {})
+        for record in records(capture)
+        if record["rec"] == "check" and record["id"] == identifier
+    ]
+
+
 def messages(capture: str) -> list[str]:
     """Every freeform log message, without the prefix or the source location.
 

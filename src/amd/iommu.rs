@@ -77,12 +77,16 @@ pub fn report(devices: &Devices) -> Vec<Iommu> {
             if enabled {
                 check::pass!(
                     "amd.iommu",
+                    function = check::text!("{function}"),
+                    capability = check::hex(capability.offset);
                     "at {function}, capability block at {:#04x}",
                     capability.offset
                 );
             } else {
                 check::warn!(
                     "amd.iommu",
+                    function = check::text!("{function}"),
+                    capability = check::hex(capability.offset);
                     "at {function}, capability block at {:#04x}, enable bit \
                      clear, so firmware left it unconfigured and it protects \
                      nothing until software programs it",
@@ -109,6 +113,7 @@ pub fn report(devices: &Devices) -> Vec<Iommu> {
     if found.len() > 1 {
         check::info!(
             "amd.iommu",
+            found = check::count(found.len() as u64);
             "{} found, while the Secure Kernel Loader programs only the one \
              at {SKL_IOMMU}",
             found.len()

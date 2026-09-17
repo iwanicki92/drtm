@@ -177,6 +177,7 @@ fn report_machine_check() {
         if bank_status & MCI_STATUS_VALID != 0 {
             check::fail!(
                 "cpu.machine_check",
+                bank = check::count(bank), status = check::hex(bank_status);
                 "IA32_MC{bank}_STATUS holds a logged error ({bank_status:#018x})"
             );
             logged += 1;
@@ -186,6 +187,7 @@ fn report_machine_check() {
     if !in_progress && logged == 0 {
         check::pass!(
             "cpu.machine_check",
+            banks = check::count(banks);
             "no machine check in progress, all {banks} status banks clear"
         );
     }

@@ -235,6 +235,7 @@ fn report_localities(found: Localities) {
         // this says what was read and leaves the conclusion open.
         Localities::NoAnswer => check::info!(
             "tpm.locality",
+            address = check::hex(locality_base(DCE_LOCALITY) as u64);
             "the TPM reports five localities but locality {DCE_LOCALITY} \
              ({:#x}) reads all ones before SKINIT, which may mean the platform \
              does not decode it or that it is locked until a launch",
@@ -261,6 +262,8 @@ pub fn report() {
         Probe::Present { family, interface } => {
             check::pass!(
                 "tpm.present",
+                family = check::text!("{family:?}"),
+                interface = check::text!("{interface:?}");
                 "locality 0 answered, {family:?} {interface:?}"
             );
             if interface == Interface::Tis {

@@ -74,6 +74,9 @@ pub fn report() {
             if end <= FOUR_GIB {
                 check::info!(
                     "amd.mmconfig",
+                    base = check::hex(base),
+                    end = check::hex(end),
+                    buses = check::count(buses);
                     "window at {base:#x}..{end:#x} ({buses} buses), below 4 GiB"
                 );
             } else {
@@ -82,6 +85,9 @@ pub fn report() {
                 // memory instead, as `secure-kernel-loader:pci.c` did.
                 check::info!(
                     "amd.mmconfig",
+                    base = check::hex(base),
+                    end = check::hex(end),
+                    buses = check::count(buses);
                     "window at {base:#x}..{end:#x} ({buses} buses), not \
                      entirely below 4 GiB, which the 32-bit unpaged state \
                      SKINIT leaves cannot address, so port I/O is needed"

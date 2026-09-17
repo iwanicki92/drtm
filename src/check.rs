@@ -12,6 +12,10 @@
 //! Results do not go through `log!`, because the record carries the tag and
 //! the identifier as fields of their own. What they keep from it is the
 //! level each used to log at, so `level=` still decides what prints.
+//!
+//! A check whose result is a value rather than a verdict names that value
+//! as a field too, so a reader of the JSON form does not have to pick it
+//! back out of the sentence. The prose is unchanged by it.
 
 use core::fmt;
 use core::sync::atomic::{AtomicU32, Ordering};
@@ -68,6 +72,34 @@ impl Tag {
     }
 }
 
+/// One named value from a check, for the structured form. What a field is
+/// decides how it is written: counts are JSON numbers, while addresses and
+/// register values are `"0x..."` strings, since a 64-bit value does not
+/// survive every JSON parser as a number.
+pub enum Value<'a> {
+    Count(u64),
+    Hex(u64),
+    Text(fmt::Arguments<'a>),
+}
+
+/// A plain count, written as a number.
+pub fn count(value: impl Into<u64>) -> Value<'static> {
+    Value::Count(value.into())
+}
+
+/// An address, offset or register value, written as a hexadecimal string.
+pub fn hex(value: impl Into<u64>) -> Value<'static> {
+    Value::Hex(value.into())
+}
+
+/// Anything with a `Display`, as `text!("{function}")`. A macro because the
+/// formatted arguments live only as long as the call they are made in.
+macro_rules! check_text {
+    ($($arguments:tt)*) => {
+        $crate::check::Value::Text(format_args!($($arguments)*))
+    };
+}
+
 /// One counter per tag, indexed by the tag's own discriminant.
 static COUNTS: [AtomicU32; Tag::ALL.len()] = [const { AtomicU32::new(0) }; Tag::ALL.len()];
 
@@ -81,10 +113,10 @@ pub struct Summary {
 ///
 /// Counted whether or not it prints, so a run at `level=error` still ends
 /// with a summary that agrees with a run at `level=info`.
-pub fn report(tag: Tag, id: &str, detail: fmt::Arguments) {
+pub fn report(tag: Tag, id: &str, fields: &[(&str, Value)], detail: fmt::Arguments) {
     COUNTS[tag as usize].fetch_add(1, Ordering::Relaxed);
     if tag.level() <= log::max_level() {
-        logging::check(tag, id, detail);
+        logging::check(tag, id, fields, detail);
     }
 }
 
@@ -102,31 +134,63 @@ pub fn summary() {
 
 /// The platform meets this precondition.
 macro_rules! check_pass {
+    ($id:literal, $($field:ident = $value:expr),+ ; $($detail:tt)*) => {
+        $crate::check::report(
+            $crate::check::Tag::Pass,
+            $id,
+            &[$((stringify!($field), $value)),+],
+            format_args!($($detail)*),
+        )
+    };
     ($id:literal, $($detail:tt)*) => {
-        $crate::check::report($crate::check::Tag::Pass, $id, format_args!($($detail)*))
+        $crate::check::report($crate::check::Tag::Pass, $id, &[], format_args!($($detail)*))
     };
 }
 
 /// The platform does not meet it, and no dynamic launch can happen here.
 macro_rules! check_fail {
+    ($id:literal, $($field:ident = $value:expr),+ ; $($detail:tt)*) => {
+        $crate::check::report(
+            $crate::check::Tag::Fail,
+            $id,
+            &[$((stringify!($field), $value)),+],
+            format_args!($($detail)*),
+        )
+    };
     ($id:literal, $($detail:tt)*) => {
-        $crate::check::report($crate::check::Tag::Fail, $id, format_args!($($detail)*))
+        $crate::check::report($crate::check::Tag::Fail, $id, &[], format_args!($($detail)*))
     };
 }
 
 /// Worth knowing, but not a failed precondition: a launch would still go
 /// ahead, with something it would rather have had.
 macro_rules! check_warn {
+    ($id:literal, $($field:ident = $value:expr),+ ; $($detail:tt)*) => {
+        $crate::check::report(
+            $crate::check::Tag::Warn,
+            $id,
+            &[$((stringify!($field), $value)),+],
+            format_args!($($detail)*),
+        )
+    };
     ($id:literal, $($detail:tt)*) => {
-        $crate::check::report($crate::check::Tag::Warn, $id, format_args!($($detail)*))
+        $crate::check::report($crate::check::Tag::Warn, $id, &[], format_args!($($detail)*))
     };
 }
 
 /// The check did not run. Not an anomaly, so it sits at `info` with the
 /// results rather than among the warnings.
 macro_rules! check_skip {
+    ($id:literal, $($field:ident = $value:expr),+ ; $($detail:tt)*) => {
+        $crate::check::report(
+            $crate::check::Tag::Skip,
+            $id,
+            &[$((stringify!($field), $value)),+],
+            format_args!($($detail)*),
+        )
+    };
     ($id:literal, $($detail:tt)*) => {
-        $crate::check::report($crate::check::Tag::Skip, $id, format_args!($($detail)*))
+        $crate::check::report($crate::check::Tag::Skip, $id, &[], format_args!($($detail)*))
     };
 }
 
@@ -134,8 +198,16 @@ macro_rules! check_skip {
 /// rather than judges. Earns its own tag by not claiming a verdict it cannot
 /// support, and can become a pass or a fail once it can.
 macro_rules! check_info {
+    ($id:literal, $($field:ident = $value:expr),+ ; $($detail:tt)*) => {
+        $crate::check::report(
+            $crate::check::Tag::Info,
+            $id,
+            &[$((stringify!($field), $value)),+],
+            format_args!($($detail)*),
+        )
+    };
     ($id:literal, $($detail:tt)*) => {
-        $crate::check::report($crate::check::Tag::Info, $id, format_args!($($detail)*))
+        $crate::check::report($crate::check::Tag::Info, $id, &[], format_args!($($detail)*))
     };
 }
 
@@ -144,5 +216,5 @@ macro_rules! check_info {
 // the built-in `warn` attribute.
 pub(crate) use {
     check_fail as fail, check_info as info, check_pass as pass, check_skip as skip,
-    check_warn as warn,
+    check_text as text, check_warn as warn,
 };

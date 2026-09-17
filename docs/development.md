@@ -81,10 +81,17 @@ behind the `drtm:` prefix, so a parser can find its own lines on a UART the
 firmware also writes to:
 
 ```text
-drtm: {"rec":"check","id":"tpm.present","result":"pass","detail":"locality 0 answered, V2_0 Crb"}
+drtm: {"rec":"check","id":"tpm.present","result":"pass","fields":{"family":"V2_0","interface":"Crb"},"detail":"locality 0 answered, V2_0 Crb"}
 drtm: {"rec":"log","level":"debug","src":"pci.rs:262","msg":"[SCAN] PCI root bridges: 1"}
 drtm: {"rec":"summary","fail":1,"warn":2,"pass":4,"info":2,"skip":2,"verdict":"fail"}
 ```
+
+A check whose result is a value rather than a verdict names that value under
+`fields`, so a reader does not have to pick it back out of the sentence. The
+names are the check's own, and they keep an object of their own so one called
+`id` or `result` cannot shadow the record's keys. Counts are written as
+numbers, while addresses and register values are `"0x..."` strings, since a
+64-bit value does not survive every JSON parser as a number.
 
 The two forms are exclusive, because they reach the same person over the same
 wire and printing both would show everything twice. So the JSON form carries

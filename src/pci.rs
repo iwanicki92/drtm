@@ -177,6 +177,7 @@ fn for_each_bridge(mut visit: impl FnMut(&PciIoAccessPci<'_>, u32, usize)) {
         Err(error) => {
             check::warn!(
                 "pci.root_bridge",
+                status = check::text!("{:?}", error.status());
                 "protocol not published ({:?}), so nothing can be read out \
                  of configuration space",
                 error.status()
@@ -202,6 +203,7 @@ fn for_each_bridge(mut visit: impl FnMut(&PciIoAccessPci<'_>, u32, usize)) {
             Err(error) => {
                 check::warn!(
                     "pci.root_bridge",
+                    status = check::text!("{:?}", error.status());
                     "one bridge would not open ({:?})",
                     error.status()
                 );

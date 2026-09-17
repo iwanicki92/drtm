@@ -22,7 +22,7 @@ only ever sees a disabled window.
 
 import re
 
-from conftest import completed, results, verdicts
+from conftest import completed, fields, results, verdicts
 
 # Size and alignment SKINIT requires of the Secure Loader Block, mirroring
 # SLB_SIZE in src/amd/memory.rs.
@@ -50,11 +50,10 @@ def test_slb_region_address_satisfies_skinit(default_boot: str):
     # UEFI allocates in 4 KiB pages and guarantees nothing coarser, so the
     # 64 KiB alignment comes from our own arithmetic. Check the address it
     # produced, not just that it claimed success.
-    ((tag, detail),) = results(default_boot, "amd.slb")
+    ((tag, _),) = results(default_boot, "amd.slb")
     assert tag == "PASS"
-    match = re.search(r"probed at (0x[0-9a-f]+)", detail)
-    assert match is not None, "check reported no SLB address"
-    address = int(match.group(1), 16)
+    (probed,) = fields(default_boot, "amd.slb")
+    address = int(probed["address"], 16)
     assert address % SLB_SIZE == 0, f"{address:#x} is not 64 KiB aligned"
     assert address + SLB_SIZE <= 1 << 32, f"{address:#x} does not fit below 4 GiB"
 
@@ -131,14 +130,12 @@ def test_iommu_is_found_by_its_capability(amd_iommu_boot: str):
     # The address is QEMU's choice, so assert the capability offset came out,
     # which is what anything programming the IOMMU works from.
     found = [
-        detail
-        for _, detail in results(amd_iommu_boot, "amd.iommu")
-        if "capability block at" in detail
+        found for found in fields(amd_iommu_boot, "amd.iommu") if "capability" in found
     ]
     assert len(found) == 1, "expected exactly one IOMMU with the device attached"
-    match = re.search(r"capability block at (0x[0-9a-f]+)", found[0])
-    assert match is not None, "no capability offset reported"
-    assert int(match.group(1), 16) >= 0x40, "capability cannot precede the header"
+    assert int(found[0]["capability"], 16) >= 0x40, (
+        "capability cannot precede the header"
+    )
 
 
 def test_iommu_left_disabled_by_firmware_warns(amd_iommu_boot: str):

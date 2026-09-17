@@ -20,7 +20,7 @@ use core::sync::atomic::{AtomicPtr, AtomicU8, Ordering};
 
 use log::{Level, LevelFilter, Log, Metadata, Record};
 
-use crate::check::{Summary, Tag};
+use crate::check::{Summary, Tag, Value};
 use uefi::boot::{self, OpenProtocolAttributes, OpenProtocolParams, ScopedProtocol};
 use uefi::proto::console::serial::Serial;
 use uefi::{Handle, system};
@@ -218,21 +218,47 @@ fn write_line(mut line: impl FnMut(&mut dyn Write) -> fmt::Result) {
 /// Writes one check result. The text form is what the checks have always
 /// printed, and the JSON form makes its three fields addressable instead of
 /// leaving a parser to split the same line up again.
-pub fn check(tag: Tag, id: &str, detail: fmt::Arguments) {
+pub fn check(tag: Tag, id: &str, fields: &[(&str, Value)], detail: fmt::Arguments) {
     write_line(|sink| match format() {
+        // Fields say again what the detail already spells out, so prose
+        // leaves them out.
         Format::Text => write!(sink, "drtm: [{}] {id}: {detail}\r\n", tag.name()),
-        // Identifiers are literals in this crate's own source, dotted ASCII
-        // throughout, so only the detail can need escaping.
+        // Identifiers and field names are literals in this crate's own
+        // source, dotted ASCII throughout, so only the values can need
+        // escaping. Fields keep an object of their own, so a check naming
+        // one `id` or `result` cannot shadow the record's own keys.
         Format::Json => {
             write!(
                 sink,
-                r#"drtm: {{"rec":"check","id":"{id}","result":"{}","detail":""#,
+                r#"drtm: {{"rec":"check","id":"{id}","result":"{}""#,
                 tag.result()
             )?;
+            if let Some(((first, value), rest)) = fields.split_first() {
+                write!(sink, r#","fields":{{"{first}":"#)?;
+                write_value(sink, value)?;
+                for (name, value) in rest {
+                    write!(sink, r#","{name}":"#)?;
+                    write_value(sink, value)?;
+                }
+                sink.write_str("}")?;
+            }
+            sink.write_str(r#","detail":""#)?;
             write!(Escape(sink), "{detail}")?;
             sink.write_str("\"}\r\n")
         }
     });
+}
+
+fn write_value(sink: &mut dyn Write, value: &Value) -> fmt::Result {
+    match value {
+        Value::Count(count) => write!(sink, "{count}"),
+        Value::Hex(bits) => write!(sink, "\"{bits:#x}\""),
+        Value::Text(text) => {
+            sink.write_str("\"")?;
+            write!(Escape(sink), "{text}")?;
+            sink.write_str("\"")
+        }
+    }
 }
 
 /// Ends the run with what the checks added up to.
