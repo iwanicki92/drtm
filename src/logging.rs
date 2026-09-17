@@ -19,6 +19,8 @@ use core::ptr;
 use core::sync::atomic::{AtomicPtr, AtomicU8, Ordering};
 
 use log::{Level, LevelFilter, Log, Metadata, Record};
+
+use crate::check::{Summary, Tag};
 use uefi::boot::{self, OpenProtocolAttributes, OpenProtocolParams, ScopedProtocol};
 use uefi::proto::console::serial::Serial;
 use uefi::{Handle, system};
@@ -130,14 +132,14 @@ fn source<'a>(record: &'a Record<'a>) -> Option<(&'a str, u32)> {
 
 /// Writes one record in the form the run is using. `\r\n` because this is a
 /// UART, not a terminal that translates newlines.
-fn emit(sink: &mut impl Write, record: &Record) -> fmt::Result {
+fn emit(sink: &mut dyn Write, record: &Record) -> fmt::Result {
     match format() {
         Format::Text => emit_text(sink, record),
         Format::Json => emit_json(sink, record),
     }
 }
 
-fn emit_text(sink: &mut impl Write, record: &Record) -> fmt::Result {
+fn emit_text(sink: &mut dyn Write, record: &Record) -> fmt::Result {
     match source(record) {
         None => write!(sink, "drtm: {}\r\n", record.args()),
         Some((file, line)) => write!(sink, "drtm: {file}:{line}: {}\r\n", record.args()),
@@ -147,7 +149,7 @@ fn emit_text(sink: &mut impl Write, record: &Record) -> fmt::Result {
 /// One self-contained object per line, so a line lost to noise costs one
 /// record. The `drtm:` prefix stays, since firmware writes to the same UART
 /// and a parser has to find its own lines without trying to parse every one.
-fn emit_json(sink: &mut impl Write, record: &Record) -> fmt::Result {
+fn emit_json(sink: &mut dyn Write, record: &Record) -> fmt::Result {
     write!(
         sink,
         r#"drtm: {{"rec":"log","level":"{}""#,
@@ -173,9 +175,9 @@ const fn level_name(level: Level) -> &'static str {
 
 /// Forwards to `sink` escaping what a JSON string cannot hold literally.
 /// Nothing here buffers, so a record is written as it is formatted.
-struct Escape<'a, W: Write>(&'a mut W);
+struct Escape<'a, W: Write + ?Sized>(&'a mut W);
 
-impl<W: Write> Write for Escape<'_, W> {
+impl<W: Write + ?Sized> Write for Escape<'_, W> {
     fn write_str(&mut self, text: &str) -> fmt::Result {
         let mut rest = text;
         while let Some(at) = rest.find(|c: char| c == '"' || c == '\\' || c < ' ') {
@@ -196,24 +198,69 @@ impl<W: Write> Write for Escape<'_, W> {
     }
 }
 
+/// Writes one line to every sink this build and platform have. Both forms
+/// go through here, since the structured one has no reason to own a sink.
+fn write_line(mut line: impl FnMut(&mut dyn Write) -> fmt::Result) {
+    let mut on_serial = false;
+    if SERIAL_SINK && let Some(mut serial) = serial() {
+        let _ = line(&mut *serial);
+        on_serial = true;
+    }
+    // Also the fallback: a platform with no serial device would otherwise
+    // say nothing at all.
+    if CONSOLE_SINK || !on_serial {
+        system::with_stdout(|stdout| {
+            let _ = line(stdout);
+        });
+    }
+}
+
+/// Writes one check result. The text form is what the checks have always
+/// printed, and the JSON form makes its three fields addressable instead of
+/// leaving a parser to split the same line up again.
+pub fn check(tag: Tag, id: &str, detail: fmt::Arguments) {
+    write_line(|sink| match format() {
+        Format::Text => write!(sink, "drtm: [{}] {id}: {detail}\r\n", tag.name()),
+        // Identifiers are literals in this crate's own source, dotted ASCII
+        // throughout, so only the detail can need escaping.
+        Format::Json => {
+            write!(
+                sink,
+                r#"drtm: {{"rec":"check","id":"{id}","result":"{}","detail":""#,
+                tag.result()
+            )?;
+            write!(Escape(sink), "{detail}")?;
+            sink.write_str("\"}\r\n")
+        }
+    });
+}
+
+/// Ends the run with what the checks added up to.
+///
+/// The text form is the marker the QEMU harness reads until. In JSON that
+/// job falls to the summary record, which says the same thing with the
+/// tally a parser would otherwise have to keep itself.
+pub fn summary(summary: &Summary) {
+    write_line(|sink| match format() {
+        Format::Text => sink.write_str("drtm: checks complete\r\n"),
+        Format::Json => {
+            sink.write_str(r#"drtm: {"rec":"summary""#)?;
+            for (tag, count) in summary.counts {
+                write!(sink, r#","{}":{count}"#, tag.result())?;
+            }
+            write!(sink, r#","verdict":"{}"}}"#, summary.verdict.result())?;
+            sink.write_str("\r\n")
+        }
+    });
+}
+
 impl Log for Logger {
     fn enabled(&self, _metadata: &Metadata) -> bool {
         true
     }
 
     fn log(&self, record: &Record) {
-        let mut on_serial = false;
-        if SERIAL_SINK && let Some(mut serial) = serial() {
-            let _ = emit(&mut *serial, record);
-            on_serial = true;
-        }
-        // Also the fallback: a platform with no serial device would
-        // otherwise say nothing at all.
-        if CONSOLE_SINK || !on_serial {
-            system::with_stdout(|stdout| {
-                let _ = emit(stdout, record);
-            });
-        }
+        write_line(|sink| emit(sink, record));
     }
 
     fn flush(&self) {}
