@@ -237,12 +237,24 @@ pub fn check(tag: Tag, id: &str, detail: fmt::Arguments) {
 
 /// Ends the run with what the checks added up to.
 ///
-/// The text form is the marker the QEMU harness reads until. In JSON that
-/// job falls to the summary record, which says the same thing with the
-/// tally a parser would otherwise have to keep itself.
+/// Both forms carry the tally, so a person reading prose does not have to
+/// count the lines back. `checks complete` leads the text form because the
+/// QEMU harness reads until it, as it does until the record in JSON.
 pub fn summary(summary: &Summary) {
     write_line(|sink| match format() {
-        Format::Text => sink.write_str("drtm: checks complete\r\n"),
+        Format::Text => {
+            write!(
+                sink,
+                "drtm: checks complete, verdict {}",
+                summary.verdict.result()
+            )?;
+            let mut separator = ": ";
+            for (tag, count) in summary.counts {
+                write!(sink, "{separator}{count} {}", tag.result())?;
+                separator = ", ";
+            }
+            sink.write_str("\r\n")
+        }
         Format::Json => {
             sink.write_str(r#"drtm: {"rec":"summary""#)?;
             for (tag, count) in summary.counts {

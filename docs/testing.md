@@ -112,8 +112,8 @@ either form, so a fixture can change form without its tests changing.
 usable record, since firmware shares this UART but never writes that prefix.
 
 Each boot reads serial output until the marker its form ends with: the
-`summary` record under `format=json`, and `drtm: checks complete` in text
-mode. Reaching it proves the binary got past every check rather than hanging
+`summary` record under `format=json`, and the `drtm: checks complete` line
+in text mode. Reaching it proves the binary got past every check rather than hanging
 midway. The binary writes to the serial device itself rather than through the
 UEFI text console, which hard-wraps at 80 columns mid-word, so a line arrives
 whole however long it is.

@@ -89,10 +89,18 @@ drtm: {"rec":"summary","fail":1,"warn":2,"pass":4,"info":2,"skip":2,"verdict":"f
 The two forms are exclusive, because they reach the same person over the same
 wire and printing both would show everything twice. So the JSON form carries
 everything the prose does: a `check` record per result, a `log` record for
-anything the checks print alongside them, and a closing `summary` record with
-the tally and the worst verdict in it. `verdict` is `fail` if any check
-failed, `warn` if any warned, and `pass` otherwise, and the counts hold what
-ran rather than what printed, so lowering the level does not move them.
+anything the checks print alongside them, and a closing `summary` record.
+
+Both forms end with the same tally, the prose one as a line:
+
+```text
+drtm: checks complete, verdict fail: 2 fail, 3 warn, 4 pass, 1 info, 2 skip
+```
+
+The verdict is `fail` if any check failed, `warn` if any warned, and `pass`
+otherwise, since a skipped check and a reported fact decide nothing. The
+counts hold what ran rather than what printed, so lowering the level does not
+move them.
 
 A line that is not `key=value`, an unknown key and an unusable value are
 each reported as a `config` warning naming the line, and the default is kept.

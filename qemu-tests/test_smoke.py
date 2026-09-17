@@ -8,9 +8,16 @@ Uses Dasharo's coreboot+UEFI firmware for QEMU Q35 rather than stock OVMF.
 See CLAUDE.md and firmware.py for why.
 """
 
+import re
 from collections import Counter
 
-from conftest import CHECKS_COMPLETE, completed, messages, records, summary
+from conftest import (
+    CHECKS_COMPLETE,
+    completed,
+    messages,
+    records,
+    summary,
+)
 
 
 def test_binary_boots_and_prints_hello(default_boot: str):
@@ -42,3 +49,20 @@ def test_text_mode_prints_prose_instead(tpm_crb_boot: str):
     assert records(tpm_crb_boot) == []
     assert "drtm: [PASS] tpm.present: " in tpm_crb_boot
     assert CHECKS_COMPLETE in tpm_crb_boot
+
+
+def test_text_mode_ends_with_the_same_tally(tpm_crb_boot: str):
+    # Prose carries the counts too, so nobody has to add up the lines above.
+    match = re.search(r"checks complete, verdict (\w+): (.*)", tpm_crb_boot)
+    assert match is not None
+    tally = {
+        tag: int(count)
+        for count, tag in (pair.split() for pair in match.group(2).strip().split(", "))
+    }
+    counted = Counter(
+        tag.lower()
+        for tag in re.findall(r"drtm: \[(PASS|FAIL|WARN|SKIP|INFO)\] ", tpm_crb_boot)
+    )
+    assert tally == {tag: counted.get(tag, 0) for tag in tally}
+    expected = "fail" if tally["fail"] else "warn" if tally["warn"] else "pass"
+    assert match.group(1) == expected
