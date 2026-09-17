@@ -14,9 +14,9 @@
 //! not the format.
 
 use core::ffi::c_void;
-use core::fmt::Write;
+use core::fmt::{self, Write};
 use core::ptr;
-use core::sync::atomic::{AtomicPtr, Ordering};
+use core::sync::atomic::{AtomicPtr, AtomicU8, Ordering};
 
 use log::{Level, LevelFilter, Log, Metadata, Record};
 use uefi::boot::{self, OpenProtocolAttributes, OpenProtocolParams, ScopedProtocol};
@@ -38,6 +38,34 @@ compile_error!("enable at least one of the sink-serial, sink-console features");
 
 /// Serial device to write to, null if the platform offered none.
 static SERIAL: AtomicPtr<c_void> = AtomicPtr::new(ptr::null_mut());
+
+/// Which of the two forms records take. Text until [`set_format`] says
+/// otherwise, so anything printed before `drtm.conf` is read is readable.
+static FORMAT: AtomicU8 = AtomicU8::new(Format::Text as u8);
+
+/// The two output forms, one run at a time.
+///
+/// They reach the same person on the same wire, so emitting both would show
+/// every event twice. JSON therefore has to carry everything the prose does,
+/// down to the detail text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Format {
+    Text,
+    Json,
+}
+
+/// Picks the form for the rest of the run. Call once, from `drtm.conf`.
+pub fn set_format(format: Format) {
+    FORMAT.store(format as u8, Ordering::Relaxed);
+}
+
+fn format() -> Format {
+    if FORMAT.load(Ordering::Relaxed) == Format::Json as u8 {
+        Format::Json
+    } else {
+        Format::Text
+    }
+}
 
 static LOGGER: Logger = Logger;
 
@@ -89,21 +117,82 @@ fn file_name(path: &str) -> &str {
     }
 }
 
-/// Writes one record. `\r\n` because this is a UART, not a terminal that
-/// translates newlines.
-fn emit(sink: &mut impl Write, record: &Record) -> core::fmt::Result {
-    if record.level() <= Level::Info {
-        write!(sink, "drtm: {}\r\n", record.args())
-    } else {
-        // File and line are a developer aid, and these are the developer
-        // levels, so the prefix follows the level rather than a build flag.
-        write!(
-            sink,
-            "drtm: {}:{}: {}\r\n",
+/// Where the record came from, as `file.rs:LINE`. Only carried at the
+/// developer levels, which is what it is an aid to.
+fn source<'a>(record: &'a Record<'a>) -> Option<(&'a str, u32)> {
+    (record.level() > Level::Info).then(|| {
+        (
             file_name(record.file().unwrap_or("?")),
             record.line().unwrap_or(0),
-            record.args()
         )
+    })
+}
+
+/// Writes one record in the form the run is using. `\r\n` because this is a
+/// UART, not a terminal that translates newlines.
+fn emit(sink: &mut impl Write, record: &Record) -> fmt::Result {
+    match format() {
+        Format::Text => emit_text(sink, record),
+        Format::Json => emit_json(sink, record),
+    }
+}
+
+fn emit_text(sink: &mut impl Write, record: &Record) -> fmt::Result {
+    match source(record) {
+        None => write!(sink, "drtm: {}\r\n", record.args()),
+        Some((file, line)) => write!(sink, "drtm: {file}:{line}: {}\r\n", record.args()),
+    }
+}
+
+/// One self-contained object per line, so a line lost to noise costs one
+/// record. The `drtm:` prefix stays, since firmware writes to the same UART
+/// and a parser has to find its own lines without trying to parse every one.
+fn emit_json(sink: &mut impl Write, record: &Record) -> fmt::Result {
+    write!(
+        sink,
+        r#"drtm: {{"rec":"log","level":"{}""#,
+        level_name(record.level())
+    )?;
+    if let Some((file, line)) = source(record) {
+        write!(sink, r#","src":"{file}:{line}""#)?;
+    }
+    sink.write_str(r#","msg":""#)?;
+    write!(Escape(sink), "{}", record.args())?;
+    sink.write_str("\"}\r\n")
+}
+
+const fn level_name(level: Level) -> &'static str {
+    match level {
+        Level::Error => "error",
+        Level::Warn => "warn",
+        Level::Info => "info",
+        Level::Debug => "debug",
+        Level::Trace => "trace",
+    }
+}
+
+/// Forwards to `sink` escaping what a JSON string cannot hold literally.
+/// Nothing here buffers, so a record is written as it is formatted.
+struct Escape<'a, W: Write>(&'a mut W);
+
+impl<W: Write> Write for Escape<'_, W> {
+    fn write_str(&mut self, text: &str) -> fmt::Result {
+        let mut rest = text;
+        while let Some(at) = rest.find(|c: char| c == '"' || c == '\\' || c < ' ') {
+            let (before, tail) = rest.split_at(at);
+            self.0.write_str(before)?;
+            let mut characters = tail.chars();
+            match characters.next() {
+                Some('"') => self.0.write_str("\\\"")?,
+                Some('\\') => self.0.write_str("\\\\")?,
+                // Control characters, which only a malformed read would
+                // produce here. `\u` covers every one of them.
+                Some(control) => write!(self.0, "\\u{:04x}", control as u32)?,
+                None => break,
+            }
+            rest = characters.as_str();
+        }
+        self.0.write_str(rest)
     }
 }
 

@@ -22,6 +22,7 @@ use uefi::proto::media::file::{File, FileAttribute, FileMode};
 use uefi::{CString16, Status, cstr16};
 
 use crate::check;
+use crate::logging::Format;
 
 /// A config file is a few lines. Anything larger is not one.
 const MAX_SIZE: usize = 4096;
@@ -30,6 +31,11 @@ const MAX_SIZE: usize = 4096;
 /// `DRTM_LOG_LEVEL` at build time picks another, for a binary meant to be
 /// copied to an ESP on its own. A `level=` in `drtm.conf` still wins.
 const DEFAULT_LEVEL: LevelFilter = default_level();
+
+/// The form records take when nothing asks for another: prose, for the
+/// person reading a serial console. `DRTM_LOG_FORMAT` picks another at build
+/// time, and a `format=` in `drtm.conf` still wins.
+const DEFAULT_FORMAT: Format = default_format();
 
 /// Reads `DRTM_LOG_LEVEL`, taking the same names `level=` takes. An
 /// unusable value fails the build rather than quietly leaving `info`, since
@@ -49,9 +55,23 @@ const fn default_level() -> LevelFilter {
     }
 }
 
+/// Reads `DRTM_LOG_FORMAT`, taking the same names `format=` takes, and
+/// failing the build on anything else for the same reason as the level.
+const fn default_format() -> Format {
+    let Some(name) = option_env!("DRTM_LOG_FORMAT") else {
+        return Format::Text;
+    };
+    match name.as_bytes() {
+        b"text" => Format::Text,
+        b"json" => Format::Json,
+        _ => panic!("DRTM_LOG_FORMAT must be text or json"),
+    }
+}
+
 /// Settings, and whatever went wrong reading them.
 pub struct Config {
     pub level: LevelFilter,
+    pub format: Format,
     problems: Vec<Problem>,
 }
 
@@ -62,6 +82,7 @@ enum Problem {
     NoEquals { line: usize },
     UnknownKey { line: usize, key: String },
     BadLevel { line: usize, value: String },
+    BadFormat { line: usize, value: String },
 }
 
 impl fmt::Display for Problem {
@@ -77,6 +98,9 @@ impl fmt::Display for Problem {
                 "line {line}: level {value:?} is not one of off, error, warn, \
                  info, debug, trace"
             ),
+            Self::BadFormat { line, value } => {
+                write!(f, "line {line}: format {value:?} is not text or json")
+            }
         }
     }
 }
@@ -87,6 +111,7 @@ impl Config {
     pub fn load() -> Self {
         let mut config = Self {
             level: DEFAULT_LEVEL,
+            format: DEFAULT_FORMAT,
             problems: Vec::new(),
         };
         let mut buffer = [0; MAX_SIZE + 1];
@@ -123,6 +148,14 @@ impl Config {
                 "level" => match value.parse() {
                     Ok(level) => self.level = level,
                     Err(_) => self.problems.push(Problem::BadLevel {
+                        line: line_number,
+                        value: value.to_string(),
+                    }),
+                },
+                "format" => match value {
+                    "text" => self.format = Format::Text,
+                    "json" => self.format = Format::Json,
+                    _ => self.problems.push(Problem::BadFormat {
                         line: line_number,
                         value: value.to_string(),
                     }),

@@ -28,6 +28,7 @@ fn main() -> Status {
     logging::init();
     let config = config::Config::load();
     log::set_max_level(config.level);
+    logging::set_format(config.format);
     config.report();
 
     info!("hello from UEFI");
