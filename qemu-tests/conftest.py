@@ -13,6 +13,7 @@ fixture, which yields that configuration's complete serial output as a string,
 and assert against it.
 """
 
+import json
 import re
 import subprocess
 import time
@@ -35,13 +36,17 @@ LOGS_DIR = Path(__file__).parent / "logs"
 _RUN_DIR_RE = re.compile(r"^(\d{4})-")
 _MAX_RUN_NUMBER = 9999
 
-# The last line src/main.rs prints. Reading until this marker means the
-# capture holds every check's result rather than a partially booted guest.
+# The last thing src/main.rs prints, in each of the two output forms: the
+# summary record under `format=json`, the prose marker in text mode. Reading
+# until the one a boot asks for means the capture holds every check's result
+# rather than a partially booted guest.
+SUMMARY_RECORD = 'drtm: {"rec":"summary"'
 CHECKS_COMPLETE = "drtm: checks complete"
 
-# The `drtm.conf` most boots get. Tests assert on `[SCAN]` lines, which sit
-# below the default `info` level, so a boot without this would not print them.
-FULL_OUTPUT = "level=trace\n"
+# The `drtm.conf` most boots get: records rather than prose, so tests key on
+# fields instead of wording, and `trace`, since the `[SCAN]` lines some of
+# them asserts on sit below the default `info` level.
+FULL_OUTPUT = "level=trace\nformat=json\n"
 
 # A value `level=` does not accept, on line 2 behind a comment so the reported
 # line number is not trivially 1.
@@ -126,6 +131,9 @@ def boot_and_capture(
     Shared by the per-configuration boot fixtures below. A configuration
     needing different QEMU arguments gets its own fixture calling this, and a
     matching parameter here and on `QemuVm`.
+
+    Which marker ends the read follows from `config`, since the two output
+    forms end differently.
     """
     log_dir.mkdir(parents=True, exist_ok=True)
     with QemuVm(
@@ -140,7 +148,10 @@ def boot_and_capture(
         corrected_error_bank=corrected_error_bank,
         psp=psp,
     ) as vm:
-        return vm.read_serial_until(CHECKS_COMPLETE, timeout=BOOT_TIMEOUT)
+        marker = (
+            SUMMARY_RECORD if config and "format=json" in config else CHECKS_COMPLETE
+        )
+        return vm.read_serial_until(marker, timeout=BOOT_TIMEOUT)
 
 
 @pytest.fixture(scope="session")
@@ -258,10 +269,34 @@ def tpm_crb_boot(run_log_dir: Path, efi_binary: Path) -> str:
     )
 
 
-# Every check reports as `[TAG] <identifier>: <detail>` (see `src/check.rs`).
-# Tests key on the tag and the identifier, so rewording a detail is not a test
-# failure. `_RESULT_RE` is what ties the two ends of that contract together.
+# Every check reports a tag, an identifier and a detail (see `src/check.rs`),
+# as a JSON record under `format=json` and as `[TAG] <identifier>: <detail>`
+# in text mode. Tests key on the tag and the identifier, so rewording a detail
+# is not a test failure. These two patterns tie the ends of that contract
+# together, and `results` reads whichever form a boot is in.
 _RESULT_RE = r"\[(PASS|FAIL|WARN|SKIP|INFO)\] {identifier}: (.*)"
+_RECORD_PREFIX = "drtm: {"
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*[a-zA-Z]")
+
+
+def records(capture: str) -> list[dict]:
+    """Every record the guest emitted, in order. Empty for a text-mode boot.
+
+    A line carrying the prefix but no usable record is an error rather than
+    something to skip: firmware shares this UART but does not write that
+    prefix, so the line is ours and malformed.
+    """
+    found = []
+    for line in _ANSI_RE.sub("", capture).splitlines():
+        at = line.find(_RECORD_PREFIX)
+        if at < 0:
+            continue
+        text = line[at + len("drtm: ") :]
+        try:
+            found.append(json.loads(text))
+        except json.JSONDecodeError as error:
+            raise ValueError(f"unparsable record: {text!r}") from error
+    return found
 
 
 def results(capture: str, identifier: str) -> list[tuple[str, str]]:
@@ -270,11 +305,47 @@ def results(capture: str, identifier: str) -> list[tuple[str, str]]:
     Empty when the check did not report at all, which is what a vendor gate
     or a phase that never ran looks like.
     """
+    checks = [
+        (record["result"].upper(), record["detail"])
+        for record in records(capture)
+        if record["rec"] == "check" and record["id"] == identifier
+    ]
+    if checks:
+        return checks
     pattern = _RESULT_RE.format(identifier=re.escape(identifier))
     return [
         (match.group(1), match.group(2).strip())
         for match in re.finditer(pattern, capture)
     ]
+
+
+def messages(capture: str) -> list[str]:
+    """Every freeform log message, without the prefix or the source location.
+
+    The `[SCAN]` lines and the few plain `info!` calls, which carry no
+    identifier of their own.
+    """
+    from_records = [
+        record["msg"] for record in records(capture) if record["rec"] == "log"
+    ]
+    if from_records:
+        return from_records
+    return [
+        line.split("drtm: ", 1)[1]
+        for line in _ANSI_RE.sub("", capture).splitlines()
+        if "drtm: " in line
+    ]
+
+
+def summary(capture: str) -> dict:
+    """The record a JSON-mode run ends with: a count per tag and a verdict."""
+    (found,) = [record for record in records(capture) if record["rec"] == "summary"]
+    return found
+
+
+def completed(capture: str) -> bool:
+    """Whether the run reached its end, in whichever form it printed."""
+    return SUMMARY_RECORD in capture or CHECKS_COMPLETE in capture
 
 
 def verdicts(capture: str, identifier: str) -> list[str]:

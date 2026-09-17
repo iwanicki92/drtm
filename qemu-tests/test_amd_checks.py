@@ -22,7 +22,7 @@ only ever sees a disabled window.
 
 import re
 
-from conftest import CHECKS_COMPLETE, results, verdicts
+from conftest import completed, results, verdicts
 
 # Size and alignment SKINIT requires of the Secure Loader Block, mirroring
 # SLB_SIZE in src/amd/memory.rs.
@@ -92,7 +92,7 @@ def test_the_checks_survive_an_attached_iommu(amd_iommu_boot: str):
     # asserts the rest of the run is unaffected and reaches the end marker.
     assert verdicts(amd_iommu_boot, "amd.slb") == ["PASS"]
     assert verdicts(amd_iommu_boot, "amd.skinit") == ["FAIL"]
-    assert CHECKS_COMPLETE in amd_iommu_boot
+    assert completed(amd_iommu_boot)
 
 
 def test_pci_scan_finds_the_iommu(amd_iommu_boot: str):

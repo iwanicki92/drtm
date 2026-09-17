@@ -18,17 +18,17 @@ and an earlier bug got CRB wrong while passing on TIS.
 
 import re
 
-from conftest import results, verdicts
+from conftest import messages, results, verdicts
 
 
 def test_cpu_vendor_is_reported(default_boot: str):
-    assert "drtm: CPU vendor AuthenticAMD" in default_boot
+    assert "CPU vendor AuthenticAMD" in messages(default_boot)
 
 
 def test_cpu_vendor_is_reported_on_an_intel_cpu(intel_cpu_boot: str):
     # The vendor string is read, not inferred, so a second model proves the
     # CPUID word order is right rather than accidentally symmetric.
-    assert "drtm: CPU vendor GenuineIntel" in intel_cpu_boot
+    assert "CPU vendor GenuineIntel" in messages(intel_cpu_boot)
 
 
 def test_amd_checks_are_skipped_on_an_intel_cpu(intel_cpu_boot: str):

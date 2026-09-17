@@ -46,17 +46,17 @@ would then show every line twice. The QEMU suite only ever builds the
 default, so the other two combinations are checked by `cargo build` and
 nothing else.
 
-`DRTM_LOG_LEVEL` sets the level a run starts at, for a binary copied to an
-ESP with no `drtm.conf` beside it:
+`DRTM_LOG_LEVEL` and `DRTM_LOG_FORMAT` set what a run starts at, for a binary
+copied to an ESP with no `drtm.conf` beside it:
 
 ```sh
-DRTM_LOG_LEVEL=trace cargo build
+DRTM_LOG_LEVEL=trace DRTM_LOG_FORMAT=json cargo build
 ```
 
-It takes the same names `level=` does. An unusable value fails the build,
-since nothing later in the run could report it, and cargo rebuilds when the
-variable changes, so switching back is a plain `cargo build`. A `drtm.conf`
-on the machine still overrides whatever was built in.
+Each takes the same names its `drtm.conf` key does. An unusable value fails
+the build, since nothing later in the run could report it, and cargo rebuilds
+when a variable changes, so switching back is a plain `cargo build`. A
+`drtm.conf` on the machine still overrides whatever was built in.
 
 ## Runtime configuration
 
@@ -66,12 +66,33 @@ read at startup. It is optional: with no file the defaults apply.
 ```text
 # how much to print: off, error, warn, info, debug, trace
 level=info
+# what it looks like: text or json
+format=text
 ```
 
 `level=info` is the default and prints one line per check. `debug` adds the
 PCI root bridge count, and `trace` the whole configuration space dump the
 IOMMU and Secure Processor checks read. A build made with `DRTM_LOG_LEVEL`
 starts at that level instead, and this file overrides it either way.
+
+`format=text` is the default and prints prose for the person watching the
+serial console. `format=json` prints one JSON object per line instead, still
+behind the `drtm:` prefix, so a parser can find its own lines on a UART the
+firmware also writes to:
+
+```text
+drtm: {"rec":"check","id":"tpm.present","result":"pass","detail":"locality 0 answered, V2_0 Crb"}
+drtm: {"rec":"log","level":"debug","src":"pci.rs:262","msg":"[SCAN] PCI root bridges: 1"}
+drtm: {"rec":"summary","fail":1,"warn":2,"pass":4,"info":2,"skip":2,"verdict":"fail"}
+```
+
+The two forms are exclusive, because they reach the same person over the same
+wire and printing both would show everything twice. So the JSON form carries
+everything the prose does: a `check` record per result, a `log` record for
+anything the checks print alongside them, and a closing `summary` record with
+the tally and the worst verdict in it. `verdict` is `fail` if any check
+failed, `warn` if any warned, and `pass` otherwise, and the counts hold what
+ran rather than what printed, so lowering the level does not move them.
 
 A line that is not `key=value`, an unknown key and an unusable value are
 each reported as a `config` warning naming the line, and the default is kept.

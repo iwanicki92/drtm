@@ -64,16 +64,16 @@ tests assert against. A configuration needing different QEMU arguments gets
 its own fixture calling `boot_and_capture`, rather than the existing ones
 growing parameters. Tests sharing a boot fail together if it does.
 
-| Fixture                    | Configuration                                        | `drtm.conf`     |
-|----------------------------|------------------------------------------------------|-----------------|
-| `default_boot`             | No TPM device, `EPYC,+skinit`, window below 4 GiB    | `level=trace`   |
-| `intel_cpu_boot`           | No TPM device, Intel CPU model (`Skylake-Client`)    | `level=trace`   |
-| `tpm_tis_boot`             | `swtpm`-backed TPM 2.0 on the FIFO (TIS) interface   | `level=trace`   |
-| `tpm_crb_boot`             | `swtpm`-backed TPM 2.0 on the CRB interface          | none            |
-| `amd_iommu_boot`           | `amd-iommu` disabled, `EPYC`, second root bridge     | `level=trace`   |
-| `amd_iommu_enabled_boot`   | `amd-iommu` enabled by firmware, `amd-psp`           | `level=verbose` |
-| `mmconfig_above_4gib_boot` | MMIO configuration window crossing 4 GiB             | `level=trace`   |
-| `machine_check_error_boot` | Machine-check error from reset, IOMMU not in ACPI    | `level=trace`   |
+| Fixture                    | Configuration                                      | `drtm.conf`                  |
+|----------------------------|----------------------------------------------------|------------------------------|
+| `default_boot`             | No TPM device, `EPYC,+skinit`, window below 4 GiB  | `level=trace`, `format=json` |
+| `intel_cpu_boot`           | No TPM device, Intel CPU model (`Skylake-Client`)  | `level=trace`, `format=json` |
+| `tpm_tis_boot`             | `swtpm`-backed TPM 2.0 on the FIFO (TIS) interface | `level=trace`, `format=json` |
+| `tpm_crb_boot`             | `swtpm`-backed TPM 2.0 on the CRB interface        | none                         |
+| `amd_iommu_boot`           | `amd-iommu` disabled, `EPYC`, second root bridge   | `level=trace`, `format=json` |
+| `amd_iommu_enabled_boot`   | `amd-iommu` enabled by firmware, `amd-psp`         | `level=verbose`              |
+| `mmconfig_above_4gib_boot` | MMIO configuration window crossing 4 GiB           | `level=trace`, `format=json` |
+| `machine_check_error_boot` | Machine-check error from reset, IOMMU not in ACPI  | `level=trace`, `format=json` |
 
 The CPU model decides the vendor string, and that selects which checks run
 at all: `default_boot` is AMD so every check runs, while `intel_cpu_boot`
@@ -97,17 +97,26 @@ results.
 The binary reads `drtm.conf` from beside itself on the ESP, so `QemuVm`
 writes one into the scratch ESP. Most boots raise the level to `trace`,
 because the `[SCAN]` dump the PCI tests assert on sits below the default
-`info`. Two boots only read results, which print at any level, so they
-carry the other two states: `tpm_crb_boot` has no file at all and
+`info`, and ask for `format=json` so the assertions key on record fields
+rather than wording. Two boots only read results, which print at any level,
+so they carry the other config states: `tpm_crb_boot` has no file at all and
 `amd_iommu_enabled_boot` an unusable level, which must be refused without
-stopping the run. `test_config.py` asserts on those two. `tpm_tis_boot`
-stays at `trace` for its per-locality `TPM_ACCESS` line.
+stopping the run. `test_config.py` asserts on those two, and having no file
+also leaves `tpm_crb_boot` in the default text form, which is what keeps the
+human-readable output under test. `tpm_tis_boot` stays at `trace` for its
+per-locality `TPM_ACCESS` line.
 
-Each boot reads serial output until `drtm: checks complete`, the last line
-`src/main.rs` prints, which proves the binary got past every check rather
-than hanging midway. The binary writes to the serial device itself rather
-than through the UEFI text console, which hard-wraps at 80 columns mid-word,
-so a line arrives whole however long it is.
+`conftest.py` reads results through `results` and `verdicts`, which take
+either form, so a fixture can change form without its tests changing.
+`records` parses a JSON-mode capture and refuses a `drtm:` line that is not a
+usable record, since firmware shares this UART but never writes that prefix.
+
+Each boot reads serial output until the marker its form ends with: the
+`summary` record under `format=json`, and `drtm: checks complete` in text
+mode. Reaching it proves the binary got past every check rather than hanging
+midway. The binary writes to the serial device itself rather than through the
+UEFI text console, which hard-wraps at 80 columns mid-word, so a line arrives
+whole however long it is.
 
 ## What tests assert on
 

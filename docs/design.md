@@ -53,6 +53,7 @@ reporting) can be built without re-litigating them later:
     than both at once, since they share the single stream the operator is
     reading. The mode is chosen at runtime from `drtm.conf` beside the
     binary on the ESP, because the removable-media boot path this tool uses
-    passes it no arguments. That file already carries `level=`, which sets
-    how much is printed. Exact format of the machine-parseable mode is still
-    open.
+    passes it no arguments. That file carries `format=`, which picks the
+    mode, and `level=`, which sets how much is printed. The
+    machine-parseable mode is one JSON object per line, each behind the same
+    `drtm:` prefix, so one line lost to noise costs one record.

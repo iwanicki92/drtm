@@ -9,7 +9,7 @@ which every level prints, carry the config states the others cannot:
 `tpm_crb_boot` has no file, `amd_iommu_enabled_boot` a bad one.
 """
 
-from conftest import CHECKS_COMPLETE, results, verdicts
+from conftest import CHECKS_COMPLETE, completed, results, verdicts
 
 
 def test_without_a_config_the_scan_is_not_printed(tpm_crb_boot: str):
@@ -41,4 +41,4 @@ def test_an_unknown_level_is_reported_with_its_line(amd_iommu_enabled_boot: str)
 
 def test_an_unknown_level_falls_back_to_the_default(amd_iommu_enabled_boot: str):
     assert "[SCAN]" not in amd_iommu_enabled_boot
-    assert CHECKS_COMPLETE in amd_iommu_enabled_boot
+    assert completed(amd_iommu_enabled_boot)
