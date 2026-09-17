@@ -27,7 +27,27 @@ use crate::check;
 const MAX_SIZE: usize = 4096;
 
 /// Verbosity when nothing asks for another: results, not the device dumps.
-const DEFAULT_LEVEL: LevelFilter = LevelFilter::Info;
+/// `DRTM_LOG_LEVEL` at build time picks another, for a binary meant to be
+/// copied to an ESP on its own. A `level=` in `drtm.conf` still wins.
+const DEFAULT_LEVEL: LevelFilter = default_level();
+
+/// Reads `DRTM_LOG_LEVEL`, taking the same names `level=` takes. An
+/// unusable value fails the build rather than quietly leaving `info`, since
+/// nothing later in the run could report it.
+const fn default_level() -> LevelFilter {
+    let Some(name) = option_env!("DRTM_LOG_LEVEL") else {
+        return LevelFilter::Info;
+    };
+    match name.as_bytes() {
+        b"off" => LevelFilter::Off,
+        b"error" => LevelFilter::Error,
+        b"warn" => LevelFilter::Warn,
+        b"info" => LevelFilter::Info,
+        b"debug" => LevelFilter::Debug,
+        b"trace" => LevelFilter::Trace,
+        _ => panic!("DRTM_LOG_LEVEL must be one of off, error, warn, info, debug, trace"),
+    }
+}
 
 /// Settings, and whatever went wrong reading them.
 pub struct Config {

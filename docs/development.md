@@ -46,6 +46,18 @@ would then show every line twice. The QEMU suite only ever builds the
 default, so the other two combinations are checked by `cargo build` and
 nothing else.
 
+`DRTM_LOG_LEVEL` sets the level a run starts at, for a binary copied to an
+ESP with no `drtm.conf` beside it:
+
+```sh
+DRTM_LOG_LEVEL=trace cargo build
+```
+
+It takes the same names `level=` does. An unusable value fails the build,
+since nothing later in the run could report it, and cargo rebuilds when the
+variable changes, so switching back is a plain `cargo build`. A `drtm.conf`
+on the machine still overrides whatever was built in.
+
 ## Runtime configuration
 
 `drtm.conf` sits beside the binary on the ESP, next to `BOOTX64.EFI`, and is
@@ -58,7 +70,8 @@ level=info
 
 `level=info` is the default and prints one line per check. `debug` adds the
 PCI root bridge count, and `trace` the whole configuration space dump the
-IOMMU and Secure Processor checks read.
+IOMMU and Secure Processor checks read. A build made with `DRTM_LOG_LEVEL`
+starts at that level instead, and this file overrides it either way.
 
 A line that is not `key=value`, an unknown key and an unusable value are
 each reported as a `config` warning naming the line, and the default is kept.
