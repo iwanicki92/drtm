@@ -157,21 +157,18 @@ socket, both used by the test to interact with the VM.
 `DRTM_QEMU_ACCEL` picks the accelerator: `tcg` (the default), `kvm`, or
 `auto` (KVM whenever `/dev/kvm` is usable). TCG is the default because KVM
 measured slower on every machine tried, roughly 2x on a
-nested-virtualisation host:
+nested-virtualisation host, where one boot took 11.0s under TCG against
+22.7s under KVM. On bare metal KVM was still marginally behind. The guest
+boots with `smm=on` and Dasharo's firmware does substantial SMM setup, so
+nested, every SMM transition traps through both hypervisor layers while TCG
+has no exits at all.
 
-| Mode | Boot  | Full suite |
-|------|-------|------------|
-| TCG  | 11.0s | 11.4s      |
-| KVM  | 22.7s | 23.0s      |
-
-On bare metal KVM is still marginally behind, by a little over half a second
-on the suite. The guest boots with `smm=on` and Dasharo's firmware does
-substantial SMM setup, so nested, every SMM transition traps through both
-hypervisor layers while TCG has no exits at all.
-
-This is a measurement, not a law: `kvm` and `auto` exist so it can be re-run
-somewhere it may not hold. Each boot records its invocation to
-`qemu-args.txt`, so two runs compared show what actually differed.
+That was a one-off comparison and is not kept current, since only TCG is
+used. Per-boot figures are quoted rather than whole-session ones, which
+would go stale every time a boot fixture is added. `kvm` and `auto` remain
+so the comparison can be re-run somewhere it may not hold. Each boot records
+its invocation to `qemu-args.txt`, so two runs compared show what actually
+differed.
 
 ## Timeouts
 
@@ -252,3 +249,53 @@ since we don't boot a full OS.
 
 Adding DRTM emulation to QEMU is out of scope here. `qemu-drtm-support.md`
 records what it would take, for whoever picks it up.
+
+## Boot time
+
+One boot takes 10.8s, and the configurations boot one after another, so
+nearly all of a session is firmware rather than anything being tested.
+Measured under TCG against the pinned firmware release.
+
+Where a single boot goes:
+
+| Component                                  | Cost |
+|--------------------------------------------|------|
+| Varstore population, on a ROM's first boot | 2.8s |
+| Boot manager menu timeout                  | 3.0s |
+| VGA and NIC initialisation                 | 1.3s |
+| Firmware's remaining work, plus `drtm.efi` | 3.7s |
+
+Five changes follow from that, none of them implemented yet:
+
+1. Stop zeroing the varstore in `QemuVm.__enter__`. Zeroing costs nothing by
+    itself, but it discards the populated store, so everything below depends
+    on dropping it first. Boot order still resolves without it, because the
+    binary is found as removable media at `\EFI\BOOT\BOOTX64.EFI`.
+2. Boot the downloaded ROM once per firmware release and cache the result
+    beside it, then copy that warmed image per boot. Pays the 2.8s once a
+    release instead of once a boot.
+3. Write a carriage return to the serial socket once the boot prompt
+    appears, which skips the menu timeout.
+4. Boot the configurations concurrently, four at a time, submitting only
+    those the collected tests need so a single-test run still boots once.
+    Four matches this machine's core count, and eight at a time measured
+    slower than four.
+5. Drop the VGA and NIC devices from every boot but `default_boot`, which
+    keeps the full model so the host-bridge and capability-list scan tests
+    still see a populated bus. No test asserts on either device.
+
+Together those put a boot near 5s. Items 1 to 3 are what earn that, and item
+4 then overlaps the boots so wall time tracks the slowest batch rather than
+the number of configurations: the eight that existed when this was measured
+came to 10.3s together, against 86s of booting one at a time.
+
+Three things were measured and deliberately not done. Disabling the
+firmware's USB stack gains nothing. Saving a ROM whose settings were changed
+by hand reaches the same 5s, but its only useful content is the zero timeout
+that item 3 already achieves, and it would add a binary that is too large to
+commit and that a fresh clone cannot regenerate. Serial output is not a
+factor either, since this release ROM prints no firmware console log and a
+whole capture is about 3 KB.
+
+`-m`, `-smp` and `-nic none` all measured within noise, so memory size and
+CPU count are not worth tuning here.
