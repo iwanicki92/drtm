@@ -8,7 +8,7 @@ Builds the `drtm` EFI binary once per session, boots it in QEMU once per
 distinct QEMU configuration, and writes every run's logs (plus a `results.txt`
 summarising test outcomes) to a numbered directory under `logs/`.
 
-Booting takes ~25s, so tests do not boot QEMU themselves. They take a boot
+Booting takes ~7s, so tests do not boot QEMU themselves. They take a boot
 fixture, which yields that configuration's complete serial output as a string,
 and assert against it.
 """
@@ -52,11 +52,10 @@ FULL_OUTPUT = "level=trace\nformat=json\n"
 # line number is not trivially 1.
 BAD_LEVEL = "# drtm.conf\nlevel=verbose\n"
 
-# Generous on purpose. Measured boot-to-marker is ~11s under TCG and ~23s
-# under KVM on a nested-virtualisation host, but this only has to be tight
-# enough to catch a genuinely stuck guest. Being slow to report a real hang
-# costs one wait; being too tight turns a loaded machine into a flaky
-# failure that looks exactly like one.
+# Generous on purpose. Measured boot-to-marker is ~7s under TCG, but this
+# only has to be tight enough to catch a genuinely stuck guest. Being slow
+# to report a real hang costs one wait; being too tight turns a loaded
+# machine into a flaky failure that looks exactly like one.
 BOOT_TIMEOUT = 120.0
 
 # A build this long means something is wedged, not slow: a from-scratch

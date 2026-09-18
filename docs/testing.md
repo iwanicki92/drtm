@@ -57,7 +57,7 @@ distribution QEMU fails once rather than in every boot fixture.
 
 ## How the VM is set up
 
-Booting takes around 11 seconds, so tests do not boot QEMU themselves. A
+Booting takes around 7 seconds, so tests do not boot QEMU themselves. A
 session-scoped fixture in `qemu-tests/conftest.py` boots once per distinct
 QEMU configuration and yields that boot's serial output as a string, which
 tests assert against. A configuration needing different QEMU arguments gets
@@ -156,6 +156,11 @@ attached as a FAT-formatted drive and that firmware image as pflash. Serial
 is exposed on a raw TCP port (see below) and QMP on a short-lived Unix
 socket, both used by the test to interact with the VM.
 
+The firmware's boot prompt is answered with a carriage return as soon as it
+appears, which boots the default entry at once rather than after the boot
+manager's 3s timeout. Not seeing that prompt fails the boot: the firmware
+release is pinned, so its absence means something changed.
+
 ## Acceleration
 
 `DRTM_QEMU_ACCEL` picks the accelerator: `tcg` (the default), `kvm`, or
@@ -180,7 +185,7 @@ A stuck `drtm.efi` fails the run rather than wedging it. Layers, innermost
 first:
 
 - `read_serial_until` raises with the output captured so far. Boot waits use
-    `BOOT_TIMEOUT` (120s), far above the ~23s a real boot takes, so a loaded
+    `BOOT_TIMEOUT` (120s), far above the ~7s a real boot takes, so a loaded
     machine does not fail looking like a hang.
 - `QemuVm.__exit__` always tears QEMU down (`terminate`, then `kill` after
     5s), so a timed-out test leaves no stray process.
@@ -256,46 +261,43 @@ records what it would take, for whoever picks it up.
 
 ## Boot time
 
-One boot takes 10.8s, and the configurations boot one after another, so
-nearly all of a session is firmware rather than anything being tested.
-Measured under TCG against the pinned firmware release.
+The configurations boot one after another, so nearly all of a session is
+firmware rather than anything being tested. Measured under TCG against the
+pinned firmware release.
 
-Where a single boot goes:
+What a boot still spends its time on:
 
 | Component                                  | Cost |
 |--------------------------------------------|------|
 | Varstore population, on a ROM's first boot | 2.8s |
-| Boot manager menu timeout                  | 3.0s |
 | VGA and NIC initialisation                 | 1.3s |
 | Firmware's remaining work, plus `drtm.efi` | 3.7s |
 
-Only `default_boot` still pays the third row, since it is the one boot
-carrying those devices.
+Only `default_boot` pays the second row, since it is the one boot carrying
+those devices.
 
-Three changes follow from the rest, none of them implemented yet:
+Two changes follow from the rest, neither implemented yet:
 
 1. Boot the downloaded ROM once per firmware release and cache the result
     beside it, then copy that warmed image per boot. Pays the 2.8s once a
     release instead of once a boot.
-2. Write a carriage return to the serial socket once the boot prompt
-    appears, which skips the menu timeout.
-3. Boot the configurations concurrently, four at a time, submitting only
+2. Boot the configurations concurrently, four at a time, submitting only
     those the collected tests need so a single-test run still boots once.
     Four matches this machine's core count, and eight at a time measured
     slower than four.
 
-Together those put a boot near 5s. Items 1 and 2 are what earn that, and
-item 3 then overlaps the boots so wall time tracks the slowest batch rather
-than the number of configurations: the eight that existed when this was
-measured came to 10.3s together, against 86s of booting one at a time.
+Item 1 puts a boot near 5s, and item 2 then overlaps the boots so wall time
+tracks the slowest batch rather than the number of configurations: the eight
+that existed when this was measured came to 10.3s together, against 86s of
+booting one at a time.
 
 Three things were measured and deliberately not done. Disabling the
 firmware's USB stack gains nothing. Saving a ROM whose settings were changed
-by hand reaches the same 5s, but its only useful content is the zero timeout
-that item 2 already achieves, and it would add a binary that is too large to
-commit and that a fresh clone cannot regenerate. Serial output is not a
-factor either, since this release ROM prints no firmware console log and a
-whole capture is about 3 KB.
+by hand reaches the same 5s, but its only useful content is a zero menu
+timeout, which answering the prompt already achieves, and it would add a
+binary that is too large to commit and that a fresh clone cannot regenerate.
+Serial output is not a factor either, since this release ROM prints no
+firmware console log and a whole capture is about 3 KB.
 
 `-m` and `-smp` both measured within noise, so memory size and CPU count
 are not worth tuning here.

@@ -83,6 +83,12 @@ def _amd_iommu(enabled: bool, ivrs: bool = True) -> str:
 # Starting paused and quitting takes well under a second.
 _PROBE_TIMEOUT = 30.0
 
+# The firmware's boot prompt, and how long to allow for it. It is the first
+# thing on the serial console, so the allowance is only against a machine
+# under load.
+_BOOT_PROMPT = "ENTER to boot directly"
+_BOOT_PROMPT_TIMEOUT = 60.0
+
 
 def unsupported_binary() -> str | None:
     """Why the QEMU in use cannot run this suite, or `None` if it can.
@@ -329,7 +335,20 @@ class QemuVm:
             target=self._read_serial_loop, daemon=True
         )
         self._serial_reader.start()
+        self._skip_boot_menu()
         return self
+
+    def _skip_boot_menu(self) -> None:
+        """Answers the boot prompt with ENTER, which boots the default entry
+        at once instead of after the boot manager's 3s timeout.
+
+        Not reaching the prompt is an error rather than something to boot
+        through: the firmware release is pinned, so it either prints this or
+        something changed that is worth seeing.
+        """
+        assert self._serial_sock is not None
+        self.read_serial_until(_BOOT_PROMPT, timeout=_BOOT_PROMPT_TIMEOUT)
+        self._serial_sock.sendall(b"\r")
 
     def _start_swtpm(self) -> str:
         """Starts `swtpm` on a Unix socket and returns that socket's path.
