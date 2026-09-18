@@ -20,7 +20,7 @@ is absent from upstream entirely, so it reads zero and the MMCONFIG check
 only ever sees a disabled window.
 """
 
-from conftest import completed, dumped, fields, results, verdicts
+from conftest import completed, dumped, fields, messages, records, results, verdicts
 
 # Size and alignment SKINIT requires of the Secure Loader Block, mirroring
 # SLB_SIZE in src/amd/memory.rs.
@@ -281,3 +281,94 @@ def test_psp_check_runs_after_the_vendor_gate(intel_cpu_boot: str):
     # The device table is entirely AMD vendor IDs, so the check sits in
     # phase 3 and an Intel boot must not report on it at all.
     assert verdicts(intel_cpu_boot, "amd.psp") == []
+
+
+def test_a_ready_drtm_service_is_reported(amd_iommu_enabled_boot: str):
+    # The boot whose Secure Processor answers the way one waiting for a
+    # command does. This form prints no fields, so the address the check
+    # decoded has to come out of the sentence.
+    ((tag, detail),) = results(amd_iommu_enabled_boot, "amd.psp_drtm")
+    assert tag == "INFO"
+    assert "DRTM service ready" in detail
+    assert "0xfeda0a20 reads 0x80000000" in detail
+
+
+def test_the_drtm_mailbox_is_decoded_from_the_table(mmconfig_above_4gib_boot: str):
+    # Where C2PMSG_72 is comes from the ASPT twice over: the register block's
+    # address, and how far into it the feature register C2PMSG_63 sits, nine
+    # mailboxes below. Both are the platform's to choose, so the test reads
+    # them back out of the dumped table rather than assuming this guest's.
+    ((aspt,)) = [
+        table
+        for table in dumped(mmconfig_above_4gib_boot, "acpi")
+        if table.get("sig") == "ASPT"
+    ]
+    table = bytes.fromhex(aspt["hex"])
+    assert table[52:54] == b"\x00\x00", "first register structure is not the global one"
+    base = int.from_bytes(table[36:44], "little")
+    feature = int.from_bytes(table[60:64], "little")
+    (values,) = fields(mmconfig_above_4gib_boot, "amd.psp_drtm")
+    assert int(values["mailbox"], 16) == base + feature + 9 * 4
+
+
+def test_the_mailbox_address_is_printed_before_it_is_read(
+    mmconfig_above_4gib_boot: str,
+):
+    # Reading an address firmware named is where a hardware run can hang, so
+    # the address goes out first and its value after it.
+    (message,) = [
+        line for line in messages(mmconfig_above_4gib_boot) if "[PSP]" in line
+    ]
+    assert "0xfeda0a20" in message
+    order = [
+        record.get("msg", record.get("id"))
+        for record in records(mmconfig_above_4gib_boot)
+        if record["rec"] in ("log", "check")
+    ]
+    assert order.index(message) < order.index("amd.psp_drtm")
+
+
+def test_a_drtm_service_that_is_not_ready_is_reported(mmconfig_above_4gib_boot: str):
+    # The same register with its top bit clear, which is what a Secure
+    # Processor whose DRTM service is not up reads as.
+    (values,) = fields(mmconfig_above_4gib_boot, "amd.psp_drtm")
+    assert values["ready"] is False
+    assert int(values["value"], 16) & (1 << 31) == 0
+
+
+def test_no_table_leaves_the_registers_unlocatable(machine_check_error_boot: str):
+    # The Secure Processor is there and its registers answer, but the only
+    # other route to their address is an SMN access, which writes to the host
+    # bridge. So a platform publishing no ASPT is reported, not worked around.
+    ((tag, detail),) = results(machine_check_error_boot, "amd.psp_drtm")
+    assert tag == "INFO"
+    assert "no ASPT" in detail
+
+
+def test_the_drtm_mailbox_is_not_read_without_a_secure_processor(default_boot: str):
+    # Nothing answers with a Secure Processor ID here, so there is no mailbox
+    # to read whatever ACPI says.
+    ((tag, detail),) = results(default_boot, "amd.psp_drtm")
+    assert tag == "SKIP"
+    assert "no Secure Processor" in detail
+
+
+def test_the_drtm_mailbox_check_never_judges_the_platform(
+    amd_iommu_enabled_boot: str,
+    mmconfig_above_4gib_boot: str,
+    machine_check_error_boot: str,
+):
+    # A ready service is a fact about the PSP path, and classic SKINIT does
+    # not take that path, so this reports like the check above it.
+    for capture in (
+        amd_iommu_enabled_boot,
+        mmconfig_above_4gib_boot,
+        machine_check_error_boot,
+    ):
+        assert set(verdicts(capture, "amd.psp_drtm")) == {"INFO"}
+
+
+def test_the_drtm_mailbox_check_runs_after_the_vendor_gate(intel_cpu_boot: str):
+    # It reads an AMD table through an AMD device, so an Intel boot must not
+    # report on it at all.
+    assert verdicts(intel_cpu_boot, "amd.psp_drtm") == []

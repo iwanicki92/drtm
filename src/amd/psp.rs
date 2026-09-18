@@ -75,6 +75,17 @@ pub fn is_secure_processor(vendor: u16, device: u16) -> bool {
     lookup(vendor, device).is_some()
 }
 
+/// Whether any Secure Processor here offers the mailbox interface, which is
+/// the one a DRTM service answers on.
+pub fn has_mailbox(devices: &Devices) -> bool {
+    devices.iter().any(|entry| {
+        matches!(
+            lookup(entry.vendor, entry.device),
+            Some(Drtm::V2 | Drtm::V3 | Drtm::Asp)
+        )
+    })
+}
+
 /// Reports every AMD Secure Processor configuration space offers.
 ///
 /// Never a pass or a fail. The device ID says which mailbox a loader would

@@ -118,10 +118,11 @@ so this is a configured IOMMU no OS would find.
 
 ## What would still be needed
 
-Every precondition check reaches its outcomes, except that `amd.iommu_table`
-never meets an IVRS table that is malformed or disagrees with configuration
-space. Those take a deliberately wrong table, and are left to hardware. What
-is left is the launch itself.
+Every precondition check reaches its outcomes, except the two that take a
+deliberately wrong ACPI table: `amd.iommu_table` never meets an IVRS that is
+malformed or disagrees with configuration space, and `amd.psp_drtm` never
+meets an ASPT whose checksum or register structures are wrong. Those are
+left to hardware. What is left is the launch itself.
 
 1. **The `SKINIT` instruction**, including the hash transaction it drives:
     hashing the Secure Loader Block, extending PCR 17, and entering the SL
@@ -154,6 +155,7 @@ and some of them no longer hold.
 
 | Date       | QEMU   | Observation                                                                                                               |
 |------------|--------|---------------------------------------------------------------------------------------------------------------------------|
+| 2026-09-18 | ours   | `-device amd-psp` answers C2PMSG_72 through the window its ASPT declares, so `amd.psp_drtm` reads it both ways            |
 | 2026-09-18 | ours   | `-device amd-psp` publishes an ASPT of the same 112 bytes and revision Turin firmware does, differing in the base address |
 | 2026-09-18 | ours   | Firmware here enables the Secure Processor's memory decode, which Turin firmware does not, so the BAR answers too         |
 | 2026-09-18 | 11.1.1 | `family=` and `model=` are upstream CPU properties, so `-cpu EPYC,family=26,model=2` reaches the family 1Ah MSR list      |

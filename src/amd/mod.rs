@@ -4,6 +4,7 @@
 
 //! AMD-specific DRTM (`SKINIT`) precondition checks.
 
+pub mod aspt;
 pub mod checks;
 pub mod iommu;
 pub mod ivrs;
@@ -52,4 +53,5 @@ pub fn report(devices: &Devices) {
     let iommus = iommu::report(devices);
     ivrs::report(&iommus);
     psp::report(devices);
+    aspt::report(devices);
 }

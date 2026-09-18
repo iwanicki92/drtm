@@ -169,6 +169,8 @@ def boot_and_capture(
     extra_root_bridge: bool = False,
     corrected_error_bank: int | None = None,
     psp: int | None = None,
+    psp_ready: bool = True,
+    psp_aspt: bool = True,
     vga_and_nic: bool = False,
 ) -> str:
     """Boots `drtm.efi` once and returns everything it printed.
@@ -193,6 +195,8 @@ def boot_and_capture(
         extra_root_bridge=extra_root_bridge,
         corrected_error_bank=corrected_error_bank,
         psp=psp,
+        psp_ready=psp_ready,
+        psp_aspt=psp_aspt,
         vga_and_nic=vga_and_nic,
     ) as vm:
         marker = (
@@ -270,9 +274,11 @@ def mmconfig_above_4gib_boot() -> dict:
 
     The only configuration reaching that check's second enabled outcome. Its
     tests only read that one result, so the boot also reports CPUID family
-    1Ah, which is the only way the dump's AMD MSR list runs here.
+    1Ah, which is the only way the dump's AMD MSR list runs here, and
+    carries a Secure Processor whose DRTM service is not ready, which is
+    where that mailbox is read in the form naming its address.
     """
-    return {"cpu": MMCONFIG_ABOVE_4GIB}
+    return {"cpu": MMCONFIG_ABOVE_4GIB, "psp": 0x156E, "psp_ready": False}
 
 
 @boot_configuration
@@ -292,9 +298,17 @@ def machine_check_error_boot() -> dict:
 
     The only configuration reaching the logged-error outcome of that check.
     Its tests only read results, so the boot also carries an enabled
-    `amd-iommu` left out of ACPI, which leaves the guest no IVRS table.
+    `amd-iommu` left out of ACPI, which leaves the guest no IVRS table, and
+    a Secure Processor with no ASPT, which leaves nothing saying where its
+    registers are.
     """
-    return {"corrected_error_bank": 1, "iommu": "enabled", "ivrs": False}
+    return {
+        "corrected_error_bank": 1,
+        "iommu": "enabled",
+        "ivrs": False,
+        "psp": 0x156E,
+        "psp_aspt": False,
+    }
 
 
 @boot_configuration
@@ -317,7 +331,7 @@ def amd_iommu_enabled_boot() -> dict:
     The only configuration where `amd.iommu` can pass, and only our QEMU
     offers it. Its tests only read results, so the boot also carries a
     `drtm.conf` naming a level that does not exist, and a Secure Processor
-    device with the Turin ASP's device ID.
+    device with the Turin ASP's device ID whose DRTM service is ready.
     """
     return {"iommu": "enabled", "config": BAD_LEVEL, "psp": 0x156E}
 

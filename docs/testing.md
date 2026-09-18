@@ -26,12 +26,14 @@ The first run downloads Dasharo's QEMU Q35 firmware image into
 
 ### The QEMU build
 
-The suite needs our own QEMU, not a distribution one. Five checks reach
+The suite needs our own QEMU, not a distribution one. Six checks reach
 outcomes upstream cannot produce: `amd.skinit` passing needs a CPU allowed
 to report the feature bit, `amd.iommu` passing needs an `amd-iommu` whose
 capability reads enabled, `amd.mmconfig` needs `MSR 0xC0010058` to hold a
-value at all, `amd.psp` needs a device with a Secure Processor ID, and
-`amd.iommu_table` warning needs an IOMMU with no IVRS table.
+value at all, `amd.psp` needs a device with a Secure Processor ID,
+`amd.psp_drtm` needs that device's mailbox registers and the table naming
+where they are, and `amd.iommu_table` warning needs an IOMMU with no IVRS
+table.
 What those patches do, and what is still missing, is in
 [qemu-drtm-support.md](qemu-drtm-support.md).
 
@@ -71,16 +73,16 @@ the fixture then waits on its result. So a session's wall time tracks the
 slowest batch rather than the number of configurations, and `-k` or a single
 test file still boots only what it names.
 
-| Fixture                    | Configuration                                      | `drtm.conf`                  |
-|----------------------------|----------------------------------------------------|------------------------------|
-| `default_boot`             | No TPM device, `EPYC,+skinit`, window below 4 GiB  | `level=trace`, `format=json` |
-| `intel_cpu_boot`           | No TPM device, Intel CPU model (`Skylake-Client`)  | `level=trace`, `format=json` |
-| `tpm_tis_boot`             | `swtpm`-backed TPM 2.0 on the FIFO (TIS) interface | `level=trace`, `format=json` |
-| `tpm_crb_boot`             | `swtpm`-backed TPM 2.0 on the CRB interface        | none                         |
-| `amd_iommu_boot`           | `amd-iommu` disabled, `EPYC`, second root bridge   | `level=trace`, `format=json` |
-| `amd_iommu_enabled_boot`   | `amd-iommu` enabled by firmware, `amd-psp`         | `level=verbose`              |
-| `mmconfig_above_4gib_boot` | Window crossing 4 GiB, CPUID family 1Ah            | `level=trace`, `format=json` |
-| `machine_check_error_boot` | Machine-check error from reset, IOMMU not in ACPI  | `level=trace`, `format=json` |
+| Fixture                    | Configuration                                       | `drtm.conf`                  |
+|----------------------------|-----------------------------------------------------|------------------------------|
+| `default_boot`             | No TPM device, `EPYC,+skinit`, window below 4 GiB   | `level=trace`, `format=json` |
+| `intel_cpu_boot`           | No TPM device, Intel CPU model (`Skylake-Client`)   | `level=trace`, `format=json` |
+| `tpm_tis_boot`             | `swtpm`-backed TPM 2.0 on the FIFO (TIS) interface  | `level=trace`, `format=json` |
+| `tpm_crb_boot`             | `swtpm`-backed TPM 2.0 on the CRB interface         | none                         |
+| `amd_iommu_boot`           | `amd-iommu` disabled, `EPYC`, second root bridge    | `level=trace`, `format=json` |
+| `amd_iommu_enabled_boot`   | `amd-iommu` enabled by firmware, `amd-psp`          | `level=verbose`              |
+| `mmconfig_above_4gib_boot` | Window crossing 4 GiB, family 1Ah, PSP not ready    | `level=trace`, `format=json` |
+| `machine_check_error_boot` | Machine-check error, IOMMU not in ACPI, PSP no ASPT | `level=trace`, `format=json` |
 
 `level=verbose` is not a level, and that boot carries it on purpose.
 
@@ -100,14 +102,17 @@ Several boots exist only to reach a second outcome of one check.
 leaves the configuration window disabled, which is where that check's third
 outcome comes from. It also carries a second root bridge, as a server has,
 so the scan is held to reading each function once. The enabled IOMMU boot
-differs in the capability and adds a Secure Processor.
+differs in the capability and adds a Secure Processor whose DRTM service is
+ready.
 `mmconfig_above_4gib_boot` moves the window, and reports CPUID family 1Ah,
 which is the one family the platform dump reads AMD's own MSRs on: every
-other boot is `EPYC`, family 17h, where that list is refused.
+other boot is `EPYC`, family 17h, where that list is refused. It carries a
+Secure Processor whose DRTM service is not ready too, which is the form that
+prints the mailbox address as a field rather than in a sentence.
 `machine_check_error_boot` starts QEMU paused and logs a corrected error in
 bank 1 through its `mce` monitor command before the firmware runs. It also
-carries an enabled IOMMU that ACPI leaves out, since its tests only read
-results.
+carries an enabled IOMMU that ACPI leaves out, and a Secure Processor with
+no ASPT, since its tests only read results.
 
 The binary reads `drtm.conf` from beside itself on the ESP, so `QemuVm`
 writes one into the scratch ESP. Most boots raise the level to `trace` and

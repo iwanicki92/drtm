@@ -1,0 +1,167 @@
+// SPDX-FileCopyrightText: 2026 iwanicki92 <iwanicki92@gmail.com>
+//
+// SPDX-License-Identifier: Apache-2.0
+
+//! Whether the Secure Processor's DRTM service says it will take a command.
+//!
+//! Reported rather than judged, as the Secure Processor itself is. The
+//! register says what the service's state is now, not whether the launch
+//! this platform needs goes through it.
+
+use log::debug;
+
+use crate::acpi;
+use crate::amd::psp;
+use crate::check;
+use crate::pci::Devices;
+
+const SIGNATURE: &[u8; 4] = b"ASPT";
+
+/// The header is followed by where the Secure Processor's registers are and
+/// how many pages of them there are, then by the structures saying what is
+/// in that block (_AMD publication 58193, section 2_).
+const REGISTER_BASE: usize = acpi::HEADER_LEN;
+const PAGES: usize = REGISTER_BASE + 8;
+const STRUCTURE_COUNT: usize = PAGES + 4;
+const FIRST_STRUCTURE: usize = STRUCTURE_COUNT + 4;
+const PAGE: usize = 4096;
+
+/// Every structure opens with its type and, at offset 2, its length. Type 0
+/// is the global one, which is where the feature register's offset is.
+const STRUCTURE_HEADER: usize = 4;
+const STRUCTURE_LENGTH: usize = 2;
+const STRUCTURE_GLOBAL: u16 = 0;
+const GLOBAL_FEATURE: usize = 8;
+const GLOBAL_LEN: usize = GLOBAL_FEATURE + 4;
+
+/// The feature register is C2PMSG_63 and the DRTM service's command and
+/// response register C2PMSG_72, with four bytes per mailbox (_AMD
+/// publication 58453, section 3.1_).
+const FEATURE_MAILBOX: usize = 63;
+const DRTM_MAILBOX: usize = 72;
+const MAILBOX_WIDTH: usize = 4;
+
+/// Bit 31 of that register, which the service sets while it will take a
+/// command.
+const READY: u32 = 1 << 31;
+
+/// Reports what the DRTM service's register holds, if the platform says
+/// where it is.
+///
+/// The ASPT is the only route to that address that observes the platform:
+/// the register block sits behind an SMN access otherwise, and an SMN read
+/// is a write to the host bridge's index register.
+pub fn report(devices: &Devices) {
+    if !psp::has_mailbox(devices) {
+        check::skip!(
+            "amd.psp_drtm",
+            "no Secure Processor offering the mailbox interface, so no DRTM \
+             service to ask"
+        );
+        return;
+    }
+
+    let table = match acpi::find(SIGNATURE) {
+        Ok(Some(table)) => table,
+        missing => {
+            let why = if missing.is_err() {
+                "no ACPI tables"
+            } else {
+                "no ASPT"
+            };
+            check::info!(
+                "amd.psp_drtm",
+                "{why}, so nothing says where the Secure Processor's \
+                 registers are"
+            );
+            return;
+        }
+    };
+
+    if !acpi::checksum_ok(table) {
+        check::info!(
+            "amd.psp_drtm",
+            "ASPT checksum is wrong, so an OS discards the table and the \
+             register addresses with it"
+        );
+        return;
+    }
+    let Some(mailbox) = mailbox(table) else {
+        check::info!(
+            "amd.psp_drtm",
+            "ASPT names no global register structure, or puts the DRTM \
+             mailbox outside the register block it declares"
+        );
+        return;
+    };
+
+    // Printed before the read, so a machine that dies on it says which
+    // address it was reading.
+    debug!("[PSP] DRTM mailbox at {mailbox:#x}");
+    // Safety: the ASPT says the Secure Processor's registers are here, UEFI
+    // identity-maps what firmware reports, and this is a 32-bit register
+    // whose read issues nothing: a command is a write.
+    let value = unsafe { (mailbox as *const u32).read_volatile() };
+    let ready = value & READY != 0;
+    check::info!(
+        "amd.psp_drtm",
+        mailbox = check::hex(mailbox as u64),
+        value = check::hex(value),
+        ready = check::flag(ready);
+        "DRTM service {}, C2PMSG_72 at {mailbox:#x} reads {value:#010x}",
+        if ready { "ready" } else { "not ready" }
+    );
+}
+
+/// Where C2PMSG_72 is, from the block the table declares and the offset it
+/// gives for C2PMSG_63. Both move between Secure Processor generations, so
+/// the table is what says where they are on this one.
+fn mailbox(table: &[u8]) -> Option<usize> {
+    let base = usize::try_from(read_u64(table, REGISTER_BASE)?).ok()?;
+    let pages = read_u32(table, PAGES)? as usize;
+    let feature = feature_offset(table)? as usize;
+    let offset = feature.checked_add((DRTM_MAILBOX - FEATURE_MAILBOX) * MAILBOX_WIDTH)?;
+    if base == 0 || offset.checked_add(MAILBOX_WIDTH)? > pages.checked_mul(PAGE)? {
+        return None;
+    }
+    base.checked_add(offset)
+}
+
+/// The feature register's offset into that block, from the table's global
+/// structure. A structure whose length does not fit the table stops the
+/// walk, since the one after it is wherever that length says.
+fn feature_offset(table: &[u8]) -> Option<u32> {
+    let mut offset = FIRST_STRUCTURE;
+    for _ in 0..read_u32(table, STRUCTURE_COUNT)? {
+        let structure = table.get(offset..)?;
+        let len = usize::from(read_u16(structure, STRUCTURE_LENGTH)?);
+        if len < STRUCTURE_HEADER || len > structure.len() {
+            return None;
+        }
+        if read_u16(structure, 0)? == STRUCTURE_GLOBAL {
+            return (len >= GLOBAL_LEN)
+                .then(|| read_u32(structure, GLOBAL_FEATURE))
+                .flatten();
+        }
+        offset += len;
+    }
+    None
+}
+
+fn read_u16(bytes: &[u8], offset: usize) -> Option<u16> {
+    Some(u16::from_le_bytes(
+        bytes.get(offset..offset + 2)?.try_into().ok()?,
+    ))
+}
+
+fn read_u32(bytes: &[u8], offset: usize) -> Option<u32> {
+    Some(u32::from_le_bytes(
+        bytes.get(offset..offset + 4)?.try_into().ok()?,
+    ))
+}
+
+fn read_u64(bytes: &[u8], offset: usize) -> Option<u64> {
+    Some(u64::from_le_bytes(
+        bytes.get(offset..offset + 8)?.try_into().ok()?,
+    ))
+}

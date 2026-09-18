@@ -181,7 +181,9 @@ class QemuVm:
     root port on bus 0x20, the way a server has one per NUMA node.
 
     `psp` attaches our QEMU's `amd-psp`, a function answering with that AMD
-    device ID and nothing behind it.
+    device ID and its mailbox registers behind it. `psp_ready` sets the bit
+    the DRTM service sets when it will take a command, and `psp_aspt` leaves
+    the ACPI table naming those registers' address out.
 
     `vga_and_nic` keeps QEMU's default display adapter and network card.
     They cost 1.3s of firmware initialisation each boot, so only the boot
@@ -213,6 +215,8 @@ class QemuVm:
         extra_root_bridge: bool = False,
         corrected_error_bank: int | None = None,
         psp: int | None = None,
+        psp_ready: bool = True,
+        psp_aspt: bool = True,
         vga_and_nic: bool = False,
         firmware: Path | None = None,
         save_firmware_to: Path | None = None,
@@ -233,6 +237,8 @@ class QemuVm:
         self.extra_root_bridge = extra_root_bridge
         self.corrected_error_bank = corrected_error_bank
         self.psp = psp
+        self.psp_ready = psp_ready
+        self.psp_aspt = psp_aspt
         self.vga_and_nic = vga_and_nic
         self.firmware = Path(firmware) if firmware else cached_firmware_path()
         self.save_firmware_to = save_firmware_to
@@ -326,7 +332,10 @@ class QemuVm:
             ]
 
         if self.psp is not None:
-            args += ["-device", f"amd-psp,device-id={self.psp:#x}"]
+            device = f"amd-psp,device-id={self.psp:#x}"
+            device += f",drtm-ready={'on' if self.psp_ready else 'off'}"
+            device += f",aspt={'on' if self.psp_aspt else 'off'}"
+            args += ["-device", device]
 
         if self.corrected_error_bank is not None:
             args.append("-S")
