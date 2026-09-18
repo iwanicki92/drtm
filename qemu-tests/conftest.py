@@ -10,16 +10,21 @@ summarising test outcomes) to a numbered directory under `logs/`.
 
 Booting takes ~5s, so tests do not boot QEMU themselves. They take a boot
 fixture, which yields that configuration's complete serial output as a string,
-and assert against it.
+and assert against it. Collection starts every boot the run needs, several at
+a time, so the fixture is usually just waiting on one that is already going.
 """
 
 import json
+import os
 import re
 import subprocess
 import threading
 import time
+from collections.abc import Callable
+from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
+from types import FunctionType
 
 import pytest
 from firmware import cached_firmware_path, warmed_firmware_path
@@ -65,10 +70,22 @@ BOOT_TIMEOUT = 120.0
 BUILD_TIMEOUT = 300.0
 
 
-@pytest.fixture(scope="session")
-def efi_binary() -> Path:
-    subprocess.run(["cargo", "build"], cwd=REPO_ROOT, check=True, timeout=BUILD_TIMEOUT)
-    return EFI_BINARY
+_built_binary: Path | None = None
+
+
+def built_efi_binary() -> Path:
+    """Builds `drtm.efi` on first use and returns where it landed.
+
+    A function rather than a fixture: the boots that need it are started
+    from a collection hook, and hooks cannot request fixtures.
+    """
+    global _built_binary
+    if _built_binary is None:
+        subprocess.run(
+            ["cargo", "build"], cwd=REPO_ROOT, check=True, timeout=BUILD_TIMEOUT
+        )
+        _built_binary = EFI_BINARY
+    return _built_binary
 
 
 def _next_run_number() -> int:
@@ -83,42 +100,38 @@ def _next_run_number() -> int:
 
 
 _run_log_dir: Path | None = None
+_run_log_dir_lock = threading.Lock()
 
 
 def _get_run_log_dir() -> Path:
     """Creates this run's log directory on first use, then reuses it.
 
-    Both the `run_log_dir` fixture and the result-reporting hooks need this
-    path, and hooks cannot request fixtures, so it is cached here rather than
-    held by the fixture.
+    Locked because concurrent boots reach it from their own threads, and two
+    of them numbering the run at once would make two directories.
     """
     global _run_log_dir
-    if _run_log_dir is not None:
-        return _run_log_dir
-    number = _next_run_number()
-    if number > _MAX_RUN_NUMBER:
-        pytest.exit(
-            f"qemu-tests/logs/ has reached run {_MAX_RUN_NUMBER}, the "
-            "4-digit limit. Clean out old runs before testing again.",
-            returncode=1,
-        )
-    now = datetime.now().astimezone()
-    run_dir = LOGS_DIR / f"{number:04d}-{now.date().isoformat()}"
-    run_dir.mkdir(parents=True)
-    (run_dir / "timestamp.txt").write_text(now.isoformat() + "\n")
-    _run_log_dir = run_dir
-    return run_dir
-
-
-@pytest.fixture(scope="session")
-def run_log_dir() -> Path:
-    return _get_run_log_dir()
+    with _run_log_dir_lock:
+        if _run_log_dir is not None:
+            return _run_log_dir
+        number = _next_run_number()
+        if number > _MAX_RUN_NUMBER:
+            pytest.exit(
+                f"qemu-tests/logs/ has reached run {_MAX_RUN_NUMBER}, the "
+                "4-digit limit. Clean out old runs before testing again.",
+                returncode=1,
+            )
+        now = datetime.now().astimezone()
+        run_dir = LOGS_DIR / f"{number:04d}-{now.date().isoformat()}"
+        run_dir.mkdir(parents=True)
+        (run_dir / "timestamp.txt").write_text(now.isoformat() + "\n")
+        _run_log_dir = run_dir
+        return run_dir
 
 
 _warm_lock = threading.Lock()
 
 
-def warmed_firmware(efi_binary: Path) -> Path:
+def warmed_firmware() -> Path:
     """This release's firmware image after one boot, made on first use.
 
     Populating the variable store is 2.8s, and the firmware only does it on
@@ -134,7 +147,7 @@ def warmed_firmware(efi_binary: Path) -> Path:
         log_dir = _get_run_log_dir() / "boot-warm-firmware"
         log_dir.mkdir(parents=True, exist_ok=True)
         with QemuVm(
-            efi_binary,
+            built_efi_binary(),
             log_dir=log_dir,
             firmware=cached_firmware_path(),
             save_firmware_to=scratch,
@@ -147,7 +160,6 @@ def warmed_firmware(efi_binary: Path) -> Path:
 
 
 def boot_and_capture(
-    efi_binary: Path,
     log_dir: Path,
     tpm: str | None = None,
     cpu: str = DEFAULT_CPU,
@@ -159,20 +171,20 @@ def boot_and_capture(
     psp: int | None = None,
     vga_and_nic: bool = False,
 ) -> str:
-    """Boots `efi_binary` once and returns everything it printed.
+    """Boots `drtm.efi` once and returns everything it printed.
 
-    Shared by the per-configuration boot fixtures below. A configuration
-    needing different QEMU arguments gets its own fixture calling this, and a
-    matching parameter here and on `QemuVm`.
+    Shared by the configurations below, each of which returns the keyword
+    arguments it wants here. A configuration needing a QEMU argument no other
+    one uses adds a parameter here and on `QemuVm`.
 
     Which marker ends the read follows from `config`, since the two output
     forms end differently.
     """
     log_dir.mkdir(parents=True, exist_ok=True)
     with QemuVm(
-        efi_binary,
+        built_efi_binary(),
         log_dir=log_dir,
-        firmware=warmed_firmware(efi_binary),
+        firmware=warmed_firmware(),
         tpm=tpm,
         cpu=cpu,
         iommu=iommu,
@@ -189,8 +201,53 @@ def boot_and_capture(
         return vm.read_serial_until(marker, timeout=BOOT_TIMEOUT)
 
 
-@pytest.fixture(scope="session")
-def default_boot(run_log_dir: Path, efi_binary: Path) -> str:
+_BOOT_CONFIGS: dict[str, Callable[[], dict]] = {}
+
+
+def boot_configuration(config: FunctionType):
+    """Declares one boot configuration, as a session fixture of the same name.
+
+    The decorated function returns the keyword arguments `boot_and_capture`
+    takes for it. Registering it by name is what lets collection start the
+    boot before any test asks for it, and the fixture waits on that boot.
+    """
+    name = config.__name__
+    _BOOT_CONFIGS[name] = config
+
+    @pytest.fixture(scope="session", name=name)
+    def wait_for_boot() -> str:
+        return _booted(name)
+
+    wait_for_boot.__doc__ = config.__doc__
+    return wait_for_boot
+
+
+def _boot_log_dir(name: str) -> Path:
+    """`default_boot` writes to `boot-default`, so a log directory names the
+    configuration that produced it.
+    """
+    stem = name.removesuffix("_boot").replace("_", "-")
+    return _get_run_log_dir() / f"boot-{stem}"
+
+
+def _run_boot(name: str) -> str:
+    """Boots one configuration, in a pool thread or in the caller's own."""
+    return boot_and_capture(_boot_log_dir(name), **_BOOT_CONFIGS[name]())
+
+
+def _booted(name: str) -> str:
+    """That configuration's serial output, waiting for its boot to finish.
+
+    Collection submits every boot the run needs, so this usually just takes
+    the result. A configuration reached some other way still boots here
+    rather than failing.
+    """
+    future = _boot_futures.get(name)
+    return future.result() if future is not None else _run_boot(name)
+
+
+@boot_configuration
+def default_boot() -> dict:
     """Serial output of one boot under QEMU's default configuration: no TPM
     device attached, and an AMD CPU model reporting `skinit` and an MMIO
     configuration window below 4 GiB.
@@ -203,41 +260,32 @@ def default_boot(run_log_dir: Path, efi_binary: Path) -> str:
     scan tests read a populated bus. Every other boot drops them, since
     initialising them costs 1.3s and no test asserts on either.
     """
-    return boot_and_capture(
-        efi_binary,
-        run_log_dir / "boot-default",
-        cpu=MMCONFIG_BELOW_4GIB,
-        vga_and_nic=True,
-    )
+    return {"cpu": MMCONFIG_BELOW_4GIB, "vga_and_nic": True}
 
 
-@pytest.fixture(scope="session")
-def mmconfig_above_4gib_boot(run_log_dir: Path, efi_binary: Path) -> str:
+@boot_configuration
+def mmconfig_above_4gib_boot() -> dict:
     """Serial output of one boot whose MMIO configuration window does not fit
     below 4 GiB.
 
     The only configuration reaching that check's second enabled outcome.
     Nothing else here differs from `default_boot`, down to the bus count.
     """
-    return boot_and_capture(
-        efi_binary, run_log_dir / "boot-mmconfig-above-4gib", cpu=MMCONFIG_ABOVE_4GIB
-    )
+    return {"cpu": MMCONFIG_ABOVE_4GIB}
 
 
-@pytest.fixture(scope="session")
-def intel_cpu_boot(run_log_dir: Path, efi_binary: Path) -> str:
+@boot_configuration
+def intel_cpu_boot() -> dict:
     """Serial output of one boot on an Intel CPU model, with no TPM device.
 
     Exists to exercise the path where the AMD checks are skipped and the
     vendor-independent ones still run.
     """
-    return boot_and_capture(
-        efi_binary, run_log_dir / "boot-intel-cpu", cpu="Skylake-Client"
-    )
+    return {"cpu": "Skylake-Client"}
 
 
-@pytest.fixture(scope="session")
-def machine_check_error_boot(run_log_dir: Path, efi_binary: Path) -> str:
+@boot_configuration
+def machine_check_error_boot() -> dict:
     """Serial output of one boot with a corrected error logged in machine-check
     bank 1 before the firmware runs, as a warm reboot can leave one.
 
@@ -245,17 +293,11 @@ def machine_check_error_boot(run_log_dir: Path, efi_binary: Path) -> str:
     Its tests only read results, so the boot also carries an enabled
     `amd-iommu` left out of ACPI, which leaves the guest no IVRS table.
     """
-    return boot_and_capture(
-        efi_binary,
-        run_log_dir / "boot-machine-check-error",
-        corrected_error_bank=1,
-        iommu="enabled",
-        ivrs=False,
-    )
+    return {"corrected_error_bank": 1, "iommu": "enabled", "ivrs": False}
 
 
-@pytest.fixture(scope="session")
-def amd_iommu_boot(run_log_dir: Path, efi_binary: Path) -> str:
+@boot_configuration
+def amd_iommu_boot() -> dict:
     """Serial output of one boot with QEMU's `amd-iommu` device attached and
     its capability left disabled, as upstream QEMU always leaves it.
 
@@ -263,16 +305,11 @@ def amd_iommu_boot(run_log_dir: Path, efi_binary: Path) -> str:
     which is where the `skinit` check's unsupported path is exercised, and
     has a second root bridge, so the IOMMU is one device among two bridges.
     """
-    return boot_and_capture(
-        efi_binary,
-        run_log_dir / "boot-amd-iommu",
-        iommu="disabled",
-        extra_root_bridge=True,
-    )
+    return {"iommu": "disabled", "extra_root_bridge": True}
 
 
-@pytest.fixture(scope="session")
-def amd_iommu_enabled_boot(run_log_dir: Path, efi_binary: Path) -> str:
+@boot_configuration
+def amd_iommu_enabled_boot() -> dict:
     """Serial output of one boot with an `amd-iommu` whose capability is
     enabled, which is what firmware does on a machine that has one.
 
@@ -281,34 +318,69 @@ def amd_iommu_enabled_boot(run_log_dir: Path, efi_binary: Path) -> str:
     `drtm.conf` naming a level that does not exist, and a Secure Processor
     device with the Turin ASP's device ID.
     """
-    return boot_and_capture(
-        efi_binary,
-        run_log_dir / "boot-amd-iommu-enabled",
-        iommu="enabled",
-        config=BAD_LEVEL,
-        psp=0x156E,
-    )
+    return {"iommu": "enabled", "config": BAD_LEVEL, "psp": 0x156E}
 
 
-@pytest.fixture(scope="session")
-def tpm_tis_boot(run_log_dir: Path, efi_binary: Path) -> str:
+@boot_configuration
+def tpm_tis_boot() -> dict:
     """Serial output of one boot with an `swtpm`-backed TPM 2.0 on the FIFO
     (TIS) interface, the one layout with a register per locality.
     """
-    return boot_and_capture(efi_binary, run_log_dir / "boot-tpm-tis", tpm="tis")
+    return {"tpm": "tis"}
 
 
-@pytest.fixture(scope="session")
-def tpm_crb_boot(run_log_dir: Path, efi_binary: Path) -> str:
+@boot_configuration
+def tpm_crb_boot() -> dict:
     """Serial output of one boot with an `swtpm`-backed TPM 2.0 on the CRB
     interface.
 
     Boots with no `drtm.conf`, which the TPM tests do not notice, so this
     boot also covers the defaults.
     """
-    return boot_and_capture(
-        efi_binary, run_log_dir / "boot-tpm-crb", tpm="crb", config=None
-    )
+    return {"tpm": "crb", "config": None}
+
+
+# One boot keeps a core busy, so overlapping them pays off up to the core
+# count and not past it: eight at a time on this four-core machine measured
+# slower than four.
+_BOOT_WORKERS = os.cpu_count() or 1
+
+_boot_pool: ThreadPoolExecutor | None = None
+_boot_futures: dict[str, Future[str]] = {}
+
+
+@pytest.hookimpl(trylast=True)
+def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]):
+    """Starts every boot the collected tests need, before the first one runs.
+
+    Boots share nothing, so they overlap and a session's wall time tracks the
+    slowest batch rather than the number of configurations. Only what was
+    collected is submitted, so running one test still boots once. They are
+    submitted in the order the tests ask for them, so the pool works on what
+    is wanted first.
+
+    Last of its hook, so `-k` and `-m` have already dropped what is not
+    being run and their boots are never started.
+    """
+    if config.option.collectonly:
+        return
+    first_wanted: dict[str, int] = {}
+    for index, item in enumerate(items):
+        # Only a test function carries a fixture closure, and only that is
+        # what names the boot it needs.
+        for name in getattr(item, "fixturenames", ()):
+            if name in _BOOT_CONFIGS:
+                first_wanted.setdefault(name, index)
+    if not first_wanted:
+        return
+    # Both ahead of the pool: the build is one build and the warming is one
+    # boot, and four threads racing for either would only queue up behind it.
+    built_efi_binary()
+    warmed_firmware()
+    global _boot_pool
+    _boot_pool = ThreadPoolExecutor(_BOOT_WORKERS, thread_name_prefix="boot")
+    for name in sorted(first_wanted, key=first_wanted.__getitem__):
+        _boot_futures[name] = _boot_pool.submit(_run_boot, name)
 
 
 # Every check reports a tag, an identifier and a detail (see `src/check.rs`),
@@ -455,6 +527,10 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
     records what was being tested and how it went, not just what the guest
     printed.
     """
+    if _boot_pool is not None:
+        # Drops boots nothing ever waited for, which is what -x leaves
+        # queued. One already running still has to finish.
+        _boot_pool.shutdown(wait=True, cancel_futures=True)
     if not _reports:
         return
 

@@ -57,12 +57,19 @@ distribution QEMU fails once rather than in every boot fixture.
 
 ## How the VM is set up
 
-Booting takes around 5 seconds, so tests do not boot QEMU themselves. A
-session-scoped fixture in `qemu-tests/conftest.py` boots once per distinct
-QEMU configuration and yields that boot's serial output as a string, which
-tests assert against. A configuration needing different QEMU arguments gets
-its own fixture calling `boot_and_capture`, rather than the existing ones
-growing parameters. Tests sharing a boot fail together if it does.
+Booting takes around 5 seconds, so tests do not boot QEMU themselves. Each
+configuration in `qemu-tests/conftest.py` carries a `@boot_configuration`
+decorator, which turns it into a session fixture of the same name yielding
+that boot's serial output as a string. A configuration needing different
+QEMU arguments is a new function returning them, rather than the existing
+ones growing parameters. Tests sharing a boot fail together if it does.
+
+Collection starts those boots rather than the fixtures doing it: once the
+tests to run are known, every configuration among them is submitted to a
+pool of `os.cpu_count()` threads, in the order the tests ask for them, and
+the fixture then waits on its result. So a session's wall time tracks the
+slowest batch rather than the number of configurations, and `-k` or a single
+test file still boots only what it names.
 
 | Fixture                    | Configuration                                      | `drtm.conf`                  |
 |----------------------------|----------------------------------------------------|------------------------------|
@@ -200,7 +207,7 @@ first:
     5s), so a timed-out test leaves no stray process.
 - `_connect_serial` waits at most 5s for QEMU to open its serial port,
     `QmpClient` bounds every socket operation at 10s, and the `cargo build`
-    in the `efi_binary` fixture is capped at `BUILD_TIMEOUT` (300s).
+    in `built_efi_binary` is capped at `BUILD_TIMEOUT` (300s).
 - `pytest-timeout` backstops the rest at 300s per test, with the `signal`
     method so the failure is still reported and `results.txt` still written.
     The `thread` method calls `os._exit()` and loses both.
@@ -215,9 +222,11 @@ Each pytest invocation gets its own numbered, gitignored folder under
     status, and the full traceback for anything that failed. Durations sum
     the setup, call and teardown phases, so a shared boot's cost shows
     against the test that triggered it rather than every test reading 0.0s.
-- One subfolder per boot, e.g. `boot-default/`, with that boot's captured
-    `serial.log` and `qemu.log`, plus the `qemu-args.txt` it was launched
-    with. Boots with a TPM also get `swtpm.log`.
+- One subfolder per boot, named after its configuration, e.g. `default_boot`
+    to `boot-default/`, with that boot's captured `serial.log` and
+    `qemu.log`, plus the `qemu-args.txt` it was launched with. Boots with a
+    TPM also get `swtpm.log`, and the run that warms a firmware image gets
+    `boot-warm-firmware/`.
 
 `swtpm.log` is empty after a healthy run: swtpm writes errors to stderr,
 which that file captures, and emits nothing otherwise. Debug tracing is
@@ -270,11 +279,11 @@ records what it would take, for whoever picks it up.
 
 ## Boot time
 
-The configurations boot one after another, so nearly all of a session is
-firmware rather than anything being tested. Measured under TCG against the
-pinned firmware release.
+Almost all of a session is firmware rather than anything being tested, so
+what is left to win is in the boots. Measured under TCG against the pinned
+firmware release, on a four-core machine.
 
-What a boot still spends its time on:
+What one boot still spends its time on:
 
 | Component                                  | Cost |
 |--------------------------------------------|------|
@@ -282,23 +291,19 @@ What a boot still spends its time on:
 | Firmware's remaining work, plus `drtm.efi` | 3.7s |
 
 Only `default_boot` pays the first row, since it is the one boot carrying
-those devices.
+those devices. The eight configurations then overlap four at a time, so the
+suite is 14s against the 86s of booting them one after another. A run that
+has to warm a firmware image first is 21s.
 
-One change is left, not implemented yet: boot the configurations
-concurrently, four at a time, submitting only those the collected tests need
-so a single-test run still boots once. Four matches this machine's core
-count, and eight at a time measured slower than four. It overlaps the boots,
-so wall time tracks the slowest batch rather than the number of
-configurations: the eight that existed when this was measured came to 10.3s
-together, against 86s of booting one at a time.
-
-Three things were measured and deliberately not done. Disabling the
+Four things were measured and deliberately not done. Eight boots at a time
+measured slower than four on this machine, which is why the pool is sized by
+core count rather than by the number of configurations. Disabling the
 firmware's USB stack gains nothing. Saving a ROM whose settings were changed
-by hand reaches the same 5s, but its only useful content is a zero menu
-timeout, which answering the prompt already achieves, and it would add a
-binary that is too large to commit and that a fresh clone cannot regenerate.
-Serial output is not a factor either, since this release ROM prints no
-firmware console log and a whole capture is about 3 KB.
+by hand reaches the same per-boot time, but its only useful content is a
+zero menu timeout, which answering the prompt already achieves, and it would
+add a binary that is too large to commit and that a fresh clone cannot
+regenerate. Serial output is not a factor either, since this release ROM
+prints no firmware console log and a whole capture is about 3 KB.
 
 `-m` and `-smp` both measured within noise, so memory size and CPU count
 are not worth tuning here.
