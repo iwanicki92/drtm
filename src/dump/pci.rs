@@ -159,14 +159,29 @@ fn config(pci: &PciIoAccessPci<'_>, function: Function, size: u32) {
             }
         }
     }
-    record(
-        "config",
-        &[
-            ("fn", check::text!("{function}")),
-            ("len", check::count(bytes.len() as u64)),
-            ("hex", check::bytes(&bytes)),
-        ],
-    );
+    // Unimplemented space reads as all ones, and a function that ends well
+    // before its window is mostly zeros, so the tail goes in as the byte it
+    // repeats. `len` stays what was read, so the rest is recoverable.
+    let fill = bytes
+        .last()
+        .copied()
+        .filter(|&byte| byte == 0 || byte == 0xFF);
+    let kept = match fill {
+        Some(fill) => bytes.len() - bytes.iter().rev().take_while(|&&byte| byte == fill).count(),
+        None => bytes.len(),
+    };
+    let head: [(&str, check::Value); 3] = [
+        ("fn", check::text!("{function}")),
+        ("len", check::count(bytes.len() as u64)),
+        ("hex", check::bytes(&bytes[..kept])),
+    ];
+    match fill.filter(|_| kept < bytes.len()) {
+        None => record("config", &head),
+        Some(fill) => {
+            let [name, len, hex] = head;
+            record("config", &[name, len, hex, ("fill", check::hex(fill))]);
+        }
+    }
 }
 
 /// Where firmware put each enabled IOMMU's registers, and what they hold.

@@ -134,14 +134,30 @@ def test_msrs_are_read_on_a_non_amd_cpu(intel_cpu_boot: str):
 
 
 def test_configuration_space_is_dumped_per_function(default_boot: str):
-    # Every function the scan found gets its space read, and `len` is the
-    # bytes that came back, so the two agreeing says none was cut short.
+    # Every function the scan found gets its space read. `len` is what came
+    # back, and a record holding less than that says which byte the tail
+    # repeats, so nothing is lost by leaving it out.
     spaces = {
         space["fn"]: space for space in dumped(default_boot, "config") if "hex" in space
     }
     assert spaces.keys() == {device["fn"] for device in dumped(default_boot, "device")}
     for space in spaces.values():
-        assert len(space["hex"]) == 2 * space["len"], space["fn"]
+        read = len(space["hex"]) // 2
+        assert read <= space["len"], space["fn"]
+        assert read == space["len"] or "fill" in space, space["fn"]
+
+
+def test_unimplemented_space_is_not_spelled_out(default_boot: str):
+    # The Q35 host bridge answers all ones past its header, which as digits
+    # is eight kilobytes of serial time saying nothing.
+    ((bridge,)) = [
+        space
+        for space in dumped(default_boot, "config")
+        if space.get("fn") == "0000:00:00.0" and "hex" in space
+    ]
+    assert bridge["len"] == 0x1000
+    assert int(bridge["fill"], 16) == 0xFF
+    assert len(bridge["hex"]) // 2 < bridge["len"]
 
 
 def test_the_host_bridge_data_registers_are_left_alone(default_boot: str):
