@@ -10,7 +10,7 @@
 
 use core::fmt;
 
-use log::{debug, trace};
+use log::debug;
 use uefi::Identify;
 use uefi::boot::{self, OpenProtocolAttributes, OpenProtocolParams, SearchType};
 use uefi::proto::pci::PciIoAddress;
@@ -22,7 +22,6 @@ use crate::check;
 /// window is enough (PCI Local Bus Specification 3.0, section 6.1).
 const REG_ID: u8 = 0x00;
 const REG_STATUS: u8 = 0x06;
-const REG_CLASS: u8 = 0x08;
 const REG_HEADER_TYPE: u8 = 0x0E;
 const REG_CAPABILITY_POINTER: u8 = 0x34;
 
@@ -307,24 +306,4 @@ fn probe(pci: &PciIoAccessPci<'_>, function: Function, bridge: usize) -> Option<
         device: (id >> 16) as u16,
         bridge,
     })
-}
-
-/// Reports every function the scan found.
-pub fn report(devices: &Devices) {
-    for_each_device(devices, |pci, device| {
-        let class = pci
-            .read_one::<u32>(device.function.address().with_register(REG_CLASS))
-            .unwrap_or(0)
-            >> 8;
-        trace!(
-            "[SCAN] {} id {:04x}:{:04x} class {class:06x}",
-            device.function, device.vendor, device.device
-        );
-        for_each_capability(pci, device.function, |capability| {
-            trace!(
-                "[SCAN]   capability {:02x} type {} at {:02x}",
-                capability.id, capability.kind, capability.offset
-            );
-        });
-    });
 }

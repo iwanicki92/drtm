@@ -70,6 +70,11 @@ fn lookup(vendor: u16, device: u16) -> Option<Drtm> {
         .map(|(_, drtm)| *drtm)
 }
 
+/// Whether the loaders' table lists this ID as a Secure Processor.
+pub fn is_secure_processor(vendor: u16, device: u16) -> bool {
+    lookup(vendor, device).is_some()
+}
+
 /// Reports every AMD Secure Processor configuration space offers.
 ///
 /// Never a pass or a fail. The device ID says which mailbox a loader would

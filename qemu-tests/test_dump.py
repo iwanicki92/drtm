@@ -17,10 +17,15 @@ from conftest import dumped
 
 
 def test_the_dump_runs_to_its_end(default_boot: str):
-    # A record either side of the whole thing, so a machine that dies on a
-    # read says which one it was on rather than going quiet.
+    # A marker before each section and one after the last, so a machine that
+    # dies on a read says where rather than going quiet.
     assert [record["at"] for record in dumped(default_boot, "dump")] == [
-        "start",
+        "cpuid",
+        "processors",
+        "acpi",
+        "pci",
+        "msr",
+        "iommu",
         "end",
     ]
 
@@ -91,16 +96,13 @@ def test_every_processor_firmware_started_is_listed(default_boot: str):
     assert sum(1 for cpu in listed if cpu["bsp"]) == 1
 
 
-def test_msrs_are_announced_before_they_are_read(default_boot: str):
-    # A read that faults leaves its announcement and no value, so a hung
-    # machine still says which register killed it. Every read here survives,
-    # so each announcement is followed by its value.
+def test_every_msr_read_reports_its_value(default_boot: str):
+    # One record per register, in the order the source reads them, which is
+    # what locates the read a hung machine died on.
     reads = [msr for msr in dumped(default_boot, "msr") if "id" in msr]
     assert reads, "no MSR was read"
-    for announced, value in zip(reads[::2], reads[1::2], strict=True):
-        assert "value" not in announced
-        assert value["id"] == announced["id"]
-        assert "value" in value
+    for msr in reads:
+        assert "value" in msr, msr["name"]
 
 
 def test_the_amd_msr_list_is_guarded_by_family(default_boot: str):
@@ -127,3 +129,44 @@ def test_msrs_are_read_on_a_non_amd_cpu(intel_cpu_boot: str):
     read = {msr["name"] for msr in dumped(intel_cpu_boot, "msr") if "name" in msr}
     assert "APIC_BASE" in read
     assert not [msr for msr in dumped(intel_cpu_boot, "msr") if "documented" in msr]
+
+
+def test_configuration_space_is_dumped_per_function(default_boot: str):
+    # Every function the scan found gets its space read, and `len` is the
+    # bytes that came back, so the two agreeing says none was cut short.
+    spaces = {
+        space["fn"]: space for space in dumped(default_boot, "config") if "hex" in space
+    }
+    assert spaces.keys() == {device["fn"] for device in dumped(default_boot, "device")}
+    for space in spaces.values():
+        assert len(space["hex"]) == 2 * space["len"], space["fn"]
+
+
+def test_the_host_bridge_data_registers_are_left_alone(default_boot: str):
+    # Reading one reaches whatever register firmware last selected through
+    # its index half, so the dump substitutes zeros and says where.
+    skipped = [
+        space["at"]
+        for space in dumped(default_boot, "config")
+        if space.get("read") is False
+    ]
+    assert [int(offset, 16) for offset in skipped] == [0x64, 0xBC, 0xC8]
+
+
+def test_an_enabled_iommu_reports_its_registers(machine_check_error_boot: str):
+    # Firmware enabled this one, so its register block is mapped and the
+    # control register reads back rather than the dump refusing.
+    registers = {
+        register["name"]: register["value"]
+        for register in dumped(machine_check_error_boot, "iommu")
+        if "value" in register
+    }
+    assert "CONTROL" in registers
+    assert "EXTENDED_FEATURE" in registers
+
+
+def test_a_disabled_iommu_is_not_read(amd_iommu_boot: str):
+    # The enable bit in the capability is what says the register block is
+    # mapped at all, so reading it anyway is how a dump hangs a machine.
+    ((found,)) = dumped(amd_iommu_boot, "iommu")
+    assert found["enabled"] is False

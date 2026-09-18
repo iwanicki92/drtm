@@ -18,7 +18,7 @@ and an earlier bug got CRB wrong while passing on TIS.
 
 import re
 
-from conftest import fields, messages, results, verdicts
+from conftest import dumped, fields, messages, results, verdicts
 
 
 def test_cpu_vendor_is_reported(default_boot: str):
@@ -185,16 +185,22 @@ def test_pci_root_bridge_protocol_is_available(default_boot: str):
 
 def test_pci_scan_finds_the_host_bridge(default_boot: str):
     # 8086:29c0 is the Q35 MCH, at 0:00.0 on every boot, so it is the one
-    # device the scan can be held to by name.
-    assert "[SCAN] 0000:00:00.0 id 8086:29c0 class 060000" in default_boot
+    # device the scan can be held to by name. What each function is belongs
+    # to the platform dump rather than to any check's reasoning.
+    ((found,)) = [
+        device
+        for device in dumped(default_boot, "device")
+        if device["fn"] == "0000:00:00.0"
+    ]
+    assert int(found["vendor"], 16) == 0x8086
+    assert int(found["device"], 16) == 0x29C0
+    assert int(found["class"], 16) == 0x060000
 
 
 def test_pci_scan_walks_capability_lists(default_boot: str):
-    # A device with no capabilities would still print its identity line, so
-    # assert some list was actually walked rather than silently skipped.
-    assert re.search(
-        r"\[SCAN\]   capability [0-9a-f]{2} type \d at [0-9a-f]{2}", default_boot
-    )
+    # A device with no capabilities would still be recorded, so assert some
+    # list was actually walked rather than silently skipped.
+    assert dumped(default_boot, "capability")
 
 
 def test_pci_scan_runs_on_a_non_amd_cpu(intel_cpu_boot: str):

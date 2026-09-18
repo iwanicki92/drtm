@@ -20,9 +20,7 @@ is absent from upstream entirely, so it reads zero and the MMCONFIG check
 only ever sees a disabled window.
 """
 
-import re
-
-from conftest import completed, fields, results, verdicts
+from conftest import completed, dumped, fields, results, verdicts
 
 # Size and alignment SKINIT requires of the Secure Loader Block, mirroring
 # SLB_SIZE in src/amd/memory.rs.
@@ -97,33 +95,52 @@ def test_the_checks_survive_an_attached_iommu(amd_iommu_boot: str):
 def test_pci_scan_finds_the_iommu(amd_iommu_boot: str):
     # Class 0806h is the IOMMU subclass. QEMU puts the device at whatever
     # slot is free, so match on what it is rather than where it sits.
-    match = re.search(r"\[SCAN\] \S+ id 1022:[0-9a-f]{4} class 080600", amd_iommu_boot)
-    assert match is not None, "the scan reported no IOMMU-class AMD function"
+    found = [
+        device
+        for device in dumped(amd_iommu_boot, "device")
+        if int(device["class"], 16) == 0x080600
+    ]
+    assert len(found) == 1, "the scan reported no IOMMU-class function"
+    assert int(found[0]["vendor"], 16) == 0x1022
 
 
 def test_pci_scan_reports_the_iommu_capability(amd_iommu_boot: str):
     # Capability 0Fh with type 3 is what identifies an AMD IOMMU, and it is
     # how the check finds it. Type lives in bits 18:16 of the header.
-    assert "[SCAN]   capability 0f type 3 at" in amd_iommu_boot
+    assert [
+        capability
+        for capability in dumped(amd_iommu_boot, "capability")
+        if int(capability["id"], 16) == 0x0F and capability["type"] == 3
+    ]
 
 
 def test_pci_scan_reads_each_bridge_once(amd_iommu_boot: str):
-    # Each function is listed once, through the bridge whose bus it sits on,
-    # so its class reads back rather than failing as it would elsewhere.
-    functions = re.findall(r"\[SCAN\] (\S+) id ", amd_iommu_boot)
+    # Each function is recorded once, through the bridge whose bus it sits
+    # on, so its class reads back rather than failing as it would elsewhere.
+    devices = dumped(amd_iommu_boot, "device")
+    functions = [device["fn"] for device in devices]
     assert "[SCAN] PCI root bridges: 2" in amd_iommu_boot
     assert len(functions) == len(set(functions))
-    assert re.search(
-        r"\[SCAN\] 0000:20:00\.0 id 1b36:000c class 060400", amd_iommu_boot
-    )
-    assert "class 000000" not in amd_iommu_boot
+    assert {
+        (device["fn"], int(device["vendor"], 16), int(device["device"], 16))
+        for device in devices
+    } >= {("0000:20:00.0", 0x1B36, 0x000C)}
+    assert all(int(device["class"], 16) != 0 for device in devices)
 
 
 def test_no_iommu_without_the_device(default_boot: str):
     # The same scan on a guest with no IOMMU, so a pass above means the scan
     # discriminates rather than always reporting one.
-    assert "capability 0f type 3" not in default_boot
-    assert "class 080600" not in default_boot
+    assert not [
+        capability
+        for capability in dumped(default_boot, "capability")
+        if int(capability["id"], 16) == 0x0F and capability["type"] == 3
+    ]
+    assert not [
+        device
+        for device in dumped(default_boot, "device")
+        if int(device["class"], 16) == 0x080600
+    ]
 
 
 def test_iommu_is_found_by_its_capability(amd_iommu_boot: str):
@@ -232,7 +249,11 @@ def test_an_amd_device_that_is_not_a_psp_is_not_matched(amd_iommu_boot: str):
     # QEMU's amd-iommu answers 1022:1419, AMD's vendor ID with a device ID
     # that is not in the table. So this exercises the half of the match that
     # discriminates, which the vendor test alone would let through.
-    assert "id 1022:1419" in amd_iommu_boot
+    assert [
+        device
+        for device in dumped(amd_iommu_boot, "device")
+        if (int(device["vendor"], 16), int(device["device"], 16)) == (0x1022, 0x1419)
+    ]
     ((tag, detail),) = results(amd_iommu_boot, "amd.psp")
     assert tag == "INFO"
     assert "no AMD Secure Processor" in detail

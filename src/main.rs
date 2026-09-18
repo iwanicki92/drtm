@@ -42,7 +42,6 @@ fn main() -> Status {
     cpu_state::report();
     tpm::report();
     let devices = pci::scan();
-    pci::report(&devices);
 
     // Phase 3: the vendor's own preconditions.
     match cpu.vendor {
@@ -60,7 +59,7 @@ fn main() -> Status {
         ),
     }
 
-    dump::run(&cpu);
+    dump::run(&cpu, &devices);
 
     // Terminal marker. The QEMU test harness reads serial output until this
     // line, so it knows it has every check's result and not a partial boot.

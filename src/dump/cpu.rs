@@ -227,17 +227,12 @@ pub fn dump_processors() {
     }
 }
 
-/// Announces `msr`, then reads and records it. A record with no value is
-/// what a read that faulted leaves behind.
+/// Reads `msr` and records it.
 ///
 /// # Safety
 ///
 /// As [`msr::read`]: the MSR must exist, or the read raises `#GP`.
 unsafe fn read(number: u32, name: &str) {
-    record(
-        "msr",
-        &[("id", check::hex(number)), ("name", check::text!("{name}"))],
-    );
     // Safety: the caller's contract.
     let value = unsafe { msr::read(number) };
     record(
