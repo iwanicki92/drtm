@@ -28,6 +28,7 @@ def test_the_dump_runs_to_its_end(default_boot: str):
         "pci",
         "msr",
         "iommu",
+        "psp",
         "end",
     ]
 
@@ -256,3 +257,62 @@ def test_tpm_registers_are_skipped_without_a_tpm(default_boot: str):
     # Nothing answers at locality 0 here, so the window holds no registers
     # to read and reading it anyway is a fault on some platforms.
     assert dumped(default_boot, "tpm") == [{"rec": "tpm", "found": False}]
+
+
+def test_the_psp_registers_the_table_names_are_read(mmconfig_above_4gib_boot: str):
+    # Each structure in the ASPT names register offsets, and the dump reads
+    # every one it knows the shape of. The mailbox is the one register here
+    # that no structure names, so it comes from the feature register instead.
+    registers = {
+        register["name"]: register
+        for register in dumped(mmconfig_above_4gib_boot, "psp")
+        if "name" in register
+    }
+    assert registers.keys() == {
+        "FEATURE",
+        "INT_ENABLE",
+        "INT_STATUS",
+        "SEV_CMDRESP",
+        "SEV_CMDBUF_LO",
+        "SEV_CMDBUF_HI",
+        "ACPI_CMDRESP",
+        "C2PMSG_72",
+    }
+    for register in registers.values():
+        assert "value" in register, register["name"]
+    assert int(registers["FEATURE"]["at"], 16) == 0x9FC
+    assert int(registers["C2PMSG_72"]["at"], 16) == 0xA20
+
+
+def test_the_drtm_argument_registers_are_left_alone(mmconfig_above_4gib_boot: str):
+    # C2PMSG_93 to 95 hold a command's response, and issuing a command is a
+    # write. Reading them before one would report a value that means nothing.
+    offsets = {
+        int(register["at"], 16)
+        for register in dumped(mmconfig_above_4gib_boot, "psp")
+        if "at" in register
+    }
+    assert not offsets & {0xA74, 0xA78, 0xA7C}
+
+
+def test_the_declared_register_block_is_reported(mmconfig_above_4gib_boot: str):
+    # Where the registers are and how far they run, which is what says
+    # whether an offset the table names is inside them.
+    ((block,)) = [
+        record for record in dumped(mmconfig_above_4gib_boot, "psp") if "base" in record
+    ]
+    assert int(block["base"], 16) == 0xFEDA_0000
+    assert block["pages"] == 1
+    assert block["structures"] == 3
+
+
+def test_no_psp_registers_are_read_without_a_secure_processor(default_boot: str):
+    # Nothing answers with a Secure Processor ID here, so an ASPT alone would
+    # have the dump reading an address with nothing behind it.
+    assert dumped(default_boot, "psp") == [{"rec": "psp", "found": False}]
+
+
+def test_no_psp_registers_are_read_without_the_table(machine_check_error_boot: str):
+    # The Secure Processor is there and its registers answer, but only the
+    # table says at which address, and this boot publishes none.
+    assert dumped(machine_check_error_boot, "psp") == [{"rec": "psp", "table": False}]

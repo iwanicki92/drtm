@@ -13,6 +13,7 @@ mod acpi;
 mod cpu;
 mod firmware;
 mod pci;
+mod psp;
 mod tpm;
 
 use log::LevelFilter;
@@ -46,6 +47,8 @@ pub fn run(cpu: &Cpu, devices: &Devices) {
     cpu::dump_msrs(cpu);
     at("iommu");
     pci::dump_iommu_registers(devices);
+    at("psp");
+    psp::dump(devices);
     at("end");
 }
 

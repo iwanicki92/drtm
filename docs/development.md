@@ -119,8 +119,9 @@ producing diagnostics on a machine that is already misbehaving is the point.
 `format=json` with `level=trace` adds the raw platform state a hardware
 investigation needs: firmware version, SMBIOS, boot variables, CPUID, the
 processors firmware started, every ACPI table, PCI configuration space, TPM
-registers, MSRs, and the registers of any IOMMU firmware enabled. Both keys,
-because it has no prose form and would bury the results in one.
+registers, MSRs, the registers of any IOMMU firmware enabled, and the Secure
+Processor registers the ASPT names. Both keys, because it has no prose form
+and would bury the results in one.
 
 ```text
 drtm: {"rec":"dump","at":"acpi"}

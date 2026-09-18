@@ -8,6 +8,8 @@
 //! register says what the service's state is now, not whether the launch
 //! this platform needs goes through it.
 
+use alloc::vec::Vec;
+
 use log::debug;
 
 use crate::acpi;
@@ -15,7 +17,7 @@ use crate::amd::psp;
 use crate::check;
 use crate::pci::Devices;
 
-const SIGNATURE: &[u8; 4] = b"ASPT";
+pub const SIGNATURE: &[u8; 4] = b"ASPT";
 
 /// The header is followed by where the Secure Processor's registers are and
 /// how many pages of them there are, then by the structures saying what is
@@ -27,12 +29,12 @@ const FIRST_STRUCTURE: usize = STRUCTURE_COUNT + 4;
 const PAGE: usize = 4096;
 
 /// Every structure opens with its type and, at offset 2, its length. Type 0
-/// is the global one, which is where the feature register's offset is.
+/// is the global one, which is where the feature register's offset is. What
+/// the fields after that are is the type's own business.
 const STRUCTURE_HEADER: usize = 4;
 const STRUCTURE_LENGTH: usize = 2;
 const STRUCTURE_GLOBAL: u16 = 0;
 const GLOBAL_FEATURE: usize = 8;
-const GLOBAL_LEN: usize = GLOBAL_FEATURE + 4;
 
 /// The feature register is C2PMSG_63 and the DRTM service's command and
 /// response register C2PMSG_72, with four bytes per mailbox (_AMD
@@ -113,24 +115,42 @@ pub fn report(devices: &Devices) {
     );
 }
 
-/// Where C2PMSG_72 is, from the block the table declares and the offset it
-/// gives for C2PMSG_63. Both move between Secure Processor generations, so
-/// the table is what says where they are on this one.
-fn mailbox(table: &[u8]) -> Option<usize> {
+/// One register structure, as its type and its own bytes. What the bytes
+/// hold depends on the type, so reading a field is the caller's to do.
+pub struct Structure<'a> {
+    pub kind: u16,
+    pub bytes: &'a [u8],
+}
+
+/// Where the Secure Processor's registers are and how many 4 KiB pages of
+/// them the table declares.
+pub fn block(table: &[u8]) -> Option<(usize, usize)> {
     let base = usize::try_from(read_u64(table, REGISTER_BASE)?).ok()?;
     let pages = read_u32(table, PAGES)? as usize;
-    let feature = feature_offset(table)? as usize;
-    let offset = feature.checked_add((DRTM_MAILBOX - FEATURE_MAILBOX) * MAILBOX_WIDTH)?;
-    if base == 0 || offset.checked_add(MAILBOX_WIDTH)? > pages.checked_mul(PAGE)? {
+    (base != 0).then_some((base, pages))
+}
+
+/// The address of the register at `offset` in that block, if the pages the
+/// table declares cover it.
+pub fn register(table: &[u8], offset: u32) -> Option<usize> {
+    let (base, pages) = block(table)?;
+    let offset = usize::try_from(offset).ok()?;
+    if offset.checked_add(MAILBOX_WIDTH)? > pages.checked_mul(PAGE)? {
         return None;
     }
     base.checked_add(offset)
 }
 
-/// The feature register's offset into that block, from the table's global
-/// structure. A structure whose length does not fit the table stops the
-/// walk, since the one after it is wherever that length says.
-fn feature_offset(table: &[u8]) -> Option<u32> {
+/// A register offset a structure names, at `at` bytes into it.
+pub fn field(structure: &[u8], at: usize) -> Option<u32> {
+    read_u32(structure, at)
+}
+
+/// Every register structure the table holds. A structure whose length does
+/// not fit stops the walk, since the one after it is wherever that length
+/// says.
+pub fn structures(table: &[u8]) -> Option<Vec<Structure<'_>>> {
+    let mut found = Vec::new();
     let mut offset = FIRST_STRUCTURE;
     for _ in 0..read_u32(table, STRUCTURE_COUNT)? {
         let structure = table.get(offset..)?;
@@ -138,14 +158,31 @@ fn feature_offset(table: &[u8]) -> Option<u32> {
         if len < STRUCTURE_HEADER || len > structure.len() {
             return None;
         }
-        if read_u16(structure, 0)? == STRUCTURE_GLOBAL {
-            return (len >= GLOBAL_LEN)
-                .then(|| read_u32(structure, GLOBAL_FEATURE))
-                .flatten();
-        }
+        found.push(Structure {
+            kind: read_u16(structure, 0)?,
+            bytes: &structure[..len],
+        });
         offset += len;
     }
-    None
+    Some(found)
+}
+
+/// Where C2PMSG_72 is, from the block the table declares and the offset it
+/// gives for C2PMSG_63. Both move between Secure Processor generations, so
+/// the table is what says where they are on this one.
+pub fn mailbox(table: &[u8]) -> Option<usize> {
+    let feature = feature_offset(table)?;
+    let past = u32::try_from((DRTM_MAILBOX - FEATURE_MAILBOX) * MAILBOX_WIDTH).ok()?;
+    register(table, feature.checked_add(past)?)
+}
+
+/// The feature register's offset into that block, from the table's global
+/// structure.
+fn feature_offset(table: &[u8]) -> Option<u32> {
+    let global = structures(table)?
+        .into_iter()
+        .find(|structure| structure.kind == STRUCTURE_GLOBAL)?;
+    field(global.bytes, GLOBAL_FEATURE)
 }
 
 fn read_u16(bytes: &[u8], offset: usize) -> Option<u16> {
