@@ -125,6 +125,7 @@ def boot_and_capture(
     extra_root_bridge: bool = False,
     corrected_error_bank: int | None = None,
     psp: int | None = None,
+    vga_and_nic: bool = False,
 ) -> str:
     """Boots `efi_binary` once and returns everything it printed.
 
@@ -147,6 +148,7 @@ def boot_and_capture(
         extra_root_bridge=extra_root_bridge,
         corrected_error_bank=corrected_error_bank,
         psp=psp,
+        vga_and_nic=vga_and_nic,
     ) as vm:
         marker = (
             SUMMARY_RECORD if config and "format=json" in config else CHECKS_COMPLETE
@@ -163,9 +165,16 @@ def default_boot(run_log_dir: Path, efi_binary: Path) -> str:
     AMD by default so this fixture runs every check rather than skipping the
     vendor-specific ones, which is most of them. Both of those CPU options
     are ones only our QEMU accepts.
+
+    The one boot keeping QEMU's display adapter and network card, so the
+    scan tests read a populated bus. Every other boot drops them, since
+    initialising them costs 1.3s and no test asserts on either.
     """
     return boot_and_capture(
-        efi_binary, run_log_dir / "boot-default", cpu=MMCONFIG_BELOW_4GIB
+        efi_binary,
+        run_log_dir / "boot-default",
+        cpu=MMCONFIG_BELOW_4GIB,
+        vga_and_nic=True,
     )
 
 

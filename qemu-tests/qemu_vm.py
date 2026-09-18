@@ -167,6 +167,10 @@ class QemuVm:
     `psp` attaches our QEMU's `amd-psp`, a function answering with that AMD
     device ID and nothing behind it.
 
+    `vga_and_nic` keeps QEMU's default display adapter and network card.
+    They cost 1.3s of firmware initialisation each boot, so only the boot
+    that wants a populated bus to scan asks for them.
+
     `corrected_error_bank` names a machine-check bank to hold a corrected
     error from reset on. QEMU starts paused, logs it, then runs.
 
@@ -186,6 +190,7 @@ class QemuVm:
         extra_root_bridge: bool = False,
         corrected_error_bank: int | None = None,
         psp: int | None = None,
+        vga_and_nic: bool = False,
     ):
         if tpm not in (None, "tis", "crb"):
             raise ValueError(f"tpm must be None, 'tis' or 'crb', got {tpm!r}")
@@ -203,6 +208,7 @@ class QemuVm:
         self.extra_root_bridge = extra_root_bridge
         self.corrected_error_bank = corrected_error_bank
         self.psp = psp
+        self.vga_and_nic = vga_and_nic
         self._workdir = None
         self._process = None
         self._swtpm_process = None
@@ -265,6 +271,8 @@ class QemuVm:
             f"unix:{qmp_sock},server,nowait",
             "-nographic",
         ]
+        if not self.vga_and_nic:
+            args += ["-vga", "none", "-nic", "none"]
         if self.tpm is not None:
             self._swtpm_log_f = open(self.log_dir / "swtpm.log", "wb")
             swtpm_sock = self._start_swtpm()

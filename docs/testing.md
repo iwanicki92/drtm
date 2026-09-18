@@ -77,6 +77,10 @@ growing parameters. Tests sharing a boot fail together if it does.
 
 `level=verbose` is not a level, and that boot carries it on purpose.
 
+`default_boot` is also the only one keeping QEMU's display adapter and
+network card. Initialising them costs 1.3s, and no test asserts on either,
+but it is the boot the scan tests read and they want a populated bus.
+
 The CPU model decides the vendor string, and that selects which checks run
 at all: `default_boot` is AMD so every check runs, while `intel_cpu_boot`
 covers the path where the AMD checks are skipped and the vendor-independent
@@ -265,7 +269,10 @@ Where a single boot goes:
 | VGA and NIC initialisation                 | 1.3s |
 | Firmware's remaining work, plus `drtm.efi` | 3.7s |
 
-Four changes follow from that, none of them implemented yet:
+Only `default_boot` still pays the third row, since it is the one boot
+carrying those devices.
+
+Three changes follow from the rest, none of them implemented yet:
 
 1. Boot the downloaded ROM once per firmware release and cache the result
     beside it, then copy that warmed image per boot. Pays the 2.8s once a
@@ -276,9 +283,6 @@ Four changes follow from that, none of them implemented yet:
     those the collected tests need so a single-test run still boots once.
     Four matches this machine's core count, and eight at a time measured
     slower than four.
-4. Drop the VGA and NIC devices from every boot but `default_boot`, which
-    keeps the full model so the host-bridge and capability-list scan tests
-    still see a populated bus. No test asserts on either device.
 
 Together those put a boot near 5s. Items 1 and 2 are what earn that, and
 item 3 then overlaps the boots so wall time tracks the slowest batch rather
@@ -293,5 +297,5 @@ commit and that a fresh clone cannot regenerate. Serial output is not a
 factor either, since this release ROM prints no firmware console log and a
 whole capture is about 3 KB.
 
-`-m`, `-smp` and `-nic none` all measured within noise, so memory size and
-CPU count are not worth tuning here.
+`-m` and `-smp` both measured within noise, so memory size and CPU count
+are not worth tuning here.
