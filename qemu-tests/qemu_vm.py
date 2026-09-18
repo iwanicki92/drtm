@@ -285,7 +285,7 @@ class QemuVm:
             "-drive",
             f"file=fat:rw:{self._workdir}/esp,format=raw",
             "-serial",
-            f"tcp:127.0.0.1:{serial_port},server,nowait",
+            f"tcp:127.0.0.1:{serial_port},server",
             "-qmp",
             f"unix:{qmp_sock},server,nowait",
             "-nographic",
@@ -335,6 +335,15 @@ class QemuVm:
         )
         self._qmp_sock_path = qmp_sock
         self.qmp = QmpClient(qmp_sock)
+        # Before anything lets the guest run. QEMU's serial server waits for
+        # this connection rather than dropping what it would have printed
+        # first, and the boot prompt is the first thing out.
+        self._serial_sock = self._connect_serial(serial_port)
+        self._serial_sock.settimeout(0.2)
+        self._serial_reader = threading.Thread(
+            target=self._read_serial_loop, daemon=True
+        )
+        self._serial_reader.start()
         if self.corrected_error_bank is not None:
             self._wait_for_qmp(qmp_sock)
             # mce <cpu> <bank> <status> <mcg_status> <addr> <misc>
@@ -342,12 +351,6 @@ class QemuVm:
                 f"mce 0 {self.corrected_error_bank} {CORRECTED_ERROR:#x} 0 0 0"
             )
             self.qmp.cont()
-        self._serial_sock = self._connect_serial(serial_port)
-        self._serial_sock.settimeout(0.2)
-        self._serial_reader = threading.Thread(
-            target=self._read_serial_loop, daemon=True
-        )
-        self._serial_reader.start()
         self._skip_boot_menu()
         return self
 

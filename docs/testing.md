@@ -165,7 +165,10 @@ socket, both used by the test to interact with the VM.
 The firmware's boot prompt is answered with a carriage return as soon as it
 appears, which boots the default entry at once rather than after the boot
 manager's 3s timeout. Not seeing that prompt fails the boot: the firmware
-release is pinned, so its absence means something changed.
+release is pinned, so its absence means something changed. QEMU's serial
+server therefore waits for its connection before the machine starts, since
+that prompt is the first thing printed and nothing may be dropped ahead of
+it.
 
 ## Acceleration
 
