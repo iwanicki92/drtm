@@ -182,6 +182,13 @@ class QemuVm:
 
     `config` is written beside the binary as `drtm.conf`. Leave it `None` for
     no file at all, which is what a stick carrying only the binary looks like.
+
+    `firmware` is the image to boot, copied into the working directory so
+    the guest's writes to its variable store land on the copy. Defaults to
+    the downloaded release.
+
+    `save_firmware_to` keeps that copy, after QEMU has exited and only if
+    the block left without an exception. It is how a warmed image is made.
     """
 
     def __init__(
@@ -197,6 +204,8 @@ class QemuVm:
         corrected_error_bank: int | None = None,
         psp: int | None = None,
         vga_and_nic: bool = False,
+        firmware: Path | None = None,
+        save_firmware_to: Path | None = None,
     ):
         if tpm not in (None, "tis", "crb"):
             raise ValueError(f"tpm must be None, 'tis' or 'crb', got {tpm!r}")
@@ -215,6 +224,9 @@ class QemuVm:
         self.corrected_error_bank = corrected_error_bank
         self.psp = psp
         self.vga_and_nic = vga_and_nic
+        self.firmware = Path(firmware) if firmware else cached_firmware_path()
+        self.save_firmware_to = save_firmware_to
+        self._firmware_copy = None
         self._workdir = None
         self._process = None
         self._swtpm_process = None
@@ -244,7 +256,8 @@ class QemuVm:
         # left as it comes, so a populated store survives: the binary boots
         # as removable media regardless of what boot order it holds.
         firmware = Path(self._workdir) / "firmware.rom"
-        shutil.copy(cached_firmware_path(), firmware)
+        shutil.copy(self.firmware, firmware)
+        self._firmware_copy = firmware
 
         serial_port = _free_tcp_port()
         # QMP is a Unix socket. AF_UNIX paths are capped at ~108 bytes, so it
@@ -499,6 +512,14 @@ class QemuVm:
             self._swtpm_log_f.close()
         if self._qmp_sock_path is not None:
             Path(self._qmp_sock_path).unlink(missing_ok=True)
+        # After QEMU is down, so pflash writes have all landed, and only on
+        # a clean exit: a boot that failed is not one to cache.
+        if (
+            self.save_firmware_to is not None
+            and exc_type is None
+            and self._firmware_copy is not None
+        ):
+            shutil.copy(self._firmware_copy, self.save_firmware_to)
         if self._workdir is not None:
             shutil.rmtree(self._workdir, ignore_errors=True)
         with self._serial_buf_lock:

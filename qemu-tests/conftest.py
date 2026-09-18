@@ -8,7 +8,7 @@ Builds the `drtm` EFI binary once per session, boots it in QEMU once per
 distinct QEMU configuration, and writes every run's logs (plus a `results.txt`
 summarising test outcomes) to a numbered directory under `logs/`.
 
-Booting takes ~7s, so tests do not boot QEMU themselves. They take a boot
+Booting takes ~5s, so tests do not boot QEMU themselves. They take a boot
 fixture, which yields that configuration's complete serial output as a string,
 and assert against it.
 """
@@ -16,11 +16,13 @@ and assert against it.
 import json
 import re
 import subprocess
+import threading
 import time
 from datetime import datetime
 from pathlib import Path
 
 import pytest
+from firmware import cached_firmware_path, warmed_firmware_path
 from qemu_vm import (
     DEFAULT_CPU,
     MMCONFIG_ABOVE_4GIB,
@@ -52,7 +54,7 @@ FULL_OUTPUT = "level=trace\nformat=json\n"
 # line number is not trivially 1.
 BAD_LEVEL = "# drtm.conf\nlevel=verbose\n"
 
-# Generous on purpose. Measured boot-to-marker is ~7s under TCG, but this
+# Generous on purpose. Measured boot-to-marker is ~5s under TCG, but this
 # only has to be tight enough to catch a genuinely stuck guest. Being slow
 # to report a real hang costs one wait; being too tight turns a loaded
 # machine into a flaky failure that looks exactly like one.
@@ -113,6 +115,37 @@ def run_log_dir() -> Path:
     return _get_run_log_dir()
 
 
+_warm_lock = threading.Lock()
+
+
+def warmed_firmware(efi_binary: Path) -> Path:
+    """This release's firmware image after one boot, made on first use.
+
+    Populating the variable store is 2.8s, and the firmware only does it on
+    an image that has never booted, so every boot after this one starts from
+    a store that is already there. Cached beside the download, keyed on the
+    release tag, and produced by a boot like any other.
+    """
+    path = warmed_firmware_path()
+    with _warm_lock:
+        if path.exists():
+            return path
+        scratch = path.with_suffix(".warming")
+        log_dir = _get_run_log_dir() / "boot-warm-firmware"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        with QemuVm(
+            efi_binary,
+            log_dir=log_dir,
+            firmware=cached_firmware_path(),
+            save_firmware_to=scratch,
+        ) as vm:
+            vm.read_serial_until(CHECKS_COMPLETE, timeout=BOOT_TIMEOUT)
+        # Renamed only once it holds a complete boot, so an interrupted run
+        # leaves no half-written image for the next one to trust.
+        scratch.replace(path)
+    return path
+
+
 def boot_and_capture(
     efi_binary: Path,
     log_dir: Path,
@@ -139,6 +172,7 @@ def boot_and_capture(
     with QemuVm(
         efi_binary,
         log_dir=log_dir,
+        firmware=warmed_firmware(efi_binary),
         tpm=tpm,
         cpu=cpu,
         iommu=iommu,

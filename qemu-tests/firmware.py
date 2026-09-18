@@ -33,3 +33,14 @@ def cached_firmware_path() -> Path:
         urllib.request.urlretrieve(FIRMWARE_URL, tmp_path)
         tmp_path.rename(path)
     return path
+
+
+def warmed_firmware_path() -> Path:
+    """Where the once-booted copy of that image belongs.
+
+    The firmware populates its variable store on an image that has never
+    booted, which costs 2.8s. Keeping one booted copy per release pays that
+    once. Producing it is `conftest.warmed_firmware`, which needs QEMU.
+    """
+    CACHE_DIR.mkdir(exist_ok=True)
+    return CACHE_DIR / f"{FIRMWARE_RELEASE_TAG}-{FIRMWARE_ASSET}.warm"

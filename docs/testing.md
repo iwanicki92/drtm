@@ -57,7 +57,7 @@ distribution QEMU fails once rather than in every boot fixture.
 
 ## How the VM is set up
 
-Booting takes around 7 seconds, so tests do not boot QEMU themselves. A
+Booting takes around 5 seconds, so tests do not boot QEMU themselves. A
 session-scoped fixture in `qemu-tests/conftest.py` boots once per distinct
 QEMU configuration and yields that boot's serial output as a string, which
 tests assert against. A configuration needing different QEMU arguments gets
@@ -147,9 +147,15 @@ For each boot, `qemu-tests/qemu_vm.py` builds a scratch working directory
 - `esp/EFI/BOOT/BOOTX64.EFI`: a copy of the built `drtm.efi`, placed where
     UEFI's removable-media boot path picks it up automatically, so it needs
     no boot entry or bootloader.
-- `firmware.rom`: a copy of the cached Dasharo firmware image, variable
+- `firmware.rom`: a copy of the warmed Dasharo firmware image, variable
     store included. Nothing here depends on the settings it holds, since the
     binary is found as removable media rather than through a boot entry.
+
+The warmed image is the download after one boot, cached beside it under the
+release tag. Populating the variable store is 2.8s and the firmware only
+does it on an image that has never booted, so the first boot of a fresh
+clone makes it and every boot after starts from a store that is already
+there. Deleting `qemu-tests/dl-cache/` costs one boot, not correctness.
 
 It then launches `qemu-system-x86_64` on a Q35 machine, with that ESP
 attached as a FAT-formatted drive and that firmware image as pflash. Serial
@@ -185,7 +191,7 @@ A stuck `drtm.efi` fails the run rather than wedging it. Layers, innermost
 first:
 
 - `read_serial_until` raises with the output captured so far. Boot waits use
-    `BOOT_TIMEOUT` (120s), far above the ~7s a real boot takes, so a loaded
+    `BOOT_TIMEOUT` (120s), far above the ~5s a real boot takes, so a loaded
     machine does not fail looking like a hang.
 - `QemuVm.__exit__` always tears QEMU down (`terminate`, then `kill` after
     5s), so a timed-out test leaves no stray process.
@@ -269,27 +275,19 @@ What a boot still spends its time on:
 
 | Component                                  | Cost |
 |--------------------------------------------|------|
-| Varstore population, on a ROM's first boot | 2.8s |
 | VGA and NIC initialisation                 | 1.3s |
 | Firmware's remaining work, plus `drtm.efi` | 3.7s |
 
-Only `default_boot` pays the second row, since it is the one boot carrying
+Only `default_boot` pays the first row, since it is the one boot carrying
 those devices.
 
-Two changes follow from the rest, neither implemented yet:
-
-1. Boot the downloaded ROM once per firmware release and cache the result
-    beside it, then copy that warmed image per boot. Pays the 2.8s once a
-    release instead of once a boot.
-2. Boot the configurations concurrently, four at a time, submitting only
-    those the collected tests need so a single-test run still boots once.
-    Four matches this machine's core count, and eight at a time measured
-    slower than four.
-
-Item 1 puts a boot near 5s, and item 2 then overlaps the boots so wall time
-tracks the slowest batch rather than the number of configurations: the eight
-that existed when this was measured came to 10.3s together, against 86s of
-booting one at a time.
+One change is left, not implemented yet: boot the configurations
+concurrently, four at a time, submitting only those the collected tests need
+so a single-test run still boots once. Four matches this machine's core
+count, and eight at a time measured slower than four. It overlaps the boots,
+so wall time tracks the slowest batch rather than the number of
+configurations: the eight that existed when this was measured came to 10.3s
+together, against 86s of booting one at a time.
 
 Three things were measured and deliberately not done. Disabling the
 firmware's USB stack gains nothing. Saving a ROM whose settings were changed
