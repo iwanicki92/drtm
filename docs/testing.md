@@ -279,31 +279,19 @@ records what it would take, for whoever picks it up.
 
 ## Boot time
 
-Almost all of a session is firmware rather than anything being tested, so
-what is left to win is in the boots. Measured under TCG against the pinned
-firmware release, on a four-core machine.
+Almost all of a session is firmware rather than anything being tested, so the
+boots are where the time is. One is now ~5s, some 8s less than it was, and
+the configurations boot together, as many at a time as the machine has
+cores, rather than one after another. Measured under TCG against the pinned
+firmware release, each figure below being what a run lost when that change
+landed, over the boots it applies to.
 
-What one boot still spends its time on:
+| Change                                 | Per boot |
+|----------------------------------------|----------|
+| VGA and NIC dropped from most boots    | 2.4s     |
+| Boot prompt answered, not waited out   | 3.0s     |
+| Firmware image warmed once per release | 2.8s     |
 
-| Component                                  | Cost |
-|--------------------------------------------|------|
-| VGA and NIC initialisation                 | 1.3s |
-| Firmware's remaining work, plus `drtm.efi` | 3.7s |
-
-Only `default_boot` pays the first row, since it is the one boot carrying
-those devices. The eight configurations then overlap four at a time, so the
-suite is 14s against the 86s of booting them one after another. A run that
-has to warm a firmware image first is 21s.
-
-Four things were measured and deliberately not done. Eight boots at a time
-measured slower than four on this machine, which is why the pool is sized by
-core count rather than by the number of configurations. Disabling the
-firmware's USB stack gains nothing. Saving a ROM whose settings were changed
-by hand reaches the same per-boot time, but its only useful content is a
-zero menu timeout, which answering the prompt already achieves, and it would
-add a binary that is too large to commit and that a fresh clone cannot
-regenerate. Serial output is not a factor either, since this release ROM
-prints no firmware console log and a whole capture is about 3 KB.
-
-`-m` and `-smp` both measured within noise, so memory size and CPU count
-are not worth tuning here.
+Keeping the populated variable store saves nothing by itself, but it is what
+lets the warmed image be cached at all. `default_boot` keeps the two devices,
+since its tests are the ones reading a populated bus.

@@ -37,6 +37,9 @@ MMCONFIG_ABOVE_4GIB = f"{DEFAULT_CPU},mmio-conf-base=0xf8000021"
 
 
 def _free_tcp_port() -> int:
+    # The port is free again between here and QEMU binding it, so concurrent
+    # boots could in principle pick the same one. Not seen in practice; a
+    # Unix socket, as QMP uses, would remove it if it ever bites.
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind(("127.0.0.1", 0))
         return s.getsockname()[1]
