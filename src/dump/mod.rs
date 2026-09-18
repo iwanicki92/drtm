@@ -11,7 +11,9 @@
 
 mod acpi;
 mod cpu;
+mod firmware;
 mod pci;
+mod tpm;
 
 use log::LevelFilter;
 
@@ -28,12 +30,16 @@ pub fn run(cpu: &Cpu, devices: &Devices) {
     if logging::format() != Format::Json || log::max_level() < LevelFilter::Trace {
         return;
     }
+    at("firmware");
+    firmware::dump();
     at("cpuid");
     cpu::dump_cpuid(cpu);
     at("processors");
     cpu::dump_processors();
     at("acpi");
     acpi::dump();
+    at("tpm");
+    tpm::dump();
     at("pci");
     pci::dump(devices);
     at("msr");

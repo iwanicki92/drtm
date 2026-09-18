@@ -60,7 +60,7 @@ const CAP_LOCALITY_ALL: u32 = 1 << 8;
 const DCE_LOCALITY: usize = 2;
 
 /// Start of `locality`'s own MMIO window.
-const fn locality_base(locality: usize) -> usize {
+pub const fn locality_base(locality: usize) -> usize {
     TPM_LOCALITY_0_BASE + (locality << 12)
 }
 

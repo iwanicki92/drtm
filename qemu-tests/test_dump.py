@@ -20,9 +20,11 @@ def test_the_dump_runs_to_its_end(default_boot: str):
     # A marker before each section and one after the last, so a machine that
     # dies on a read says where rather than going quiet.
     assert [record["at"] for record in dumped(default_boot, "dump")] == [
+        "firmware",
         "cpuid",
         "processors",
         "acpi",
+        "tpm",
         "pci",
         "msr",
         "iommu",
@@ -170,3 +172,54 @@ def test_a_disabled_iommu_is_not_read(amd_iommu_boot: str):
     # mapped at all, so reading it anyway is how a dump hangs a machine.
     ((found,)) = dumped(amd_iommu_boot, "iommu")
     assert found["enabled"] is False
+
+
+def test_the_firmware_names_itself(default_boot: str):
+    # Which firmware built the platform is the first thing a hardware run
+    # needs, since every quirk below is that build's.
+    ((uefi,)) = dumped(default_boot, "uefi")
+    assert uefi["vendor"]
+    assert uefi["spec"]
+
+
+def test_smbios_structures_are_dumped_whole(default_boot: str):
+    # Type 0 is the BIOS information structure and type 127 ends the table,
+    # so both present means the walk ran the length of it.
+    types = {
+        structure["type"]
+        for structure in dumped(default_boot, "smbios")
+        if "type" in structure
+    }
+    assert {0, 1, 127} <= types
+
+
+def test_smbios_carries_its_strings(default_boot: str):
+    # A structure's text sits after its formatted part, so a record holding
+    # only `len` bytes would drop the vendor and version names with it.
+    ((bios,)) = [
+        structure
+        for structure in dumped(default_boot, "smbios")
+        if structure.get("type") == 0
+    ]
+    assert len(bios["hex"]) > 2 * bios["len"]
+    assert bytes.fromhex(bios["hex"]).endswith(b"\x00\x00")
+
+
+def test_tpm_registers_are_read_under_the_active_layout(tpm_tis_boot: str):
+    # CRB and FIFO decode the same window differently, so reading the wrong
+    # set is how a CRB TPM once reported itself as a 1.2 TIS one. Only the
+    # FIFO layout is reachable here: the CRB boot carries no `drtm.conf`,
+    # which is what makes it the text-mode fixture.
+    registers = {
+        register["name"]: int(register["value"], 16)
+        for register in dumped(tpm_tis_boot, "tpm")
+        if "value" in register
+    }
+    assert "LOC_STATE" not in registers
+    assert registers["ACCESS"] & 0x80, "TPM_ACCESS never reads valid clear"
+
+
+def test_tpm_registers_are_skipped_without_a_tpm(default_boot: str):
+    # Nothing answers at locality 0 here, so the window holds no registers
+    # to read and reading it anyway is a fault on some platforms.
+    assert dumped(default_boot, "tpm") == [{"rec": "tpm", "found": False}]
