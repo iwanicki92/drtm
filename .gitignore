@@ -2,6 +2,9 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+# Local dev files
+.env
+
 # Claude Code
 .claude/
 CLAUDE.local.md
