@@ -171,6 +171,7 @@ def boot_and_capture(
     psp: int | None = None,
     psp_ready: bool = True,
     psp_aspt: bool = True,
+    psp_drtm_device: bool = False,
     vga_and_nic: bool = False,
 ) -> str:
     """Boots `drtm.efi` once and returns everything it printed.
@@ -197,6 +198,7 @@ def boot_and_capture(
         psp=psp,
         psp_ready=psp_ready,
         psp_aspt=psp_aspt,
+        psp_drtm_device=psp_drtm_device,
         vga_and_nic=vga_and_nic,
     ) as vm:
         marker = (
@@ -276,9 +278,15 @@ def mmconfig_above_4gib_boot() -> dict:
     tests only read that one result, so the boot also reports CPUID family
     1Ah, which is the only way the dump's AMD MSR list runs here, and
     carries a Secure Processor whose DRTM service is not ready, which is
-    where that mailbox is read in the form naming its address.
+    where that mailbox is read in the form naming its address. That Secure
+    Processor also publishes the DRTM ACPI device, the only boot that does.
     """
-    return {"cpu": MMCONFIG_ABOVE_4GIB, "psp": 0x156E, "psp_ready": False}
+    return {
+        "cpu": MMCONFIG_ABOVE_4GIB,
+        "psp": 0x156E,
+        "psp_ready": False,
+        "psp_drtm_device": True,
+    }
 
 
 @boot_configuration

@@ -111,6 +111,12 @@ will take a command, and `aspt=off` leaves the table out. Writes are
 dropped: issuing a command means implementing the service behind it, which
 is the launch.
 
+**A DRTM ACPI device.** `-device amd-psp,drtm-device=on` adds an SSDT
+holding `\_SB.DRTM` with `_HID "DRTM0002"`, which is what AMD firmware
+publishes for it. Nothing implements what the device describes, and on
+hardware it is firmware's rather than the Secure Processor's, so it rides
+on that device here only because it is the AMD one such a guest already has.
+
 **`amd-iommu` can stay out of ACPI.** `-device amd-iommu,ivrs=off` leaves
 the IVRS table out, which upstream writes whenever the device is present
 (`hw/i386/acpi-build.c`). The IOMMU still answers in configuration space,
@@ -155,6 +161,7 @@ and some of them no longer hold.
 
 | Date       | QEMU   | Observation                                                                                                               |
 |------------|--------|---------------------------------------------------------------------------------------------------------------------------|
+| 2026-09-18 | ours   | `-device amd-psp,drtm-device=on` publishes the SSDT AMD firmware does, so `amd.drtm_device` finds it                      |
 | 2026-09-18 | ours   | `-device amd-psp` answers C2PMSG_72 through the window its ASPT declares, so `amd.psp_drtm` reads it both ways            |
 | 2026-09-18 | ours   | `-device amd-psp` publishes an ASPT of the same 112 bytes and revision Turin firmware does, differing in the base address |
 | 2026-09-18 | ours   | Firmware here enables the Secure Processor's memory decode, which Turin firmware does not, so the BAR answers too         |

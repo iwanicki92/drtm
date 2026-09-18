@@ -28,6 +28,15 @@ const HEADER_LENGTH: usize = 4;
 /// rather than read.
 const MAX_TABLE_LEN: usize = 1 << 20;
 
+/// FADT fields locating the FACS and DSDT, 32-bit first, then the 64-bit
+/// ones that override them where set, as Linux's `acpi_table_fadt` lays them
+/// out (`include/acpi/actbl.h`). A wrong offset here reads some other field
+/// as an address and can fault.
+pub const FADT_FIRMWARE_CTRL: usize = 36;
+pub const FADT_DSDT: usize = 40;
+pub const FADT_X_FIRMWARE_CTRL: usize = 132;
+pub const FADT_X_DSDT: usize = 140;
+
 /// Neither UEFI configuration table entry leads to a valid root table.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct NoAcpi;
@@ -129,6 +138,30 @@ pub fn find(signature: &[u8; 4]) -> Result<Option<&'static [u8]>, NoAcpi> {
         .into_iter()
         .skip(1)
         .find(|table| table[..4] == *signature))
+}
+
+/// The 64-bit FADT field where set and present, else the 32-bit one.
+pub fn fadt_address(fadt: &[u8], wide: usize, narrow: usize) -> Option<usize> {
+    let read = |offset, width| {
+        let mut raw = [0u8; 8];
+        let bytes: &[u8] = fadt.get(offset..offset + width)?;
+        raw[..width].copy_from_slice(bytes);
+        Some(u64::from_le_bytes(raw))
+    };
+    let address = read(wide, 8)
+        .filter(|&address| address != 0)
+        .or_else(|| read(narrow, 4))?;
+    usize::try_from(address)
+        .ok()
+        .filter(|&address| address != 0)
+}
+
+/// The DSDT, which the FADT points at rather than the root table listing it.
+pub fn dsdt() -> Option<&'static [u8]> {
+    let fadt = find(b"FACP").ok()??;
+    let address = fadt_address(fadt, FADT_X_DSDT, FADT_DSDT)?;
+    // Safety: the FADT gives this as the DSDT's address.
+    unsafe { table(address) }
 }
 
 /// Whether the table's bytes sum to zero, as every ACPI table's must.

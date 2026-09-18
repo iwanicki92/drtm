@@ -11,21 +11,12 @@
 
 use core::slice;
 
-use crate::acpi;
+use crate::acpi::{self, FADT_DSDT, FADT_FIRMWARE_CTRL, FADT_X_DSDT, FADT_X_FIRMWARE_CTRL};
 use crate::check;
 use crate::logging::record;
 
 /// The RSDP's 2.0 form.
 const RSDP_LEN: usize = 36;
-
-/// FADT fields locating the FACS and DSDT, 32-bit first, then the 64-bit
-/// ones that override them where set, as Linux's `acpi_table_fadt` lays them
-/// out (`include/acpi/actbl.h`). A wrong offset here reads some other field
-/// as an address and can fault.
-const FADT_FIRMWARE_CTRL: usize = 36;
-const FADT_DSDT: usize = 40;
-const FADT_X_FIRMWARE_CTRL: usize = 132;
-const FADT_X_DSDT: usize = 140;
 
 /// Where the BERT puts the boot error region, and the region's own data
 /// length, as `acpi_table_bert` and `acpi_bert_region` lay them out
@@ -110,19 +101,9 @@ fn read_u64(bytes: &[u8], offset: usize) -> Option<u64> {
     ))
 }
 
-/// The 64-bit field where set and present, else the 32-bit one.
-fn fadt_address(fadt: &[u8], wide: usize, narrow: usize) -> Option<usize> {
-    let address = read_u64(fadt, wide)
-        .filter(|&address| address != 0)
-        .or_else(|| read_u32(fadt, narrow).map(u64::from))?;
-    usize::try_from(address)
-        .ok()
-        .filter(|&address| address != 0)
-}
-
 /// The FACS and DSDT, which the FADT points to rather than the root table.
 fn fadt_targets(fadt: &[u8]) {
-    if let Some(address) = fadt_address(fadt, FADT_X_FIRMWARE_CTRL, FADT_FIRMWARE_CTRL) {
+    if let Some(address) = acpi::fadt_address(fadt, FADT_X_FIRMWARE_CTRL, FADT_FIRMWARE_CTRL) {
         // Safety: the FADT gives this as the FACS's address.
         match unsafe { acpi::table(address) } {
             // The FACS carries no checksum field, so it goes in without the
@@ -146,7 +127,7 @@ fn fadt_targets(fadt: &[u8]) {
             ),
         }
     }
-    let Some(address) = fadt_address(fadt, FADT_X_DSDT, FADT_DSDT) else {
+    let Some(address) = acpi::fadt_address(fadt, FADT_X_DSDT, FADT_DSDT) else {
         record(
             "acpi",
             &[("sig", check::text!("DSDT")), ("found", check::flag(false))],

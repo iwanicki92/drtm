@@ -182,8 +182,9 @@ class QemuVm:
 
     `psp` attaches our QEMU's `amd-psp`, a function answering with that AMD
     device ID and its mailbox registers behind it. `psp_ready` sets the bit
-    the DRTM service sets when it will take a command, and `psp_aspt` leaves
-    the ACPI table naming those registers' address out.
+    the DRTM service sets when it will take a command, `psp_aspt` leaves
+    the ACPI table naming those registers' address out, and `psp_drtm_device`
+    publishes the SSDT describing the DRTM ACPI device.
 
     `vga_and_nic` keeps QEMU's default display adapter and network card.
     They cost 1.3s of firmware initialisation each boot, so only the boot
@@ -217,6 +218,7 @@ class QemuVm:
         psp: int | None = None,
         psp_ready: bool = True,
         psp_aspt: bool = True,
+        psp_drtm_device: bool = False,
         vga_and_nic: bool = False,
         firmware: Path | None = None,
         save_firmware_to: Path | None = None,
@@ -239,6 +241,7 @@ class QemuVm:
         self.psp = psp
         self.psp_ready = psp_ready
         self.psp_aspt = psp_aspt
+        self.psp_drtm_device = psp_drtm_device
         self.vga_and_nic = vga_and_nic
         self.firmware = Path(firmware) if firmware else cached_firmware_path()
         self.save_firmware_to = save_firmware_to
@@ -335,6 +338,7 @@ class QemuVm:
             device = f"amd-psp,device-id={self.psp:#x}"
             device += f",drtm-ready={'on' if self.psp_ready else 'off'}"
             device += f",aspt={'on' if self.psp_aspt else 'off'}"
+            device += f",drtm-device={'on' if self.psp_drtm_device else 'off'}"
             args += ["-device", device]
 
         if self.corrected_error_bank is not None:

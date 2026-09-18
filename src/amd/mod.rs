@@ -6,6 +6,7 @@
 
 pub mod aspt;
 pub mod checks;
+pub mod drtm_device;
 pub mod iommu;
 pub mod ivrs;
 pub mod memory;
@@ -54,4 +55,5 @@ pub fn report(devices: &Devices) {
     ivrs::report(&iommus);
     psp::report(devices);
     aspt::report(devices);
+    drtm_device::report();
 }

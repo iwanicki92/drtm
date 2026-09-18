@@ -372,3 +372,55 @@ def test_the_drtm_mailbox_check_runs_after_the_vendor_gate(intel_cpu_boot: str):
     # It reads an AMD table through an AMD device, so an Intel boot must not
     # report on it at all.
     assert verdicts(intel_cpu_boot, "amd.psp_drtm") == []
+
+
+def test_the_drtm_acpi_device_is_reported(mmconfig_above_4gib_boot: str):
+    # The only boot publishing it, since firmware puts the device there only
+    # when its own DRTM option is on and this is the check's found branch.
+    ((tag, detail),) = results(mmconfig_above_4gib_boot, "amd.drtm_device")
+    assert tag == "INFO"
+    (values,) = fields(mmconfig_above_4gib_boot, "amd.drtm_device")
+    assert values["found"] is True
+    assert values["table"] == "SSDT"
+    assert "DRTM0002" in detail
+
+
+def test_the_named_table_is_the_one_holding_the_device(mmconfig_above_4gib_boot: str):
+    # The check names a table rather than just answering yes, so the name has
+    # to lead a reader to the bytes. Which table a board uses is firmware's,
+    # so this reads the dump back instead of assuming this guest's.
+    (values,) = fields(mmconfig_above_4gib_boot, "amd.drtm_device")
+    holding = [
+        table
+        for table in dumped(mmconfig_above_4gib_boot, "acpi")
+        if "hex" in table and b"DRTM0002".hex() in table["hex"]
+    ]
+    assert len(holding) == 1, "more than one table describes the device"
+    assert holding[0]["sig"] == values["table"]
+
+
+def test_a_platform_describing_no_device_is_reported(default_boot: str):
+    # A board with the option off publishes no such device at all, which is
+    # the state this has to be able to tell apart from the one above.
+    ((tag, detail),) = results(default_boot, "amd.drtm_device")
+    assert tag == "INFO"
+    (values,) = fields(default_boot, "amd.drtm_device")
+    assert values["found"] is False
+    assert "no ACPI table describes" in detail
+
+
+def test_the_drtm_device_check_never_judges_the_platform(
+    default_boot: str,
+    mmconfig_above_4gib_boot: str,
+    amd_iommu_enabled_boot: str,
+):
+    # Nothing in the reference set reads the device, and neither its presence
+    # nor its absence is known to stop a launch, so it is reported either way.
+    for capture in (default_boot, mmconfig_above_4gib_boot, amd_iommu_enabled_boot):
+        assert set(verdicts(capture, "amd.drtm_device")) == {"INFO"}
+
+
+def test_the_drtm_device_check_runs_after_the_vendor_gate(intel_cpu_boot: str):
+    # An AMD device described by AMD firmware, so an Intel boot must not
+    # report on it at all.
+    assert verdicts(intel_cpu_boot, "amd.drtm_device") == []
