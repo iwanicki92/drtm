@@ -16,6 +16,8 @@ dependencies are managed by [uv](https://docs.astral.sh/uv/) via
 `qemu-tests/pyproject.toml`, no separate venv setup needed:
 
 ```sh
+task test
+# or
 uv run --project qemu-tests pytest qemu-tests
 ```
 

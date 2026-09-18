@@ -9,6 +9,8 @@
 //! 95 are left out, since they hold a response and there is none until a
 //! command has been issued.
 
+use core::fmt;
+
 use crate::acpi;
 use crate::amd::{aspt, psp};
 use crate::check;
@@ -24,12 +26,12 @@ const REGISTERS: [(u16, &[(usize, &str)]); 4] = [
     (
         1,
         &[
-            (8, "SEV_CMDRESP"),
-            (12, "SEV_CMDBUF_LO"),
-            (16, "SEV_CMDBUF_HI"),
+            (8, "SEV_CMD_RESP"),
+            (12, "SEV_CMD_BUF_LO"),
+            (16, "SEV_CMD_BUF_HI"),
         ],
     ),
-    (2, &[(8, "ACPI_CMDRESP")]),
+    (2, &[(8, "ACPI_CMD_RESP")]),
     (
         3,
         &[
@@ -84,7 +86,24 @@ pub fn dump(devices: &Devices) {
         }
     }
     if let Some(offset) = mailbox_offset(table, base) {
-        read(table, offset, "C2PMSG_72");
+        read(table, offset, "DRTM_CMD_RESP");
+    }
+}
+
+/// A register's name together with the mailbox number it is usually called
+/// by, like `FEATURE (C2PMSG_63)`. The interrupt registers sit below the
+/// mailbox block and have no number, so they print their name alone.
+struct Named {
+    name: &'static str,
+    c2pmsg: Option<usize>,
+}
+
+impl fmt::Display for Named {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.c2pmsg {
+            Some(number) => write!(f, "{} (C2PMSG_{number})", self.name),
+            None => f.write_str(self.name),
+        }
     }
 }
 
@@ -97,7 +116,11 @@ fn mailbox_offset(table: &[u8], base: usize) -> Option<u32> {
 /// One register, or a record saying it was left alone. An offset the table's
 /// own page count does not cover is not read, since what is there is then
 /// whatever else firmware put at that address.
-fn read(table: &[u8], offset: u32, name: &str) {
+fn read(table: &[u8], offset: u32, name: &'static str) {
+    let name = Named {
+        name,
+        c2pmsg: aspt::c2pmsg(table, offset),
+    };
     let Some(address) = aspt::register(table, offset) else {
         record(
             "psp",

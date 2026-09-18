@@ -176,6 +176,19 @@ pub fn mailbox(table: &[u8]) -> Option<usize> {
     register(table, feature.checked_add(past)?)
 }
 
+/// Which C2PMSG mailbox the register at `offset` is, counted from the one
+/// the table names. An offset below the mailbox block, which the interrupt
+/// registers are, is not one of them and has no number.
+pub fn c2pmsg(table: &[u8], offset: u32) -> Option<usize> {
+    let width = i64::try_from(MAILBOX_WIDTH).ok()?;
+    let distance = i64::from(offset) - i64::from(feature_offset(table)?);
+    if distance % width != 0 {
+        return None;
+    }
+    let feature = i64::try_from(FEATURE_MAILBOX).ok()?;
+    usize::try_from(feature + distance / width).ok()
+}
+
 /// The feature register's offset into that block, from the table's global
 /// structure.
 fn feature_offset(table: &[u8]) -> Option<u32> {

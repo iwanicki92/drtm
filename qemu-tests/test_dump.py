@@ -13,6 +13,8 @@ particular value, since what a table or register holds is the platform's
 business and changes with the machine.
 """
 
+import re
+
 from conftest import dumped
 
 
@@ -269,19 +271,38 @@ def test_the_psp_registers_the_table_names_are_read(mmconfig_above_4gib_boot: st
         if "name" in register
     }
     assert registers.keys() == {
-        "FEATURE",
+        "FEATURE (C2PMSG_63)",
         "INT_ENABLE",
         "INT_STATUS",
-        "SEV_CMDRESP",
-        "SEV_CMDBUF_LO",
-        "SEV_CMDBUF_HI",
-        "ACPI_CMDRESP",
-        "C2PMSG_72",
+        "SEV_CMD_RESP (C2PMSG_32)",
+        "SEV_CMD_BUF_LO (C2PMSG_56)",
+        "SEV_CMD_BUF_HI (C2PMSG_57)",
+        "ACPI_CMD_RESP (C2PMSG_22)",
+        "DRTM_CMD_RESP (C2PMSG_72)",
     }
     for register in registers.values():
         assert "value" in register, register["name"]
-    assert int(registers["FEATURE"]["at"], 16) == 0x9FC
-    assert int(registers["C2PMSG_72"]["at"], 16) == 0xA20
+    assert int(registers["FEATURE (C2PMSG_63)"]["at"], 16) == 0x9FC
+    assert int(registers["DRTM_CMD_RESP (C2PMSG_72)"]["at"], 16) == 0xA20
+
+
+def test_the_mailbox_numbers_come_from_the_table(mmconfig_above_4gib_boot: str):
+    # Each number is the distance from the feature register the table names,
+    # so a platform declaring other offsets is numbered from its own. The
+    # interrupt registers sit below the mailbox block, so they carry none.
+    registers = {
+        register["name"]: int(register["at"], 16)
+        for register in dumped(mmconfig_above_4gib_boot, "psp")
+        if "name" in register
+    }
+    feature = registers["FEATURE (C2PMSG_63)"]
+    block = feature - 63 * 4
+    for name, offset in registers.items():
+        number = re.search(r"C2PMSG_(\d+)\)$", name)
+        if number is None:
+            assert offset < block, name
+        else:
+            assert offset == block + int(number.group(1)) * 4, name
 
 
 def test_the_drtm_argument_registers_are_left_alone(mmconfig_above_4gib_boot: str):
