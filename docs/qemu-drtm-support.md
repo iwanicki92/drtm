@@ -60,9 +60,10 @@ both accelerators, and no guest firmware could enable it.
 
 **The AMD Secure Processor.** No device in the QEMU tree carries any of the
 Secure Processor IDs the loaders match on, and `hw/misc/` has no PSP model
-at all. So on upstream the PSP check only reaches its not-found branch, and
-the mailbox that would say whether the DRTM service is enabled has nothing
-to answer it.
+at all. Nothing builds an ASPT either, which is the table naming where the
+Secure Processor's registers are. So on upstream the PSP check only reaches
+its not-found branch, and the mailbox that would say whether the DRTM
+service is enabled has nothing to answer it.
 
 The `amd-iommu` device is the nearest thing to a false positive, answering
 `1022:1419`: AMD's vendor ID with a device ID no loader's table lists. That
@@ -102,11 +103,13 @@ here programs it, and writes to it stick. Nothing is mapped: the register
 reports a window rather than backing one, which is what software reading it
 to locate configuration space needs and nothing more.
 
-**A function can answer with a Secure Processor ID.**
-`-device amd-psp` adds an AMD function with the Turin ASP's device ID,
-`156e`, and `device-id=` picks any other. Nothing sits behind it, no BAR and
-no mailbox, so it is found in configuration space and can answer nothing
-else.
+**A Secure Processor with mailbox registers.** `-device amd-psp` adds an AMD
+function with the Turin ASP's device ID, `156e`, and `device-id=` picks any
+other. Its `C2PMSG` mailboxes answer on BAR 2 and again through the window
+an ASPT declares, `drtm-ready=` sets the bit the DRTM service sets when it
+will take a command, and `aspt=off` leaves the table out. Writes are
+dropped: issuing a command means implementing the service behind it, which
+is the launch.
 
 **`amd-iommu` can stay out of ACPI.** `-device amd-iommu,ivrs=off` leaves
 the IVRS table out, which upstream writes whenever the device is present
@@ -151,6 +154,8 @@ and some of them no longer hold.
 
 | Date       | QEMU   | Observation                                                                                                               |
 |------------|--------|---------------------------------------------------------------------------------------------------------------------------|
+| 2026-09-18 | ours   | `-device amd-psp` publishes an ASPT of the same 112 bytes and revision Turin firmware does, differing in the base address |
+| 2026-09-18 | ours   | Firmware here enables the Secure Processor's memory decode, which Turin firmware does not, so the BAR answers too         |
 | 2026-09-18 | 11.1.1 | `family=` and `model=` are upstream CPU properties, so `-cpu EPYC,family=26,model=2` reaches the family 1Ah MSR list      |
 | 2026-09-17 | ours   | `-device amd-iommu,ivrs=off` leaves no IVRS table, so `amd.iommu_table` warns about an enabled IOMMU                      |
 | 2026-09-17 | ours   | Dasharo passes QEMU's IVRS through, and it lists the one IOMMU under two IVHD types                                       |
