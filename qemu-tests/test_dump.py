@@ -118,6 +118,23 @@ def test_the_amd_msr_list_is_guarded_by_family(default_boot: str):
     assert "MMIO_CONF_BASE" not in read
 
 
+def test_the_amd_msr_list_runs_on_the_family_it_documents(
+    mmconfig_above_4gib_boot: str,
+):
+    # The other side of that guard, reached by asking QEMU for family 1Ah.
+    # `MMIO_CONF_BASE` is the one register in the list this guest really
+    # holds, so it reading back what QEMU was told is what says these are
+    # reads rather than records. The rest answer zero, since QEMU returns
+    # that for an MSR it does not model instead of raising #GP.
+    msrs = dumped(mmconfig_above_4gib_boot, "msr")
+    (cpu,) = dumped(mmconfig_above_4gib_boot, "cpu")
+    assert int(cpu["family"], 16) == 0x1A
+    assert not [msr for msr in msrs if "documented" in msr]
+    values = {msr["name"]: msr["value"] for msr in msrs if "name" in msr}
+    assert {"PATCH_LEVEL", "SYSCFG", "HWCR", "SMM_BASE"} <= values.keys()
+    assert int(values["MMIO_CONF_BASE"], 16) == 0xF800_0021
+
+
 def test_architectural_msrs_are_read_whatever_the_family(default_boot: str):
     # The family guard covers AMD's own list. What CPUID reports as present
     # is present, so those reads stand on the feature bit instead.

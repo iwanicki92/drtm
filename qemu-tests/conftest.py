@@ -268,8 +268,9 @@ def mmconfig_above_4gib_boot() -> dict:
     """Serial output of one boot whose MMIO configuration window does not fit
     below 4 GiB.
 
-    The only configuration reaching that check's second enabled outcome.
-    Nothing else here differs from `default_boot`, down to the bus count.
+    The only configuration reaching that check's second enabled outcome. Its
+    tests only read that one result, so the boot also reports CPUID family
+    1Ah, which is the only way the dump's AMD MSR list runs here.
     """
     return {"cpu": MMCONFIG_ABOVE_4GIB}
 

@@ -33,7 +33,14 @@ CORRECTED_ERROR = 0x9000_0000_0000_0000
 # enables the window, bits 5:2 hold log2 of the bus count, and bits 51:20
 # the base. Both values cover 256 buses, one below 4 GiB and one crossing it.
 MMCONFIG_BELOW_4GIB = f"{SKINIT_CPU},mmio-conf-base=0xe0000021"
-MMCONFIG_ABOVE_4GIB = f"{DEFAULT_CPU},mmio-conf-base=0xf8000021"
+
+# CPUID family 1Ah model 02h, an EPYC 9015, whose PPR the platform dump's
+# AMD MSR list is taken from. `EPYC` alone is family 17h, so without this
+# nothing here ever reaches that list. Both are upstream CPU properties,
+# folded into the extended fields the same way Linux reads them back, so
+# this asks nothing of our build.
+FAMILY_1AH = "family=26,model=2"
+MMCONFIG_ABOVE_4GIB = f"{DEFAULT_CPU},mmio-conf-base=0xf8000021,{FAMILY_1AH}"
 
 
 def _free_tcp_port() -> int:

@@ -22,7 +22,7 @@ so the page stays a reference rather than growing a section per discovery.
 | TPM 2.0, TIS and CRB        | Works through `swtpm`. TIS models five localities, CRB reports locality 0 only     |
 | AMD IOMMU                   | `amd-iommu` device, in the test matrix, at whatever slot is free, enable bit clear |
 | PCI configuration space     | Read through the root bridge protocol, extended space included                     |
-| CPU vendor and CPUID leaves | Selected by `-cpu`, enough to drive the vendor gate                                |
+| CPU vendor and CPUID leaves | Selected by `-cpu`, with `family=`/`model=` overriding the version field           |
 | Machine-check architecture  | `IA32_MCG_CAP` reports 10 banks, all readable                                      |
 
 ## What upstream does not model
@@ -151,6 +151,7 @@ and some of them no longer hold.
 
 | Date       | QEMU   | Observation                                                                                                               |
 |------------|--------|---------------------------------------------------------------------------------------------------------------------------|
+| 2026-09-18 | 11.1.1 | `family=` and `model=` are upstream CPU properties, so `-cpu EPYC,family=26,model=2` reaches the family 1Ah MSR list      |
 | 2026-09-17 | ours   | `-device amd-iommu,ivrs=off` leaves no IVRS table, so `amd.iommu_table` warns about an enabled IOMMU                      |
 | 2026-09-17 | ours   | Dasharo passes QEMU's IVRS through, and it lists the one IOMMU under two IVHD types                                       |
 | 2026-09-17 | ours   | `-device amd-psp` makes `amd.psp` identify an ASP, the first boot to reach that branch                                    |
