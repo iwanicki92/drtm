@@ -9,21 +9,26 @@
 //! machine that dies mid-dump still says what killed it.
 
 mod acpi;
+mod cpu;
 
 use log::LevelFilter;
 
 use crate::check;
 use crate::logging::{self, Format};
+use crate::platform::Cpu;
 
 /// Gathers everything, if the run asked for it.
 ///
 /// Both conditions, not either: the dump has no prose form to print, and a
 /// run left at `info` wants results rather than a megabyte of hexadecimal.
-pub fn run() {
+pub fn run(cpu: &Cpu) {
     if logging::format() != Format::Json || log::max_level() < LevelFilter::Trace {
         return;
     }
     logging::record("dump", &[("at", check::text!("start"))]);
+    cpu::dump_cpuid(cpu);
+    cpu::dump_processors();
     acpi::dump();
+    cpu::dump_msrs(cpu);
     logging::record("dump", &[("at", check::text!("end"))]);
 }

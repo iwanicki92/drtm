@@ -60,7 +60,7 @@ fn main() -> Status {
         ),
     }
 
-    dump::run();
+    dump::run(&cpu);
 
     // Terminal marker. The QEMU test harness reads serial output until this
     // line, so it knows it has every check's result and not a partial boot.

@@ -24,6 +24,11 @@ pub enum Vendor {
 
 pub struct Cpu {
     pub vendor: Vendor,
+    /// Family and model, each already folded together with its extended
+    /// field. A vendor's register list holds for the families its
+    /// documentation covers, so anything reading MSRs by name needs these.
+    pub family: u32,
+    pub model: u32,
     name: [u8; 12],
 }
 
@@ -51,5 +56,29 @@ pub fn identify() -> Cpu {
     for (i, word) in words.iter().enumerate() {
         name[i * 4..i * 4 + 4].copy_from_slice(&word.to_le_bytes());
     }
-    Cpu { vendor, name }
+    let (family, model) = family_model(__cpuid(0x1).eax);
+    Cpu {
+        vendor,
+        family,
+        model,
+        name,
+    }
+}
+
+/// Splits `CPUID.1:EAX` into family and model.
+///
+/// Each has an extended field that only counts from a certain family up, so
+/// folding them in unconditionally would renumber every older CPU. Both
+/// vendors number the same way here, as Linux's `x86_family`/`x86_model`
+/// read them (`arch/x86/include/asm/cpu_device_id.h`).
+fn family_model(signature: u32) -> (u32, u32) {
+    let mut family = (signature >> 8) & 0xF;
+    if family == 0xF {
+        family += (signature >> 20) & 0xFF;
+    }
+    let mut model = (signature >> 4) & 0xF;
+    if family >= 0x6 {
+        model |= ((signature >> 16) & 0xF) << 4;
+    }
+    (family, model)
 }
