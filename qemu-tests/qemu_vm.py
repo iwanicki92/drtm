@@ -18,11 +18,6 @@ from pathlib import Path
 from firmware import cached_firmware_path
 from qmp_client import QmpClient
 
-# The variable store lives in the first bytes of the firmware image; zeroing
-# it resets settings (including boot order) to defaults on every run, same as
-# Dasharo's own scripts/ci/qemu-run.sh does.
-_VARSTORE_ZERO_BYTES = 256
-
 # QEMU CPU model used unless a caller asks for another. AMD, so the guest
 # reads AuthenticAMD and runs the AMD checks rather than skipping them. No
 # QEMU model carries the SKINIT feature bit, so it has to be asked for.
@@ -233,10 +228,11 @@ class QemuVm:
         if self.config is not None:
             (esp_dir / "drtm.conf").write_text(self.config)
 
+        # The variable store lives in the first bytes of this image. It is
+        # left as it comes, so a populated store survives: the binary boots
+        # as removable media regardless of what boot order it holds.
         firmware = Path(self._workdir) / "firmware.rom"
         shutil.copy(cached_firmware_path(), firmware)
-        with open(firmware, "r+b") as f:
-            f.write(b"\x00" * _VARSTORE_ZERO_BYTES)
 
         serial_port = _free_tcp_port()
         # QMP is a Unix socket. AF_UNIX paths are capped at ~108 bytes, so it

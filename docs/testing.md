@@ -143,9 +143,9 @@ For each boot, `qemu-tests/qemu_vm.py` builds a scratch working directory
 - `esp/EFI/BOOT/BOOTX64.EFI`: a copy of the built `drtm.efi`, placed where
     UEFI's removable-media boot path picks it up automatically, so it needs
     no boot entry or bootloader.
-- `firmware.rom`: a copy of the cached Dasharo firmware image, with its
-    variable store (the first 256 bytes) zeroed so settings like boot order
-    reset to defaults on every run.
+- `firmware.rom`: a copy of the cached Dasharo firmware image, variable
+    store included. Nothing here depends on the settings it holds, since the
+    binary is found as removable media rather than through a boot entry.
 
 It then launches `qemu-system-x86_64` on a Q35 machine, with that ESP
 attached as a FAT-formatted drive and that firmware image as pflash. Serial
@@ -265,34 +265,30 @@ Where a single boot goes:
 | VGA and NIC initialisation                 | 1.3s |
 | Firmware's remaining work, plus `drtm.efi` | 3.7s |
 
-Five changes follow from that, none of them implemented yet:
+Four changes follow from that, none of them implemented yet:
 
-1. Stop zeroing the varstore in `QemuVm.__enter__`. Zeroing costs nothing by
-    itself, but it discards the populated store, so everything below depends
-    on dropping it first. Boot order still resolves without it, because the
-    binary is found as removable media at `\EFI\BOOT\BOOTX64.EFI`.
-2. Boot the downloaded ROM once per firmware release and cache the result
+1. Boot the downloaded ROM once per firmware release and cache the result
     beside it, then copy that warmed image per boot. Pays the 2.8s once a
     release instead of once a boot.
-3. Write a carriage return to the serial socket once the boot prompt
+2. Write a carriage return to the serial socket once the boot prompt
     appears, which skips the menu timeout.
-4. Boot the configurations concurrently, four at a time, submitting only
+3. Boot the configurations concurrently, four at a time, submitting only
     those the collected tests need so a single-test run still boots once.
     Four matches this machine's core count, and eight at a time measured
     slower than four.
-5. Drop the VGA and NIC devices from every boot but `default_boot`, which
+4. Drop the VGA and NIC devices from every boot but `default_boot`, which
     keeps the full model so the host-bridge and capability-list scan tests
     still see a populated bus. No test asserts on either device.
 
-Together those put a boot near 5s. Items 1 to 3 are what earn that, and item
-4 then overlaps the boots so wall time tracks the slowest batch rather than
-the number of configurations: the eight that existed when this was measured
-came to 10.3s together, against 86s of booting one at a time.
+Together those put a boot near 5s. Items 1 and 2 are what earn that, and
+item 3 then overlaps the boots so wall time tracks the slowest batch rather
+than the number of configurations: the eight that existed when this was
+measured came to 10.3s together, against 86s of booting one at a time.
 
 Three things were measured and deliberately not done. Disabling the
 firmware's USB stack gains nothing. Saving a ROM whose settings were changed
 by hand reaches the same 5s, but its only useful content is the zero timeout
-that item 3 already achieves, and it would add a binary that is too large to
+that item 2 already achieves, and it would add a binary that is too large to
 commit and that a fresh clone cannot regenerate. Serial output is not a
 factor either, since this release ROM prints no firmware console log and a
 whole capture is about 3 KB.
