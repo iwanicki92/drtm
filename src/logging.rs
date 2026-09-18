@@ -150,27 +150,13 @@ fn emit_text(sink: &mut dyn Write, record: &Record) -> fmt::Result {
 /// record. The `drtm:` prefix stays, since firmware writes to the same UART
 /// and a parser has to find its own lines without trying to parse every one.
 fn emit_json(sink: &mut dyn Write, record: &Record) -> fmt::Result {
-    write!(
-        sink,
-        r#"drtm: {{"rec":"log","level":"{}""#,
-        level_name(record.level())
-    )?;
+    sink.write_str(r#"drtm: {"rec":"log""#)?;
     if let Some((file, line)) = source(record) {
         write!(sink, r#","src":"{file}:{line}""#)?;
     }
     sink.write_str(r#","msg":""#)?;
     write!(Escape(sink), "{}", record.args())?;
     sink.write_str("\"}\r\n")
-}
-
-const fn level_name(level: Level) -> &'static str {
-    match level {
-        Level::Error => "error",
-        Level::Warn => "warn",
-        Level::Info => "info",
-        Level::Debug => "debug",
-        Level::Trace => "trace",
-    }
 }
 
 /// Forwards to `sink` escaping what a JSON string cannot hold literally.

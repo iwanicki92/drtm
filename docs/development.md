@@ -82,7 +82,7 @@ firmware also writes to:
 
 ```text
 drtm: {"rec":"check","id":"tpm.present","result":"pass","fields":{"family":"V2_0","interface":"Crb"},"detail":"locality 0 answered, V2_0 Crb"}
-drtm: {"rec":"log","level":"debug","src":"pci.rs:262","msg":"[SCAN] PCI root bridges: 1"}
+drtm: {"rec":"log","src":"pci.rs:262","msg":"[SCAN] PCI root bridges: 1"}
 drtm: {"rec":"summary","fail":1,"warn":2,"pass":4,"info":2,"skip":2,"verdict":"fail"}
 ```
 
