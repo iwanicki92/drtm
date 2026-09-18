@@ -126,7 +126,7 @@ address or a count avoids a regular expression over the detail text.
 `records` parses a JSON-mode capture and refuses a `drtm:` line that is not a
 usable record, since firmware shares this UART but never writes that prefix.
 `dumped` takes one kind of platform dump record, such as `device` or `msr`,
-and has no prose fallback, because the dump has no prose form.
+with no prose fallback, since the dump has no prose form.
 
 Each boot reads serial output until the marker its form ends with: the
 `summary` record under `format=json`, and the `drtm: checks complete` line

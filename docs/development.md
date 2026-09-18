@@ -116,15 +116,11 @@ producing diagnostics on a machine that is already misbehaving is the point.
 
 ## Platform dump
 
-`format=json` and `level=trace` together add the raw platform state a
-hardware investigation needs: the firmware's own version, SMBIOS, the boot
-variables, CPUID, the processors firmware started, every ACPI table, PCI
-configuration space, the TPM's registers, MSRs, and the registers of any
-IOMMU firmware enabled. It takes both keys because it has no prose form and
-is far larger than the results it would otherwise bury, so a run that wants
-records and nothing else stays at `level=info`.
-
-One record per thing read, with bytes as a run of hexadecimal digits:
+`format=json` with `level=trace` adds the raw platform state a hardware
+investigation needs: firmware version, SMBIOS, boot variables, CPUID, the
+processors firmware started, every ACPI table, PCI configuration space, TPM
+registers, MSRs, and the registers of any IOMMU firmware enabled. Both keys,
+because it has no prose form and would bury the results in one.
 
 ```text
 drtm: {"rec":"dump","at":"acpi"}
@@ -133,17 +129,14 @@ drtm: {"rec":"msr","id":"0xc0010058","name":"MMIO_CONF_BASE","value":"0x3ffb0000
 drtm: {"rec":"config","fn":"0000:00:00.0","len":4096,"hex":"86802900...","fill":"0xff"}
 ```
 
-Tables and registers go in whole and unfiltered, because choosing on the
-machine what matters is how a run comes back missing the part that did. The
-one thing left out is a trailing run of identical bytes in configuration
-space, which `fill` names and `len` makes recoverable. A `dump` record marks
-the start of each section, and within a section the reads run in the order
-the source lists them, so a machine that dies mid-dump says where.
+Everything goes in whole and unfiltered, except a trailing run of identical
+bytes in configuration space, which `fill` names and `len` makes
+recoverable. A `dump` record opens each section, and reads within one follow
+the order the source lists them, so a machine that dies mid-dump says where.
 
-Nothing is rendered for a person: a hexdump costs 4.3 bytes of serial per
-byte against 2 for hexadecimal digits, so the binary carries no layout code
-at all. A script that turns a capture back into hexdumps would be worth
-writing the day someone needs to read one by eye.
+Nothing is rendered for a person, since hexadecimal digits cost half what a
+hexdump does on the wire. A script turning a capture back into hexdumps can
+be written the day someone needs to read one by eye.
 
 ## Task runner
 
