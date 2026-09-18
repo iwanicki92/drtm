@@ -72,13 +72,15 @@ impl Tag {
     }
 }
 
-/// One named value from a check, for the structured form. What a field is
-/// decides how it is written: counts are JSON numbers, while addresses and
-/// register values are `"0x..."` strings, since a 64-bit value does not
-/// survive every JSON parser as a number.
+/// One named value in a record, whether a check's or the platform dump's.
+/// What a field is decides how it is written: counts are JSON numbers, while
+/// addresses and register values are `"0x..."` strings, since a 64-bit value
+/// does not survive every JSON parser as a number.
 pub enum Value<'a> {
     Count(u64),
     Hex(u64),
+    Flag(bool),
+    Bytes(&'a [u8]),
     Text(fmt::Arguments<'a>),
 }
 
@@ -90,6 +92,17 @@ pub fn count(value: impl Into<u64>) -> Value<'static> {
 /// An address, offset or register value, written as a hexadecimal string.
 pub fn hex(value: impl Into<u64>) -> Value<'static> {
     Value::Hex(value.into())
+}
+
+/// A yes or no, written as a JSON boolean.
+pub fn flag(value: bool) -> Value<'static> {
+    Value::Flag(value)
+}
+
+/// Raw bytes, written as one run of hexadecimal digits. What the platform
+/// dump carries, since laying them out for a person is a reader's job.
+pub fn bytes(value: &[u8]) -> Value<'_> {
+    Value::Bytes(value)
 }
 
 /// Anything with a `Display`, as `text!("{function}")`. A macro because the

@@ -61,7 +61,7 @@ pub fn set_format(format: Format) {
     FORMAT.store(format as u8, Ordering::Relaxed);
 }
 
-fn format() -> Format {
+pub fn format() -> Format {
     if FORMAT.load(Ordering::Relaxed) == Format::Json as u8 {
         Format::Json
     } else {
@@ -253,12 +253,57 @@ fn write_value(sink: &mut dyn Write, value: &Value) -> fmt::Result {
     match value {
         Value::Count(count) => write!(sink, "{count}"),
         Value::Hex(bits) => write!(sink, "\"{bits:#x}\""),
+        Value::Flag(flag) => sink.write_str(if *flag { "true" } else { "false" }),
+        Value::Bytes(bytes) => {
+            sink.write_str("\"")?;
+            write_hex(sink, bytes)?;
+            sink.write_str("\"")
+        }
         Value::Text(text) => {
             sink.write_str("\"")?;
             write!(Escape(sink), "{text}")?;
             sink.write_str("\"")
         }
     }
+}
+
+/// `bytes` as hexadecimal digits, a chunk at a time.
+///
+/// Buffered rather than formatted byte by byte: a sink is a firmware call
+/// per write, and a dumped ACPI table is a hundred thousand bytes.
+fn write_hex(sink: &mut dyn Write, bytes: &[u8]) -> fmt::Result {
+    const DIGITS: &[u8; 16] = b"0123456789abcdef";
+    for chunk in bytes.chunks(64) {
+        let mut text = [0u8; 128];
+        for (pair, byte) in text.as_chunks_mut::<2>().0.iter_mut().zip(chunk) {
+            pair[0] = DIGITS[usize::from(byte >> 4)];
+            pair[1] = DIGITS[usize::from(byte & 0xF)];
+        }
+        let Ok(text) = str::from_utf8(&text[..chunk.len() * 2]) else {
+            return Err(fmt::Error);
+        };
+        sink.write_str(text)?;
+    }
+    Ok(())
+}
+
+/// Writes one platform dump record: a kind and its named values, flat,
+/// since both are literals in this crate's source and cannot collide.
+///
+/// JSON only. The dump exists to be parsed, and the hexadecimal it carries
+/// would bury the results a person is reading the prose form for.
+pub fn record(kind: &str, fields: &[(&str, Value)]) {
+    if format() != Format::Json {
+        return;
+    }
+    write_line(|sink| {
+        write!(sink, r#"drtm: {{"rec":"{kind}""#)?;
+        for (name, value) in fields {
+            write!(sink, r#","{name}":"#)?;
+            write_value(sink, value)?;
+        }
+        sink.write_str("}\r\n")
+    });
 }
 
 /// Ends the run with what the checks added up to.

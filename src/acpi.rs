@@ -6,6 +6,7 @@
 //!
 //! Reads the tables in place, where firmware left them, and writes nothing.
 
+use alloc::vec::Vec;
 use core::ptr;
 use core::slice;
 
@@ -43,9 +44,9 @@ unsafe fn read<T: Copy>(base: usize, offset: usize) -> T {
     unsafe { ptr::read_unaligned((base + offset) as *const T) }
 }
 
-/// The root table's address and how wide each of its entries is: the XSDT
-/// with 8-byte entries where ACPI 2.0 provides one, the RSDT's 4 otherwise.
-fn root() -> Option<(usize, usize)> {
+/// The RSDP's address, from whichever UEFI configuration table entry gives
+/// one, ACPI 2.0 first.
+pub fn rsdp() -> Option<usize> {
     let (acpi2, acpi1) = system::with_config_table(|entries| {
         let find = |guid| {
             entries
@@ -58,7 +59,13 @@ fn root() -> Option<(usize, usize)> {
             find(ConfigTableEntry::ACPI_GUID),
         )
     });
-    let rsdp = acpi2.or(acpi1)?;
+    acpi2.or(acpi1)
+}
+
+/// The root table's address and how wide each of its entries is: the XSDT
+/// with 8-byte entries where ACPI 2.0 provides one, the RSDT's 4 otherwise.
+fn root() -> Option<(usize, usize)> {
+    let rsdp = rsdp()?;
     // Safety: firmware published this address as the RSDP, which is at least
     // 20 bytes, enough for the signature and revision.
     let (signature, revision) =
@@ -80,9 +87,13 @@ fn root() -> Option<(usize, usize)> {
 }
 
 /// The whole table at `address`, if its header gives a plausible length.
-fn table(address: usize) -> Option<&'static [u8]> {
-    // Safety: `address` came from the RSDP or a root table, both of which
-    // point at a table header.
+///
+/// # Safety
+///
+/// `address` must be one firmware gave for a table, such as a root table
+/// entry or a FADT field, so a header sits there.
+pub unsafe fn table(address: usize) -> Option<&'static [u8]> {
+    // Safety: the caller's contract puts a header at `address`.
     let len = unsafe { read::<u32>(address, HEADER_LENGTH) } as usize;
     if !(HEADER_LEN..=MAX_TABLE_LEN).contains(&len) {
         return None;
@@ -92,22 +103,32 @@ fn table(address: usize) -> Option<&'static [u8]> {
     Some(unsafe { slice::from_raw_parts(address as *const u8, len) })
 }
 
-/// The first table carrying `signature`, or `Ok(None)` if the root table
-/// lists none.
-pub fn find(signature: &[u8; 4]) -> Result<Option<&'static [u8]>, NoAcpi> {
+/// The root table followed by every table it lists, skipping entries whose
+/// header gives an implausible length.
+pub fn tables() -> Result<Vec<&'static [u8]>, NoAcpi> {
     let (address, width) = root().ok_or(NoAcpi)?;
-    let root = table(address).ok_or(NoAcpi)?;
+    // Safety: `root` read this address out of the RSDP.
+    let root = unsafe { table(address) }.ok_or(NoAcpi)?;
+    let mut tables = Vec::from([root]);
     for entry in root[HEADER_LEN..].chunks_exact(width) {
         let mut raw = [0u8; 8];
         raw[..width].copy_from_slice(entry);
         let Ok(address @ 1..) = usize::try_from(u64::from_le_bytes(raw)) else {
             continue;
         };
-        if let Some(table) = table(address).filter(|table| table[..4] == *signature) {
-            return Ok(Some(table));
-        }
+        // Safety: the root table lists this address as a table's.
+        tables.extend(unsafe { table(address) });
     }
-    Ok(None)
+    Ok(tables)
+}
+
+/// The first table carrying `signature`, or `Ok(None)` if the root table
+/// lists none.
+pub fn find(signature: &[u8; 4]) -> Result<Option<&'static [u8]>, NoAcpi> {
+    Ok(tables()?
+        .into_iter()
+        .skip(1)
+        .find(|table| table[..4] == *signature))
 }
 
 /// Whether the table's bytes sum to zero, as every ACPI table's must.

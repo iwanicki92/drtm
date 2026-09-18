@@ -447,6 +447,15 @@ def fields(capture: str, identifier: str) -> list[dict]:
     ]
 
 
+def dumped(capture: str, kind: str) -> list[dict]:
+    """Every platform dump record of one kind, in order.
+
+    The dump has no prose form, so this is empty for a text-mode boot rather
+    than falling back to a pattern the way `results` does.
+    """
+    return [record for record in records(capture) if record["rec"] == kind]
+
+
 def messages(capture: str) -> list[str]:
     """Every freeform log message, without the prefix or the source location.
 
