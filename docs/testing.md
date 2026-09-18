@@ -108,14 +108,14 @@ carries an enabled IOMMU that ACPI leaves out, since its tests only read
 results.
 
 The binary reads `drtm.conf` from beside itself on the ESP, so `QemuVm`
-writes one into the scratch ESP. Most boots raise the level to `trace`,
-because the `[SCAN]` dump the PCI tests assert on sits below the default
-`info`, and ask for `format=json` so the assertions key on record fields
-rather than wording. Two boots only read results, which print at any level,
-so they carry the other config states: `tpm_crb_boot` has no file at all and
-`amd_iommu_enabled_boot` an unusable level, which must be refused without
-stopping the run. `test_config.py` asserts on those two, and having no file
-also leaves `tpm_crb_boot` in the default text form, which is what keeps the
+writes one into the scratch ESP. Most boots raise the level to `trace` and
+ask for `format=json`, which is what the platform dump takes and what lets
+the assertions key on record fields rather than wording. Two boots only
+read results, which print at any level, so they carry the other config
+states: `tpm_crb_boot` has no file at all and `amd_iommu_enabled_boot` an
+unusable level, which must be refused without stopping the run.
+`test_config.py` asserts on those two, and having no file also leaves
+`tpm_crb_boot` in the default text form, which is what keeps the
 human-readable output under test. `tpm_tis_boot` stays at `trace` for its
 per-locality `TPM_ACCESS` line.
 
@@ -125,6 +125,8 @@ either form, so a fixture can change form without its tests changing.
 address or a count avoids a regular expression over the detail text.
 `records` parses a JSON-mode capture and refuses a `drtm:` line that is not a
 usable record, since firmware shares this UART but never writes that prefix.
+`dumped` takes one kind of platform dump record, such as `device` or `msr`,
+and has no prose fallback, because the dump has no prose form.
 
 Each boot reads serial output until the marker its form ends with: the
 `summary` record under `format=json`, and the `drtm: checks complete` line

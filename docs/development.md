@@ -71,9 +71,9 @@ format=text
 ```
 
 `level=info` is the default and prints one line per check. `debug` adds the
-PCI root bridge count, and `trace` the whole configuration space dump the
-IOMMU and Secure Processor checks read. A build made with `DRTM_LOG_LEVEL`
-starts at that level instead, and this file overrides it either way.
+PCI root bridge count, and `trace` the platform dump below and the TPM's
+per-locality access registers. A build made with `DRTM_LOG_LEVEL` starts at
+that level instead, and this file overrides it either way.
 
 `format=text` is the default and prints prose for the person watching the
 serial console. `format=json` prints one JSON object per line instead, still
@@ -113,6 +113,37 @@ A line that is not `key=value`, an unknown key and an unusable value are
 each reported as a `config` warning naming the line, and the default is kept.
 A file this tool cannot read is never a reason to refuse to run, since
 producing diagnostics on a machine that is already misbehaving is the point.
+
+## Platform dump
+
+`format=json` and `level=trace` together add the raw platform state a
+hardware investigation needs: the firmware's own version, SMBIOS, the boot
+variables, CPUID, the processors firmware started, every ACPI table, PCI
+configuration space, the TPM's registers, MSRs, and the registers of any
+IOMMU firmware enabled. It takes both keys because it has no prose form and
+is far larger than the results it would otherwise bury, so a run that wants
+records and nothing else stays at `level=info`.
+
+One record per thing read, with bytes as a run of hexadecimal digits:
+
+```text
+drtm: {"rec":"dump","at":"acpi"}
+drtm: {"rec":"acpi","sig":"FACP","addr":"0x3f9f8000","len":244,"csum":true,"hex":"46414350..."}
+drtm: {"rec":"msr","id":"0xc0010058","name":"MMIO_CONF_BASE","value":"0x3ffb00000021"}
+drtm: {"rec":"config","fn":"0000:00:00.0","len":4096,"hex":"86802900...","fill":"0xff"}
+```
+
+Tables and registers go in whole and unfiltered, because choosing on the
+machine what matters is how a run comes back missing the part that did. The
+one thing left out is a trailing run of identical bytes in configuration
+space, which `fill` names and `len` makes recoverable. A `dump` record marks
+the start of each section, and within a section the reads run in the order
+the source lists them, so a machine that dies mid-dump says where.
+
+Nothing is rendered for a person: a hexdump costs 4.3 bytes of serial per
+byte against 2 for hexadecimal digits, so the binary carries no layout code
+at all. A script that turns a capture back into hexdumps would be worth
+writing the day someone needs to read one by eye.
 
 ## Task runner
 
