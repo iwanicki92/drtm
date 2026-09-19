@@ -45,10 +45,26 @@ def test_text_mode_carries_no_dump(tpm_crb_boot: str):
 def test_acpi_tables_are_dumped_whole(default_boot: str):
     # `len` is the header's own length field and `hex` the bytes read at the
     # address, so the two agreeing is what says the table came over intact.
-    tables = [table for table in dumped(default_boot, "acpi") if "hex" in table]
+    tables = [
+        table
+        for table in dumped(default_boot, "acpi")
+        if "hex" in table and "cut" not in table
+    ]
     assert tables, "no ACPI table was dumped"
     for table in tables:
         assert len(table["hex"]) == 2 * table["len"], table["sig"]
+
+
+def test_oversized_aml_goes_in_as_its_header(default_boot: str):
+    # AML is the one body nothing here reads, and a DSDT outweighs every
+    # other table together, so past 4 KiB only the 36-byte header goes over
+    # the wire. `len` still says how large the table really is.
+    (dsdt,) = [
+        table for table in dumped(default_boot, "acpi") if table["sig"] == "DSDT"
+    ]
+    assert dsdt["cut"] is True
+    assert dsdt["len"] > 4096
+    assert len(dsdt["hex"]) == 2 * 36
 
 
 def test_the_root_table_and_its_entries_are_all_there(default_boot: str):

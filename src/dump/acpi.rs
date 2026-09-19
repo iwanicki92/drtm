@@ -5,9 +5,9 @@
 //! Every ACPI table, whole, plus the two the FADT points at and any boot
 //! errors firmware recorded.
 //!
-//! No allow-list and no size cap beyond the one `acpi::table` applies: a
-//! table costs two bytes of log per byte, and deciding on the machine which
-//! ones matter is how the first run came back missing the interesting one.
+//! No allow-list: choosing on the machine which tables matter is how a run
+//! comes back missing the one that mattered. The single exception is AML past
+//! [`AML_CAP`], which outweighs every other table together.
 
 use core::slice;
 
@@ -15,8 +15,17 @@ use crate::acpi::{self, FADT_DSDT, FADT_FIRMWARE_CTRL, FADT_X_DSDT, FADT_X_FIRMW
 use crate::check;
 use crate::logging::record;
 
-/// The RSDP's 2.0 form.
+/// The RSDP's 2.0 form, and the header every other table starts with.
 const RSDP_LEN: usize = 36;
+const HEADER_LEN: usize = 36;
+
+/// The tables whose body is AML, an encoding nothing here interprets.
+const AML: [&[u8; 4]; 3] = [b"DSDT", b"SSDT", b"PSDT"];
+
+/// How much AML goes in whole. A DSDT runs to a hundred times this, and a
+/// prefix of one is no use to a disassembler, so past it only the header
+/// goes in. `acpidump` on a booted OS is where the rest belongs.
+const AML_CAP: usize = 4 << 10;
 
 /// Where the BERT puts the boot error region, and the region's own data
 /// length, as `acpi_table_bert` and `acpi_bert_region` lay them out
@@ -69,18 +78,27 @@ pub fn dump() {
 }
 
 /// One table, with the checksum verdict a reader would otherwise have to
-/// recompute from the bytes.
+/// recompute from the bytes. An oversized AML table is marked `cut`, its
+/// `hex` then being the header alone while `len` stays the whole size.
 fn emit(table: &[u8]) {
-    record(
-        "acpi",
-        &[
-            ("sig", check::text!("{}", signature(table))),
-            ("addr", check::hex(table.as_ptr() as u64)),
-            ("len", check::count(table.len() as u64)),
-            ("csum", check::flag(acpi::checksum_ok(table))),
-            ("hex", check::bytes(table)),
-        ],
-    );
+    let cut = table.len() > AML_CAP && AML.iter().any(|sig| table[..4] == **sig);
+    let kept = if cut { HEADER_LEN } else { table.len() };
+    let head: [(&str, check::Value); 4] = [
+        ("sig", check::text!("{}", signature(table))),
+        ("addr", check::hex(table.as_ptr() as u64)),
+        ("len", check::count(table.len() as u64)),
+        ("csum", check::flag(acpi::checksum_ok(table))),
+    ];
+    let hex = ("hex", check::bytes(&table[..kept]));
+    let [sig, addr, len, csum] = head;
+    if cut {
+        record(
+            "acpi",
+            &[sig, addr, len, csum, ("cut", check::flag(true)), hex],
+        );
+    } else {
+        record("acpi", &[sig, addr, len, csum, hex]);
+    }
 }
 
 /// A table's four signature bytes. Always ASCII in practice, and a table

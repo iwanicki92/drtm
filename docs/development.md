@@ -130,10 +130,15 @@ drtm: {"rec":"msr","id":"0xc0010058","name":"MMIO_CONF_BASE","value":"0x3ffb0000
 drtm: {"rec":"config","fn":"0000:00:00.0","len":4096,"hex":"86802900...","fill":"0xff"}
 ```
 
-Everything goes in whole and unfiltered, except a trailing run of identical
-bytes in configuration space, which `fill` names and `len` makes
-recoverable. A `dump` record opens each section, and reads within one follow
-the order the source lists them, so a machine that dies mid-dump says where.
+Everything goes in whole and unfiltered, with two exceptions. A trailing run
+of identical bytes in configuration space goes in as the byte it repeats,
+which `fill` names and `len` makes recoverable. A DSDT or SSDT past 4 KiB
+goes in as its header alone, marked `cut`, since nothing here interprets AML
+and one DSDT outweighs every other table together. `len` is the table's true
+size either way.
+
+A `dump` record opens each section, and reads within one follow the order the
+source lists them, so a machine that dies mid-dump says where.
 
 Nothing is rendered for a person, since hexadecimal digits cost half what a
 hexdump does on the wire. A script turning a capture back into hexdumps can
