@@ -43,6 +43,38 @@ task docs    # cargo doc -> docs/dependency-docs (offline dependency docs)
 `task` is optional. Each wraps a plain command documented in
 [docs/development.md](docs/development.md).
 
+## Configuration
+
+`drtm.conf` sits beside the binary on the ESP and is read at startup. It is
+optional: with no file the defaults apply. One `key=value` per line, `#`
+starting a comment, and anything wrong in it is reported and the default
+kept.
+
+| Key      | Values                                           | Default |
+|----------|--------------------------------------------------|---------|
+| `level`  | `off`, `error`, `warn`, `info`, `debug`, `trace` | `info`  |
+| `format` | `text`, `json`                                   | `text`  |
+
+The same two can be built in, for a binary copied to an ESP with no
+`drtm.conf` beside it, along with where records go. A `drtm.conf` on the
+machine still wins over either.
+
+| Setting                        | Values                    | Default |
+|--------------------------------|---------------------------|---------|
+| `DRTM_LOG_LEVEL`               | the names `level=` takes  | `info`  |
+| `DRTM_LOG_FORMAT`              | the names `format=` takes | `text`  |
+| `sink-serial` (cargo feature)  | on, off                   | on      |
+| `sink-console` (cargo feature) | on, off                   | off     |
+
+```sh
+DRTM_LOG_LEVEL=trace DRTM_LOG_FORMAT=json task build -- --features sink-console
+```
+
+An unusable value for either variable fails the build, since nothing later in
+the run could report it. Enabling both sinks is right only where the two are
+separate devices. See [docs/development.md](docs/development.md) for the
+rest.
+
 ## More
 
 - [docs/design.md](docs/design.md): target scope, architecture, and DRTM
