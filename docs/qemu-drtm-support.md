@@ -67,8 +67,9 @@ service is enabled has nothing to answer it.
 
 The `amd-iommu` device is the nearest thing to a false positive, answering
 `1022:1419`: AMD's vendor ID with a device ID no loader's table lists. That
-makes it worth keeping in the matrix for this check too, since it exercises
-the half of the match that discriminates.
+makes it worth keeping in the matrix for this check too, since it is a
+system peripheral by class rather than an encryption controller, so neither
+half of the match takes it.
 
 **An AMD northbridge.** The x86 host bridges QEMU ships are `i440fx.c` and
 `q35.c`, both Intel (`hw/pci-host/`). Q35 carries extended configuration
@@ -105,9 +106,11 @@ to locate configuration space needs and nothing more.
 
 **A Secure Processor with mailbox registers.** `-device amd-psp` adds an AMD
 function with the Turin ASP's device ID, `156e`, and `device-id=` picks any
-other. Its `C2PMSG` mailboxes answer on BAR 2 and again through the window
-an ASPT declares, `drtm-ready=` sets the bit the DRTM service sets when it
-will take a command, and `aspt=off` leaves the table out. Writes are
+other. Its class stays `1080`, an encryption controller, whatever the ID,
+which is what a board newer than the loaders' table looks like. Its
+`C2PMSG` mailboxes answer on BAR 2 and again through the window an ASPT
+declares, `drtm-ready=` sets the bit the DRTM service sets when it will
+take a command, and `aspt=off` leaves the table out. Writes are
 dropped: issuing a command means implementing the service behind it, which
 is the launch.
 

@@ -22,6 +22,7 @@ use crate::check;
 /// window is enough (PCI Local Bus Specification 3.0, section 6.1).
 const REG_ID: u8 = 0x00;
 const REG_STATUS: u8 = 0x06;
+const REG_CLASS: u8 = 0x08;
 const REG_HEADER_TYPE: u8 = 0x0E;
 const REG_CAPABILITY_POINTER: u8 = 0x34;
 
@@ -73,6 +74,10 @@ pub struct Device {
     pub function: Function,
     pub vendor: u16,
     pub device: u16,
+    /// Base class and subclass, which say what a function is without
+    /// naming a model, so a check can match a device nobody listed.
+    pub class: u8,
+    pub subclass: u8,
     /// Which root bridge handle found it, the one to read it through.
     bridge: usize,
 }
@@ -88,6 +93,8 @@ const ABSENT: Device = Device {
     },
     vendor: 0,
     device: 0,
+    class: 0,
+    subclass: 0,
     bridge: 0,
 };
 
@@ -300,10 +307,17 @@ fn probe(pci: &PciIoAccessPci<'_>, function: Function, bridge: usize) -> Option<
     if id == u32::MAX {
         return None;
     }
+    // Only for a function that answered, so the scan's cost is unchanged
+    // for the addresses where nothing is.
+    let class = pci
+        .read_one::<u32>(function.address().with_register(REG_CLASS))
+        .unwrap_or(0);
     Some(Device {
         function,
         vendor: id as u16,
         device: (id >> 16) as u16,
+        class: (class >> 24) as u8,
+        subclass: (class >> 16) as u8,
         bridge,
     })
 }

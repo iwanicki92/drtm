@@ -117,7 +117,7 @@ pub fn dump(devices: &Devices) {
 /// deals with are worth it.
 fn size(pci: &PciIoAccessPci<'_>, device: &pci::Device) -> u32 {
     if device.function == HOST_BRIDGE
-        || psp::is_secure_processor(device.vendor, device.device)
+        || psp::is_secure_processor(device)
         || is_iommu(pci, device.function).is_some()
     {
         EXTENDED

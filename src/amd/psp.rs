@@ -4,6 +4,10 @@
 
 //! Which AMD Secure Processor the platform has, if any.
 //!
+//! Found two ways, because they answer different questions: the loaders'
+//! device table says whether a launch would accept it, and the PCI class
+//! says whether the platform has one at all.
+//!
 //! Reported rather than judged. Classic `SKINIT` does not go through the
 //! PSP, and which platforms need the PSP path instead is not something this
 //! can answer, so every outcome here is a fact and none is a verdict.
@@ -11,10 +15,16 @@
 use core::fmt;
 
 use crate::check;
-use crate::pci::{Devices, Function};
+use crate::pci::{Device, Devices, Function};
 
 /// AMD's PCI vendor ID, the only one any Secure Processor answers with.
 const VENDOR_AMD: u16 = 0x1022;
+
+/// What a Secure Processor is in configuration space, an encryption
+/// controller of no more specific kind. It names the device class rather
+/// than a model, so it finds one whose ID the table has never heard of.
+const CLASS_ENCRYPTION: u8 = 0x10;
+const SUBCLASS_OTHER: u8 = 0x80;
 
 /// What the loaders' device table says a Secure Processor offers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -70,9 +80,19 @@ fn lookup(vendor: u16, device: u16) -> Option<Drtm> {
         .map(|(_, drtm)| *drtm)
 }
 
-/// Whether the loaders' table lists this ID as a Secure Processor.
-pub fn is_secure_processor(vendor: u16, device: u16) -> bool {
-    lookup(vendor, device).is_some()
+/// Whether this function is an AMD encryption controller, which is what a
+/// Secure Processor is by class. Says nothing about a DRTM service, since
+/// the IDs the loaders reject as having none carry the same class.
+fn by_class(device: &Device) -> bool {
+    device.vendor == VENDOR_AMD
+        && device.class == CLASS_ENCRYPTION
+        && device.subclass == SUBCLASS_OTHER
+}
+
+/// Whether this function is a Secure Processor, by the loaders' table or,
+/// for one they have never been told about, by its class.
+pub fn is_secure_processor(device: &Device) -> bool {
+    lookup(device.vendor, device.device).is_some() || by_class(device)
 }
 
 /// Whether any Secure Processor here offers the mailbox interface, which is
@@ -94,11 +114,12 @@ pub fn has_mailbox(devices: &Devices) -> bool {
 pub fn report(devices: &Devices) {
     let mut found = 0;
     for entry in devices.iter() {
-        let Some(drtm) = lookup(entry.vendor, entry.device) else {
-            continue;
-        };
+        match lookup(entry.vendor, entry.device) {
+            Some(drtm) => describe(entry.function, entry.device, drtm),
+            None if by_class(entry) => unlisted(entry.function, entry.device),
+            None => continue,
+        }
         found += 1;
-        describe(entry.function, entry.device, drtm);
     }
 
     if found == 0 {
@@ -139,4 +160,19 @@ fn describe(function: Function, device: u16, drtm: Drtm) {
             "{VENDOR_AMD:04x}:{device:04x} at {function}, {drtm}"
         ),
     }
+}
+
+/// A Secure Processor no loader's table lists. The platform has one, so a
+/// PSP launch would fail on the table rather than on the hardware, and
+/// adding the ID to `psp_devs_list` in all three is what that takes.
+fn unlisted(function: Function, device: u16) {
+    check::info!(
+        "amd.psp",
+        device = check::text!("{VENDOR_AMD:04x}:{device:04x}"),
+        function = check::text!("{function}"),
+        interface = check::text!("unlisted");
+        "{VENDOR_AMD:04x}:{device:04x} at {function}, an AMD encryption \
+         controller, which is what a Secure Processor is by class, but an ID \
+         no loader's device table lists, so a PSP launch would not find it"
+    );
 }

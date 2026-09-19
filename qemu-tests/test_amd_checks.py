@@ -268,12 +268,42 @@ def test_a_secure_processor_is_identified(amd_iommu_enabled_boot: str):
     assert "ASP, the interface a PSP launch would use" in detail
 
 
+def test_a_secure_processor_the_loaders_do_not_list_is_still_found(
+    unlisted_psp_boot: str,
+):
+    # A board newer than the loaders answers with an ID no table carries.
+    # The PCI class finds it anyway, so the report names the device rather
+    # than saying the platform has no Secure Processor.
+    ((tag, detail),) = results(unlisted_psp_boot, "amd.psp")
+    assert tag == "INFO"
+    assert detail.startswith("1022:17d8 at 0000:00:")
+    assert "no loader's device table lists" in detail
+
+
+def test_an_unlisted_secure_processor_still_offers_no_known_mailbox(
+    unlisted_psp_boot: str,
+):
+    # The two findings stay apart: the platform has one, and no loader would
+    # drive its mailbox, so the check that reads that mailbox still skips.
+    ((tag, detail),) = results(unlisted_psp_boot, "amd.psp_drtm")
+    assert tag == "SKIP"
+    assert "no Secure Processor offering the mailbox interface" in detail
+
+
 def test_psp_check_never_judges_the_platform(
-    default_boot: str, amd_iommu_boot: str, amd_iommu_enabled_boot: str
+    default_boot: str,
+    amd_iommu_boot: str,
+    amd_iommu_enabled_boot: str,
+    unlisted_psp_boot: str,
 ):
     # Classic SKINIT does not go through the PSP, and which platforms need
     # the PSP path is an open question, so no outcome here is a verdict.
-    for capture in (default_boot, amd_iommu_boot, amd_iommu_enabled_boot):
+    for capture in (
+        default_boot,
+        amd_iommu_boot,
+        amd_iommu_enabled_boot,
+        unlisted_psp_boot,
+    ):
         assert set(verdicts(capture, "amd.psp")) == {"INFO"}
 
 

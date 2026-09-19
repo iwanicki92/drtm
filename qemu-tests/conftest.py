@@ -345,6 +345,18 @@ def amd_iommu_enabled_boot() -> dict:
 
 
 @boot_configuration
+def unlisted_psp_boot() -> dict:
+    """Serial output of one boot with a Secure Processor answering with a
+    device ID no loader's table carries.
+
+    What a board newer than the loaders looks like. The only configuration
+    reaching the branch that finds a Secure Processor by its PCI class
+    rather than by its ID.
+    """
+    return {"psp": 0x17D8}
+
+
+@boot_configuration
 def tpm_tis_boot() -> dict:
     """Serial output of one boot with an `swtpm`-backed TPM 2.0 on the FIFO
     (TIS) interface, the one layout with a register per locality.
