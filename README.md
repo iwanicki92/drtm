@@ -41,7 +41,9 @@ task docs    # cargo doc -> docs/dependency-docs (offline dependency docs)
 ```
 
 `task` is optional. Each wraps a plain command documented in
-[docs/development.md](docs/development.md).
+[docs/development.md](docs/development.md). Anything after `--` reaches that
+command, so `task build -- --features sink-console` and `task test -- -k tpm`
+work.
 
 ## Configuration
 

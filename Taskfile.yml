@@ -8,17 +8,17 @@ tasks:
   build:
     desc: Build the UEFI binary
     cmds:
-      - cargo build
+      - cargo build {{.CLI_ARGS}}
 
   lint:
     desc: Run all linters and formatters (see .pre-commit-config.yaml)
     cmds:
-      - pre-commit run --all-files
+      - pre-commit run --all-files {{.CLI_ARGS}}
 
   test:
     desc: Run the QEMU smoke test suite (builds the binary itself first)
     cmds:
-      - uv run --project qemu-tests pytest qemu-tests
+      - uv run --project qemu-tests pytest qemu-tests {{.CLI_ARGS}}
 
   docs:
     desc: Regenerate offline dependency docs into docs/dependency-docs
