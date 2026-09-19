@@ -261,6 +261,13 @@ def test_tpm_registers_are_skipped_without_a_tpm(default_boot: str):
     assert dumped(default_boot, "tpm") == [{"rec": "tpm", "found": False}]
 
 
+def test_the_firmware_inventory_is_reported_when_absent(default_boot: str):
+    # This firmware publishes no ESRT, so the branch saying so is the only
+    # one reachable here. A board carrying an inventory is hardware's to
+    # show, and the entries go in as bytes for exactly that run.
+    assert dumped(default_boot, "esrt") == [{"rec": "esrt", "found": False}]
+
+
 def test_the_psp_registers_the_table_names_are_read(mmconfig_above_4gib_boot: str):
     # Each structure in the ASPT names register offsets, and the dump reads
     # every one it knows the shape of. The mailbox is the one register here

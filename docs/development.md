@@ -117,11 +117,11 @@ producing diagnostics on a machine that is already misbehaving is the point.
 ## Platform dump
 
 `format=json` with `level=trace` adds the raw platform state a hardware
-investigation needs: firmware version, SMBIOS, boot variables, CPUID, the
-processors firmware started, every ACPI table, PCI configuration space, TPM
-registers, MSRs, the registers of any IOMMU firmware enabled, and the Secure
-Processor registers the ASPT names. Both keys, because it has no prose form
-and would bury the results in one.
+investigation needs: firmware version, SMBIOS, boot variables, the firmware
+component inventory, CPUID, the processors firmware started, every ACPI
+table, PCI configuration space, TPM registers, MSRs, the registers of any
+IOMMU firmware enabled, and the Secure Processor registers the ASPT names.
+Both keys, because it has no prose form and would bury the results in one.
 
 ```text
 drtm: {"rec":"dump","at":"acpi"}

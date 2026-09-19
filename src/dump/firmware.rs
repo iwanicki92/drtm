@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! What the firmware says about itself: its own version, what it published
-//! to us, and SMBIOS.
+//! to us, its component inventory, and SMBIOS.
 
 use core::slice;
 
@@ -32,6 +32,17 @@ const SMBIOS_MAX_SIZE: usize = 1 << 20;
 
 /// The type that ends the table.
 const SMBIOS_END: u8 = 127;
+
+/// ESRT layout: a 16-byte header holding the entry count and the count it
+/// has room for, then 40-byte entries, as Linux's
+/// `efi_system_resource_table` lays them out (`drivers/firmware/efi/esrt.c`).
+const ESRT_HEADER_LEN: usize = 16;
+const ESRT_ENTRY_LEN: usize = 40;
+const ESRT_COUNT: usize = 0;
+const ESRT_MAX: usize = 4;
+
+/// A bound on a count firmware supplies and nothing else checks.
+const ESRT_MAX_ENTRIES: usize = 256;
 
 /// Room for any of [`VARIABLES`]. `BootOrder` holds two bytes per entry, so
 /// this fits 512 of them.
@@ -99,7 +110,51 @@ pub fn dump() {
             ),
         }
     }
+    dump_esrt();
     dump_smbios();
+}
+
+/// The firmware components and their versions, whole. The entries go in as
+/// bytes rather than decoded, since a run where they look wrong is one where
+/// the decoding is what is in doubt.
+fn dump_esrt() {
+    let address = system::with_config_table(|entries| {
+        entries
+            .iter()
+            .find(|entry| entry.guid == ConfigTableEntry::ESRT_GUID)
+            .map(|entry| entry.address as usize)
+    });
+    let Some(address) = address.filter(|&address| address != 0) else {
+        record("esrt", &[("found", check::flag(false))]);
+        return;
+    };
+    // Safety: firmware published this address as the ESRT, whose header is
+    // 16 bytes.
+    let header = unsafe { slice::from_raw_parts(address as *const u8, ESRT_HEADER_LEN) };
+    let field = |offset: usize| {
+        u32::from_le_bytes(header[offset..][..4].try_into().unwrap_or_default()) as usize
+    };
+    let (count, max) = (field(ESRT_COUNT), field(ESRT_MAX));
+    // A count past what the header says it has room for, or past any
+    // plausible inventory, is not read: the entries after it are whatever
+    // else firmware put there.
+    let entries = if count <= max && count <= ESRT_MAX_ENTRIES {
+        count * ESRT_ENTRY_LEN
+    } else {
+        0
+    };
+    // Safety: the header counts these entries after itself, and firmware
+    // keeps the table in place while boot services run.
+    let table = unsafe { slice::from_raw_parts(address as *const u8, ESRT_HEADER_LEN + entries) };
+    record(
+        "esrt",
+        &[
+            ("addr", check::hex(address as u64)),
+            ("count", check::count(count as u64)),
+            ("max", check::count(max as u64)),
+            ("hex", check::bytes(table)),
+        ],
+    );
 }
 
 /// The SMBIOS table's address and size, from the 3.x entry point where there
