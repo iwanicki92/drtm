@@ -208,3 +208,25 @@ def test_pci_scan_runs_on_a_non_amd_cpu(intel_cpu_boot: str):
     # phase 2 rather than behind the AMD gate.
     assert "[SCAN] PCI root bridges: 1" in intel_cpu_boot
     assert verdicts(intel_cpu_boot, "pci.root_bridge") == []
+
+
+def test_drtm_pcrs_read_at_the_reset_value(tpm_tis_boot: str):
+    # A fresh swtpm has never seen a locality 4 start, so PCR 17 to 22 hold
+    # the all-ones a TPM 2.0 starts them at. The values themselves are the
+    # check's output, read through the firmware's TCG2 protocol.
+    assert verdicts(tpm_tis_boot, "tpm.drtm_pcrs") == ["PASS"]
+    assert fields(tpm_tis_boot, "tpm.drtm_pcrs") == [
+        {f"pcr{index}": "ff" * 32 for index in range(17, 23)}
+    ]
+
+
+def test_drtm_pcrs_are_not_read_without_a_tcg2_protocol(tpm_crb_boot: str):
+    # The firmware publishes no TCG2 protocol for the CRB TPM here, so the
+    # read has no driver to go through and says so rather than judging.
+    ((tag, detail),) = results(tpm_crb_boot, "tpm.drtm_pcrs")
+    assert tag == "INFO"
+    assert "TCG2" in detail
+
+
+def test_drtm_pcrs_are_skipped_without_a_tpm(default_boot: str):
+    assert verdicts(default_boot, "tpm.drtm_pcrs") == ["SKIP"]
