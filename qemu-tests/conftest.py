@@ -14,6 +14,7 @@ and assert against it. Collection starts every boot the run needs, several at
 a time, so the fixture is usually just waiting on one that is already going.
 """
 
+import functools
 import json
 import re
 import subprocess
@@ -339,6 +340,7 @@ _RECORD_PREFIX = "drtm: {"
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*[a-zA-Z]")
 
 
+@functools.cache
 def records(capture: str) -> list[dict]:
     """Every record the guest emitted, in order. Empty for a text-mode boot.
 
