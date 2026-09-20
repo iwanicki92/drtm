@@ -238,6 +238,7 @@ and some of them no longer hold.
 | 2026-09-20 | ours   | With `SL_DEV` enforced, SKL's first IOMMU pass stops at the event log interrupt, the second completes after the release   |
 | 2026-09-20 | ours   | SKL's `IOMMU event log not empty` with an all-zero dump is that first pass, not a fault: the entry was never written      |
 | 2026-09-20 | ours   | `-machine q35,amd-drtm=on` boots the same image with SKL taking the `0xCF8` route, MSR `0xC0010058` left at zero          |
+| 2026-09-20 | ours   | `amd-iommu` passes DMA through unless `dma-remap=on`, so `amd-drtm=on` sets it and a Linux booted directly finds its disk |
 | 2026-09-20 | ours   | meta-trenchboot v0.5.2 boots Xen and dom0 through `SKINIT`, PCR 17 extended in every bank, PCR 18 in SHA-1 and SHA-256    |
 | 2026-09-20 | ours   | SKL writes `MEMPROT_CR` over `0xCF8` with AMD's extended bits unless MSR `0xC0010058` is enabled, bits QEMU masks off     |
 | 2026-09-20 | ours   | Dasharo maps MMCONFIG at `0xb0000000`, so `mmio-conf-base=0xb0000001` names the window it did map                         |
