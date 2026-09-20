@@ -37,7 +37,16 @@ MMCONFIG_AS_MAPPED = f"{SKINIT_CPU},mmio-conf-base=0xb0000021"
 # folded into the extended fields the same way Linux reads them back, so
 # this asks nothing of our build.
 FAMILY_1AH = "family=26,model=2"
-MMCONFIG_ABOVE_4GIB = f"{DEFAULT_CPU},mmio-conf-base=0xf8000021,{FAMILY_1AH}"
+
+# MSR 0xC0010114 as Turin firmware leaves it: LOCK set with SVMDIS clear,
+# so SVM stays usable and the disable is frozen. The launch bits DPD, R_INIT
+# and DIS_A20M are what SKINIT sets and the launched kernel clears on every
+# processor. Both are reset values only our QEMU takes, as the window's is.
+VM_CR_LOCKED = "vm-cr=0x8"
+VM_CR_AFTER_LAUNCH = f"{DEFAULT_CPU},vm-cr=0x7"
+MMCONFIG_ABOVE_4GIB = (
+    f"{DEFAULT_CPU},mmio-conf-base=0xf8000021,{FAMILY_1AH},{VM_CR_LOCKED}"
+)
 
 
 def _amd_iommu(enabled: bool, ivrs: bool = True) -> str:

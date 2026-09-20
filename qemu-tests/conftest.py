@@ -31,6 +31,7 @@ from machine import (
     MMCONFIG_ABOVE_4GIB,
     MMCONFIG_AS_MAPPED,
     MMCONFIG_BELOW_4GIB,
+    VM_CR_AFTER_LAUNCH,
     inject_corrected_error,
     make_esp,
     options,
@@ -213,10 +214,11 @@ def mmconfig_above_4gib_boot() -> dict:
 
     The only configuration reaching that check's second enabled outcome. Its
     tests only read that one result, so the boot also reports CPUID family
-    1Ah, which is the only way the dump's AMD MSR list runs here, and
-    carries a Secure Processor whose DRTM service is not ready, which is
-    where that mailbox is read in the form naming its address. That Secure
-    Processor also publishes the DRTM ACPI device, the only boot that does.
+    1Ah, which is the only way the dump's AMD MSR list runs here, with
+    `VM_CR` locked the way that family's firmware leaves it, and carries a
+    Secure Processor whose DRTM service is not ready, which is where that
+    mailbox is read in the form naming its address. That Secure Processor
+    also publishes the DRTM ACPI device, the only boot that does.
     """
     return {
         "cpu": MMCONFIG_ABOVE_4GIB,
@@ -308,9 +310,10 @@ def unlisted_psp_boot() -> dict:
 
     What a board newer than the loaders looks like. The only configuration
     reaching the branch that finds a Secure Processor by its PCI class
-    rather than by its ID.
+    rather than by its ID. It also starts with the `VM_CR` bits a launch
+    sets still in place, the one boot where that check warns.
     """
-    return {"psp": 0x17D8}
+    return {"psp": 0x17D8, "cpu": VM_CR_AFTER_LAUNCH}
 
 
 @boot_configuration

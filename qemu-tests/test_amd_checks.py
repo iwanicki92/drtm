@@ -13,12 +13,13 @@ runs on. That the skip path really skips them is asserted in
 Assertions key on a check's identifier and verdict via `results`/`verdicts`,
 not on its wording, except where a test needs a value out of the detail text.
 
-Every branch here is reachable, but three checks need the QEMU build
+Every branch here is reachable, but four checks need the QEMU build
 `docs/testing.md` describes. No upstream CPU model carries the `skinit`
 CPUID bit and upstream refuses it when asked for by name, upstream's
 `amd-iommu` leaves its capability's enable bit clear, and `MSR 0xC0010058`
-is absent from upstream entirely, so it reads zero and the MMCONFIG check
-only ever sees a disabled window.
+and `VM_CR` are absent from upstream entirely, so they read zero, the
+MMCONFIG check only ever sees a disabled window and `VM_CR` never shows a
+firmware lock or a launch's bits.
 """
 
 from conftest import (
@@ -561,9 +562,9 @@ def test_mcfg_check_runs_after_the_vendor_gate(intel_cpu_boot: str):
 
 
 def test_vm_cr_is_decoded(default_boot: str):
-    # Our QEMU models VM_CR with a reset value of zero and nothing presets
-    # it, so every bit reads clear here: SVM neither disabled nor locked,
-    # and no launch state left behind.
+    # This boot leaves VM_CR at our QEMU's reset value of zero, so every
+    # bit reads clear: SVM neither disabled nor locked, and no launch state
+    # left behind.
     ((tag, detail),) = results(default_boot, "amd.vm_cr")
     assert tag == "INFO"
     (found,) = fields(default_boot, "amd.vm_cr")
@@ -572,6 +573,31 @@ def test_vm_cr_is_decoded(default_boot: str):
     assert found["lock"] is False
     assert found["r_init"] is False
     assert "SVM not disabled" in detail
+
+
+def test_vm_cr_reports_a_firmware_lock(mmconfig_above_4gib_boot: str):
+    # The value Turin firmware leaves, LOCK without SVMDIS: SVM usable, the
+    # disable frozen. Still a fact, since a lock changes no launch.
+    ((tag, detail),) = results(mmconfig_above_4gib_boot, "amd.vm_cr")
+    assert tag == "INFO"
+    (found,) = fields(mmconfig_above_4gib_boot, "amd.vm_cr")
+    assert int(found["value"], 16) == 0x8
+    assert found["svmdis"] is False
+    assert found["lock"] is True
+    assert "locked by firmware" in detail
+
+
+def test_vm_cr_warns_when_a_launch_left_r_init_set(unlisted_psp_boot: str):
+    # The three bits SKINIT sets, still in place. R_INIT is the one that
+    # matters: an INIT arrives as #SX, so it would not park a processor.
+    ((tag, detail),) = results(unlisted_psp_boot, "amd.vm_cr")
+    assert tag == "WARN"
+    (found,) = fields(unlisted_psp_boot, "amd.vm_cr")
+    assert int(found["value"], 16) == 0x7
+    assert found["r_init"] is True
+    assert found["dis_a20m"] is True
+    assert found["dpd"] is True
+    assert "#SX" in detail
 
 
 def test_vm_cr_check_runs_after_the_vendor_gate(intel_cpu_boot: str):

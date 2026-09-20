@@ -80,18 +80,18 @@ the fixture then waits on its result. So a session's wall time tracks the
 slowest batch rather than the number of configurations, and `-k` or a single
 test file still boots only what it names.
 
-| Fixture                    | Configuration                                                 | `drtm.conf`                  |
-|----------------------------|---------------------------------------------------------------|------------------------------|
-| `default_boot`             | No TPM device, `EPYC,+skinit`, window below 4 GiB             | `level=trace`, `format=json` |
-| `intel_cpu_boot`           | No TPM device, Intel CPU model (`Skylake-Client`)             | `level=trace`, `format=json` |
-| `tpm_tis_boot`             | `swtpm`-backed TPM 2.0 on the FIFO (TIS) interface            | `level=trace`, `format=json` |
-| `tpm_crb_boot`             | `swtpm`-backed TPM 2.0 on the CRB interface                   | none                         |
-| `amd_iommu_boot`           | `amd-iommu` disabled, `EPYC`, second root bridge              | `level=trace`, `format=json` |
-| `amd_iommu_enabled_boot`   | `amd-iommu` enabled by firmware, `amd-psp`, window as mapped  | `level=verbose`              |
-| `mmconfig_above_4gib_boot` | Window crossing 4 GiB, family 1Ah, PSP not ready, DRTM device | `level=trace`, `format=json` |
-| `machine_check_error_boot` | Machine-check error, IOMMU not in ACPI, PSP no ASPT           | `level=trace`, `format=json` |
-| `amd_drtm_boot`            | `amd-drtm=on` strict, two processors, TIS TPM                 | `level=trace`, `format=json` |
-| `unlisted_psp_boot`        | `amd-psp` with an ID no loader's table lists                  | `level=trace`, `format=json` |
+| Fixture                    | Configuration                                                                 | `drtm.conf`                  |
+|----------------------------|-------------------------------------------------------------------------------|------------------------------|
+| `default_boot`             | No TPM device, `EPYC,+skinit`, window below 4 GiB                             | `level=trace`, `format=json` |
+| `intel_cpu_boot`           | No TPM device, Intel CPU model (`Skylake-Client`)                             | `level=trace`, `format=json` |
+| `tpm_tis_boot`             | `swtpm`-backed TPM 2.0 on the FIFO (TIS) interface                            | `level=trace`, `format=json` |
+| `tpm_crb_boot`             | `swtpm`-backed TPM 2.0 on the CRB interface                                   | none                         |
+| `amd_iommu_boot`           | `amd-iommu` disabled, `EPYC`, second root bridge                              | `level=trace`, `format=json` |
+| `amd_iommu_enabled_boot`   | `amd-iommu` enabled by firmware, `amd-psp`, window as mapped                  | `level=verbose`              |
+| `mmconfig_above_4gib_boot` | Window crossing 4 GiB, family 1Ah, `VM_CR` locked, PSP not ready, DRTM device | `level=trace`, `format=json` |
+| `machine_check_error_boot` | Machine-check error, IOMMU not in ACPI, PSP no ASPT                           | `level=trace`, `format=json` |
+| `amd_drtm_boot`            | `amd-drtm=on` strict, two processors, TIS TPM                                 | `level=trace`, `format=json` |
+| `unlisted_psp_boot`        | `amd-psp` with an ID no loader's table lists, `VM_CR` as a launch leaves it   | `level=trace`, `format=json` |
 
 `level=verbose` is not a level, and that boot carries it on purpose.
 
@@ -116,10 +116,12 @@ ready, and is the one boot whose MSR names the window the firmware mapped,
 so the MCFG check agrees there and warns everywhere else.
 `mmconfig_above_4gib_boot` moves the window, and reports CPUID family 1Ah,
 which is the one family the platform dump reads AMD's own MSRs on: every
-other boot is `EPYC`, family 17h, where that list is refused. It carries a
-Secure Processor whose DRTM service is not ready too, which is the form that
-prints the mailbox address as a field rather than in a sentence, and it is the
-one boot publishing the DRTM ACPI device.
+other boot is `EPYC`, family 17h, where that list is refused. Its `VM_CR`
+starts locked with SVM still enabled, as that family's firmware leaves it,
+which is the one place the check reports a lock. It carries a Secure
+Processor whose DRTM service is not ready too, which is the form that
+prints the mailbox address as a field rather than in a sentence, and it is
+the one boot publishing the DRTM ACPI device.
 `machine_check_error_boot` starts QEMU paused and logs a corrected error in
 bank 1 through its `mce` monitor command before the firmware runs. It also
 carries an enabled IOMMU that ACPI leaves out, and a Secure Processor with
@@ -132,7 +134,8 @@ the run completes, through `launch_state`, to confirm the checks launched
 nothing and armed nothing. It has a second processor and a TIS TPM, so the
 processor list and the BSP check are read with an AP present.
 `unlisted_psp_boot` carries the one Secure Processor found by class rather
-than by ID.
+than by ID, and starts with the three `VM_CR` bits `SKINIT` sets still in
+place, so it is where the check warns about `R_INIT`.
 
 The binary reads `drtm.conf` from beside itself on the ESP, so `QemuVm`
 writes one into the scratch ESP. Most boots raise the level to `trace` and

@@ -104,7 +104,9 @@ which the branch fixes since parking the APs depends on it.
 **`VM_CR` exists.** MSR `0xC0010114` carries `DPD`, `R_INIT`, `DIS_A20M`,
 `LOCK` and `SVMDIS`. Reserved bits raise `#GP`, `LOCK` freezes `SVMDIS`, and
 INIT clears `SVMDIS` unless locked, so the Secure Kernel Loader and Xen
-find the bits they clear after a launch.
+find the bits they clear after a launch. `-cpu EPYC,vm-cr=...` gives the
+register a reset value, since no firmware here locks SVM, and a reserved
+bit in it is refused at startup.
 
 **The locality 4 hash reaches `swtpm`.** `SKINIT` sends `CMD_HASH_START`,
 `CMD_HASH_DATA` and `CMD_HASH_END` over the control channel
@@ -199,17 +201,13 @@ so this is a configured IOMMU no OS would find.
 
 ## What would still be needed
 
-Every precondition check reaches its outcomes, with four exceptions. Two
+Every precondition check reaches its outcomes, with three exceptions. Two
 take a deliberately wrong ACPI table: `amd.iommu_table` never meets an IVRS
 that is malformed or disagrees with configuration space, and
 `amd.mmconfig_table` and `amd.psp_drtm` never meet a table whose checksum
-or structures are wrong. Two take state only a launch or firmware leaves:
-`VM_CR` resets to zero and nothing on the command line presets it, so
-`amd.vm_cr` never sees `SVMDIS`, `LOCK` or `R_INIT` set, where family 1Ah
-firmware reads `LOCK`, and `amd-nb` resets `MEMPROT_CR` to zero, so
-`amd.northbridge` never sees `MEMPROT_EN` set. A CPU property for the
-reset value of `VM_CR`, as `mmio-conf-base` is for the MMCONFIG MSR,
-would close the first. The rest are left to hardware.
+or structures are wrong. One takes state only firmware leaves: `amd-nb`
+resets `MEMPROT_CR` to zero, so `amd.northbridge` never sees `MEMPROT_EN`
+set. These are left to hardware.
 
 The launch itself runs: the meta-trenchboot v0.5.2 image boots Xen and
 dom0 through GRUB's EFI TrenchBoot entry with PCR 17 extended, which a
@@ -241,6 +239,7 @@ and some of them no longer hold.
 
 | Date       | QEMU   | Observation                                                                                                               |
 |------------|--------|---------------------------------------------------------------------------------------------------------------------------|
+| 2026-09-20 | ours   | `vm-cr=0x8` reads back as family 1Ah firmware leaves it, and `vm-cr=0x7` reaches the `R_INIT` warning of `amd.vm_cr`      |
 | 2026-09-20 | ours   | A `drtm` boot of the launch machine under strict mode with `-d guest_errors` leaves the log empty and no launch recorded  |
 | 2026-09-20 | ours   | `amd-nb` answers offset `0x384` through the root bridge protocol, reading zero, as function 0 of a family 1Ah node does   |
 | 2026-09-20 | ours   | `mmio-conf-base=0xb0000021` names the window Dasharo's MCFG publishes, so `amd.mmconfig_table` agrees there alone         |
