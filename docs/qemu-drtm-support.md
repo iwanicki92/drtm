@@ -109,10 +109,12 @@ find the bits they clear after a launch.
 **The locality 4 hash reaches `swtpm`.** `SKINIT` sends `CMD_HASH_START`,
 `CMD_HASH_DATA` and `CMD_HASH_END` over the control channel
 (`backends/tpm/tpm_ioctl.h`), which resets PCRs 17 to 22 and extends PCR 17
-with the block's digest in every bank. The TIS frontends carry it, while
-their locality 4 register window still ignores guest writes, so only the
-instruction can start it. `query-amd-drtm` reports whether the hash went
-through, and `unsupported` for a backend without the capability.
+with the block's digest in every bank. The TIS frontends carry it, and
+`-device tpm-tis,locality4=on` lets a guest drive the same sequence through
+the locality 4 registers, which no hardware allows, so software standing in
+for the instruction can measure into PCR 17 too. `query-amd-drtm` reports
+whether the hash went through, and `unsupported` for a backend without the
+capability.
 
 **An AMD northbridge function.** `-device amd-nb` adds `00:18.0` with AMD's
 vendor ID, the host bridge class and `MEMPROT_CR` at `0x384`. The Secure
@@ -120,10 +122,25 @@ Kernel Loader writes that register back with `MEMPROT_EN` clear to lift
 `SL_DEV` protection of the block, and the device records the release. The
 loader reaches the register through MMCONFIG when MSR `0xC0010058` says
 the window is enabled, and otherwise through `0xCF8` with AMD's extended
-bits, which `hw/pci/pci_host.c` masks off. So a launch also passes
-`mmio-conf-base=0xb0000001`, which is where Dasharo maps its window.
+bits, which upstream masks off and
+`-global q35-pcihost.cf8-extended-config=on` decodes.
 `-global q35-pcihost.mch-multifunction=on` lets the IOMMU sit at `00:00.2`,
 where the loader looks for it, as function 2 of the host bridge.
+
+**`SL_DEV` keeps DMA out.** With an `amd-iommu` present, the block's range
+answers every device access with a decode error until the northbridge
+releases it, and the IOMMU's own command, event log and table fetches are
+held back the same way. The Secure Kernel Loader's first IOMMU pass, which
+puts its command buffer inside the block on purpose, stops at the event
+log interrupt and its second pass, after the release, completes, which is
+the sequence its code expects on hardware. Without an IOMMU the block is
+only recorded, and `query-amd-drtm` says which with `enforced`.
+
+**INIT waits for `STGI`.** A core with `GIF` clear holds an INIT instead of
+resetting, and `STGI` delivers it. With `R_INIT` set in `VM_CR` the INIT
+arrives as `#SX` with error code 1, as _APM Vol 2, table 15-12_ says, so
+the loader's window between `SKINIT` and `STGI` is closed the way it is on
+hardware.
 
 **The launch is observable.** `query-amd-drtm` returns whether a launch
 happened, the block's base and length, whether `SL_DEV` is still armed,
@@ -133,7 +150,9 @@ events cover the instruction, `VM_CR` writes, APs started after the
 launch, the northbridge write and the platform object. A block shorter
 than its header, an entry offset past its end, an AP not parked, a
 release with no launch and a missing TPM are guest errors under
-`-d guest_errors`.
+`-d guest_errors`. `-device amd-drtm-platform,strict=on` stops the VM on
+any of them instead, as a guest panic that names the rule, so a test cannot
+miss one.
 
 **`amd-iommu` can report its capability as enabled.**
 `-device amd-iommu,firmware-enabled=on` sets bit 0 of the capability's base
@@ -142,11 +161,20 @@ base. Nothing in a QEMU guest does that, and the Dasharo firmware we boot
 is an Intel platform build that would not touch an AMD IOMMU, so without
 this the bit can only ever read clear.
 
-**`MSR 0xC0010058` holds a value.** `-cpu EPYC,mmio-conf-base=0xe0000021`
-gives the MMIO configuration base register a reset value, since no firmware
-here programs it, and writes to it stick. Nothing is mapped: the register
-reports a window rather than backing one, so it has to name a window the
+**`MSR 0xC0010058` maps MMCONFIG.** A write by the BSP maps or unmaps the
+window on `q35` the way PCIEXBAR does, with the bus range setting its size,
+so software that programs the register the way AMD firmware does finds
+configuration space at the base it named. `-cpu EPYC,mmio-conf-base=...`
+gives the register a reset value, since no firmware here programs it. The
+reset value is reported, not mapped, so it has to name a window the
 firmware did map for software that then uses it.
+
+**One machine option.** `-machine q35,amd-drtm=on` adds the `skinit`
+feature to every CPU, the platform object, `amd-nb` at `00:18.0`, an
+`amd-iommu` at `00:00.2` with its capability enabled, and turns on the two
+host bridge properties above. It is the configuration the TrenchBoot boot
+test uses. Each device still works on its own, and the MCH stays Intel
+underneath.
 
 **A Secure Processor with mailbox registers.** `-device amd-psp` adds an AMD
 function with the Turin ASP's device ID, `156e`, and `device-id=` picks any
@@ -183,25 +211,18 @@ functional test in the QEMU tree checks, since it exercises the emulator
 rather than this binary. What the build still models loosely, in the order
 a stricter guest would notice:
 
-1. **`SL_DEV` is a record, not a protection.** The block's range is listed
-    as kept from DMA and dropped on release, but no device DMA is blocked.
-2. **Extended configuration over `0xCF8`.** AMD's address bits 24 to 27
-    are masked off by `hw/pci/pci_host.c`, so a loader that has not found
-    an MMCONFIG window writes into the first 256 bytes instead. The
-    `mmio-conf-base` value above is the workaround.
-3. **The locality 4 registers.** The TIS window for locality 4 still
-    ignores writes, so a guest driving the hash sequence through the
-    registers rather than the instruction gets nothing.
-4. **A writable IOMMU enable bit.** The property sets it at realize and
+1. **The Secure Processor's DRTM service.** Mailbox writes are dropped, so
+    the loader's PSP-driven variant stops where it would issue a command.
+2. **A writable IOMMU enable bit.** The property sets it at realize and
     leaves it read-only. The Secure Kernel Loader programs the IOMMU's MMIO
     registers, which upstream models, but a loader that expects the
     capability bit to take a write (RW1S) would not see it stick.
-5. **INIT while `GIF` is clear.** A real core holds INIT until `STGI`.
-    Under TCG the reset is taken before the target sees the interrupt, so
-    an INIT arriving between `SKINIT` and `STGI` resets the CPU. `#SX` is
-    not raised either.
-6. **The Secure Processor's DRTM service.** Mailbox writes are dropped, so
-    the loader's PSP-driven variant stops where it would issue a command.
+3. **`SL_DEV` covers devices only.** CPU accesses to the block pass, as on
+    hardware, and the range is one block at the SLB rather than the
+    64 KiB granule and exclusion range the real register set describes.
+4. **The MMCONFIG window is per machine.** Every core carries the MSR, but
+    only the BSP's write moves the window, and PCIEXBAR and the MSR share
+    it, so whichever was written last wins.
 
 This project's own launch stays on hold, so the emulation is exercised by
 TrenchBoot's loader rather than by `drtm`.
@@ -214,6 +235,9 @@ and some of them no longer hold.
 
 | Date       | QEMU   | Observation                                                                                                               |
 |------------|--------|---------------------------------------------------------------------------------------------------------------------------|
+| 2026-09-20 | ours   | With `SL_DEV` enforced, SKL's first IOMMU pass stops at the event log interrupt, the second completes after the release   |
+| 2026-09-20 | ours   | SKL's `IOMMU event log not empty` with an all-zero dump is that first pass, not a fault: the entry was never written      |
+| 2026-09-20 | ours   | `-machine q35,amd-drtm=on` boots the same image with SKL taking the `0xCF8` route, MSR `0xC0010058` left at zero          |
 | 2026-09-20 | ours   | meta-trenchboot v0.5.2 boots Xen and dom0 through `SKINIT`, PCR 17 extended in every bank, PCR 18 in SHA-1 and SHA-256    |
 | 2026-09-20 | ours   | SKL writes `MEMPROT_CR` over `0xCF8` with AMD's extended bits unless MSR `0xC0010058` is enabled, bits QEMU masks off     |
 | 2026-09-20 | ours   | Dasharo maps MMCONFIG at `0xb0000000`, so `mmio-conf-base=0xb0000001` names the window it did map                         |
