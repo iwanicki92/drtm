@@ -9,6 +9,7 @@ pub mod checks;
 pub mod drtm_device;
 pub mod iommu;
 pub mod ivrs;
+pub mod mcfg;
 pub mod memory;
 pub mod mmconfig;
 pub mod northbridge;
@@ -52,6 +53,7 @@ pub fn report(devices: &Devices) {
     }
 
     mmconfig::report();
+    mcfg::report();
     let iommus = iommu::report(devices);
     ivrs::report(&iommus);
     northbridge::report(devices);

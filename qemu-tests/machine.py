@@ -27,6 +27,10 @@ CORRECTED_ERROR = 0x9000_0000_0000_0000
 # the base. Both values cover 256 buses, one below 4 GiB and one crossing it.
 MMCONFIG_BELOW_4GIB = f"{SKINIT_CPU},mmio-conf-base=0xe0000021"
 
+# The window Dasharo maps through PCIEXBAR and publishes in its MCFG, 256
+# buses from 0xb0000000, so the MSR and the table agree on this one boot.
+MMCONFIG_AS_MAPPED = f"{SKINIT_CPU},mmio-conf-base=0xb0000021"
+
 # CPUID family 1Ah model 02h, an EPYC 9015, whose PPR the platform dump's
 # AMD MSR list is taken from. `EPYC` alone is family 17h, so without this
 # nothing here ever reaches that list. Both are upstream CPU properties,

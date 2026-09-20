@@ -29,6 +29,7 @@ from drtmtest.qemu_vm import QemuVm
 from drtmtest.session import BootSession
 from machine import (
     MMCONFIG_ABOVE_4GIB,
+    MMCONFIG_AS_MAPPED,
     MMCONFIG_BELOW_4GIB,
     inject_corrected_error,
     make_esp,
@@ -256,10 +257,16 @@ def amd_iommu_enabled_boot() -> dict:
 
     The only configuration where `amd.iommu` can pass, and only our QEMU
     offers it. Its tests only read results, so the boot also carries a
-    `drtm.conf` naming a level that does not exist, and a Secure Processor
-    device with the Turin ASP's device ID whose DRTM service is ready.
+    `drtm.conf` naming a level that does not exist, a Secure Processor
+    device with the Turin ASP's device ID whose DRTM service is ready, and
+    the one MSR value naming the window the firmware actually mapped.
     """
-    return {"iommu": "enabled", "config": BAD_LEVEL, "psp": 0x156E}
+    return {
+        "cpu": MMCONFIG_AS_MAPPED,
+        "iommu": "enabled",
+        "config": BAD_LEVEL,
+        "psp": 0x156E,
+    }
 
 
 @boot_configuration

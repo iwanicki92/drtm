@@ -517,3 +517,34 @@ def test_no_northbridge_is_a_fact_not_a_verdict(default_boot: str):
 
 def test_northbridge_check_runs_after_the_vendor_gate(intel_cpu_boot: str):
     assert verdicts(intel_cpu_boot, "amd.northbridge") == []
+
+
+def test_mcfg_disagreeing_with_the_msr_warns(default_boot: str):
+    # MMCONFIG_BELOW_4GIB puts the MSR's window at 0xe0000000 while the
+    # firmware's MCFG says 0xb0000000, the window it actually mapped. A
+    # loader reading the MSR and an OS reading the table then reach
+    # different windows, so this is more than a fact.
+    ((tag, detail),) = results(default_boot, "amd.mmconfig_table")
+    assert tag == "WARN"
+    (found,) = fields(default_boot, "amd.mmconfig_table")
+    assert int(found["mcfg_base"], 16) == 0xB0000000
+    assert int(found["msr_base"], 16) == 0xE0000000
+    assert "0xb0000000" in detail and "0xe0000000" in detail
+
+
+def test_mcfg_agreeing_with_the_msr_is_reported(amd_iommu_enabled_boot: str):
+    # The one boot whose MSR names the window Dasharo mapped, 256 buses from
+    # 0xb0000000, so the table and the register agree.
+    ((tag, detail),) = results(amd_iommu_enabled_boot, "amd.mmconfig_table")
+    assert tag == "INFO"
+    assert "0xb0000000" in detail
+    assert "matching" in detail
+
+
+def test_mcfg_check_is_skipped_when_the_msr_places_no_window(amd_iommu_boot: str):
+    ((tag, _),) = results(amd_iommu_boot, "amd.mmconfig_table")
+    assert tag == "SKIP"
+
+
+def test_mcfg_check_runs_after_the_vendor_gate(intel_cpu_boot: str):
+    assert verdicts(intel_cpu_boot, "amd.mmconfig_table") == []

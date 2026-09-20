@@ -86,7 +86,7 @@ test file still boots only what it names.
 | `tpm_tis_boot`             | `swtpm`-backed TPM 2.0 on the FIFO (TIS) interface            | `level=trace`, `format=json` |
 | `tpm_crb_boot`             | `swtpm`-backed TPM 2.0 on the CRB interface                   | none                         |
 | `amd_iommu_boot`           | `amd-iommu` disabled, `EPYC`, second root bridge              | `level=trace`, `format=json` |
-| `amd_iommu_enabled_boot`   | `amd-iommu` enabled by firmware, `amd-psp`                    | `level=verbose`              |
+| `amd_iommu_enabled_boot`   | `amd-iommu` enabled by firmware, `amd-psp`, window as mapped  | `level=verbose`              |
 | `mmconfig_above_4gib_boot` | Window crossing 4 GiB, family 1Ah, PSP not ready, DRTM device | `level=trace`, `format=json` |
 | `machine_check_error_boot` | Machine-check error, IOMMU not in ACPI, PSP no ASPT           | `level=trace`, `format=json` |
 
@@ -108,8 +108,9 @@ Several boots exist only to reach a second outcome of one check.
 leaves the configuration window disabled, which is where that check's third
 outcome comes from. It also carries a second root bridge, as a server has,
 so the scan is held to reading each function once. The enabled IOMMU boot
-differs in the capability and adds a Secure Processor whose DRTM service is
-ready.
+differs in the capability, adds a Secure Processor whose DRTM service is
+ready, and is the one boot whose MSR names the window the firmware mapped,
+so the MCFG check agrees there and warns everywhere else.
 `mmconfig_above_4gib_boot` moves the window, and reports CPUID family 1Ah,
 which is the one family the platform dump reads AMD's own MSRs on: every
 other boot is `EPYC`, family 17h, where that list is refused. It carries a
