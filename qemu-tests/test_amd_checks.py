@@ -548,3 +548,21 @@ def test_mcfg_check_is_skipped_when_the_msr_places_no_window(amd_iommu_boot: str
 
 def test_mcfg_check_runs_after_the_vendor_gate(intel_cpu_boot: str):
     assert verdicts(intel_cpu_boot, "amd.mmconfig_table") == []
+
+
+def test_vm_cr_is_decoded(default_boot: str):
+    # Our QEMU models VM_CR with a reset value of zero and nothing presets
+    # it, so every bit reads clear here: SVM neither disabled nor locked,
+    # and no launch state left behind.
+    ((tag, detail),) = results(default_boot, "amd.vm_cr")
+    assert tag == "INFO"
+    (found,) = fields(default_boot, "amd.vm_cr")
+    assert int(found["value"], 16) == 0
+    assert found["svmdis"] is False
+    assert found["lock"] is False
+    assert found["r_init"] is False
+    assert "SVM not disabled" in detail
+
+
+def test_vm_cr_check_runs_after_the_vendor_gate(intel_cpu_boot: str):
+    assert verdicts(intel_cpu_boot, "amd.vm_cr") == []

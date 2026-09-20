@@ -14,6 +14,7 @@ pub mod memory;
 pub mod mmconfig;
 pub mod northbridge;
 pub mod psp;
+pub mod vm_cr;
 
 use memory::SlbRegion;
 
@@ -34,6 +35,7 @@ pub fn report(devices: &Devices) {
             "CPUID.80000001:ECX[12] clear, SKINIT unsupported on this CPU"
         );
     }
+    vm_cr::report();
 
     match memory::probe_slb_region() {
         SlbRegion::Available(address) => {
