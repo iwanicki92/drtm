@@ -9,12 +9,11 @@ use alloc::vec::Vec;
 
 use uefi::proto::pci::root_bridge::PciIoAccessPci;
 
-use crate::amd::psp;
+use crate::amd::iommu::{self, BASE_LOW_ENABLE, CAPABILITY_REG_BASE_LOW};
+use crate::amd::psp::{self, VENDOR_AMD};
 use crate::check;
 use crate::logging::record;
 use crate::pci::{self, Devices, Function};
-
-const VENDOR_AMD: u16 = 0x1022;
 
 const REG_CLASS: u8 = 0x08;
 
@@ -38,13 +37,9 @@ const HOST_BRIDGE: Function = Function {
 /// whatever register firmware last selected, so these are left unread.
 const HOST_BRIDGE_DATA: [u32; 3] = [0x64, 0xBC, 0xC8];
 
-/// Capability ID and type of an AMD IOMMU, and its base address registers
-/// (_AMD IOMMU specification, section 3.2_).
-const CAPABILITY_SECURE_DEVICE: u8 = 0x0F;
-const CAPABILITY_TYPE_IOMMU: u8 = 3;
-const CAPABILITY_BASE_LOW: u8 = 0x04;
-const CAPABILITY_BASE_HIGH: u8 = 0x08;
-const BASE_LOW_ENABLE: u32 = 1;
+/// The IOMMU Base Address High register, and the address bits of the low
+/// one (_AMD IOMMU specification, section 3.2_).
+const CAPABILITY_REG_BASE_HIGH: u8 = 0x08;
 const BASE_LOW_ADDRESS: u32 = !0x3FFF;
 
 /// IOMMU MMIO registers, all 64-bit and read without side effects
@@ -64,16 +59,6 @@ const IOMMU_REGISTERS: [(usize, &str); 13] = [
     (0x2018, "EVENT_TAIL"),
     (0x2020, "STATUS"),
 ];
-
-fn is_iommu(pci: &PciIoAccessPci<'_>, function: Function) -> Option<u8> {
-    let mut found = None;
-    pci::for_each_capability(pci, function, |capability| {
-        if capability.id == CAPABILITY_SECURE_DEVICE && capability.kind == CAPABILITY_TYPE_IOMMU {
-            found = Some(capability.offset);
-        }
-    });
-    found
-}
 
 /// What each function is, what its capability list holds, and its
 /// configuration space.
@@ -118,7 +103,7 @@ pub fn dump(devices: &Devices) {
 fn size(pci: &PciIoAccessPci<'_>, device: &pci::Device) -> u32 {
     if device.function == HOST_BRIDGE
         || psp::is_secure_processor(device)
-        || is_iommu(pci, device.function).is_some()
+        || iommu::capability_of(pci, device.function).is_some()
     {
         EXTENDED
     } else if device.vendor == VENDOR_AMD {
@@ -188,7 +173,7 @@ fn config(pci: &PciIoAccessPci<'_>, function: Function, size: u32) {
 pub fn dump_iommu_registers(devices: &Devices) {
     pci::for_each_device(devices, |pci, device| {
         let function = device.function;
-        let Some(capability) = is_iommu(pci, function) else {
+        let Some(capability) = iommu::capability_of(pci, function) else {
             return;
         };
         // A capability near the end of the header would put these registers
@@ -202,7 +187,10 @@ pub fn dump_iommu_registers(devices: &Devices) {
                 })
                 .unwrap_or(0)
         };
-        let (low, high) = (read(CAPABILITY_BASE_LOW), read(CAPABILITY_BASE_HIGH));
+        let (low, high) = (
+            read(CAPABILITY_REG_BASE_LOW),
+            read(CAPABILITY_REG_BASE_HIGH),
+        );
         let base = (u64::from(high) << 32) | u64::from(low & BASE_LOW_ADDRESS);
         if low & BASE_LOW_ENABLE == 0 || base == 0 {
             record(

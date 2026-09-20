@@ -10,8 +10,10 @@
 
 use alloc::vec::Vec;
 
+use uefi::proto::pci::root_bridge::PciIoAccessPci;
+
 use crate::check;
-use crate::pci::{self, Devices, Function};
+use crate::pci::{self, Capability, Devices, Function};
 
 /// One IOMMU as configuration space shows it, which is also how the IVRS
 /// table names one.
@@ -24,14 +26,14 @@ pub struct Iommu {
 /// AMD puts both the IOMMU and the older Device Exclusion Vector under
 /// capability ID `0x0F`, so the type field is what separates them
 /// (_AMD I/O Virtualization Technology Specification, section 3.7.1_).
-const CAPABILITY_ID_SECURE_DEVICE: u8 = 0x0F;
-const CAPABILITY_TYPE_IOMMU: u8 = 3;
+pub const CAPABILITY_ID_SECURE_DEVICE: u8 = 0x0F;
+pub const CAPABILITY_TYPE_IOMMU: u8 = 3;
 
 /// Bit 0 of the IOMMU Base Address Low register, capability offset `0x04`.
 /// Firmware sets it once the MMIO base is programmed, which locks the block
 /// (_AMD IOMMU specification, section 3.2_).
-const CAPABILITY_REG_BASE_LOW: u8 = 0x04;
-const BASE_LOW_ENABLE: u32 = 1 << 0;
+pub const CAPABILITY_REG_BASE_LOW: u8 = 0x04;
+pub const BASE_LOW_ENABLE: u32 = 1 << 0;
 
 /// Where the Secure Kernel Loader expects the IOMMU
 /// (`secure-kernel-loader:include/iommu.h`). No specification fixes an
@@ -42,6 +44,21 @@ const SKL_IOMMU: Function = Function {
     device: 0,
     function: 2,
 };
+
+fn is_iommu(capability: &Capability) -> bool {
+    capability.id == CAPABILITY_ID_SECURE_DEVICE && capability.kind == CAPABILITY_TYPE_IOMMU
+}
+
+/// The offset of `function`'s IOMMU capability block, if it has one.
+pub fn capability_of(pci: &PciIoAccessPci<'_>, function: Function) -> Option<u8> {
+    let mut found = None;
+    pci::for_each_capability(pci, function, |capability| {
+        if is_iommu(&capability) {
+            found = Some(capability.offset);
+        }
+    });
+    found
+}
 
 /// Reports every AMD IOMMU configuration space offers, and returns them.
 ///
@@ -54,9 +71,7 @@ pub fn report(devices: &Devices) -> Vec<Iommu> {
     pci::for_each_device(devices, |pci, device| {
         let function = device.function;
         pci::for_each_capability(pci, function, |capability| {
-            if capability.id != CAPABILITY_ID_SECURE_DEVICE
-                || capability.kind != CAPABILITY_TYPE_IOMMU
-            {
+            if !is_iommu(&capability) {
                 return;
             }
             found.push(Iommu {

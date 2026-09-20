@@ -18,7 +18,7 @@ use crate::check;
 use crate::pci::{Device, Devices, Function};
 
 /// AMD's PCI vendor ID, the only one any Secure Processor answers with.
-const VENDOR_AMD: u16 = 0x1022;
+pub const VENDOR_AMD: u16 = 0x1022;
 
 /// What a Secure Processor is in configuration space, an encryption
 /// controller of no more specific kind. It names the device class rather
