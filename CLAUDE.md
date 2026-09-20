@@ -63,6 +63,9 @@ defaults.
     (builds the binary itself first, see `docs/testing.md`).
 - Lint everything: `pre-commit run --all-files` (config in
     `.pre-commit-config.yaml`, needs `pre-commit install` once, plus
-    `rustup component add rustfmt clippy`).
+    `rustup component add rustfmt clippy`). Clippy by hand is plain
+    `cargo clippy -- -D warnings`: `--all-targets` fails on a duplicate
+    `panic_impl`, since the test target links `std` against the `uefi`
+    crate's panic handler.
 - `task build`/`task lint`/`task test` (Taskfile.yml) wrap the three commands
     above.
