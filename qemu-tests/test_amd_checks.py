@@ -492,3 +492,28 @@ def test_the_drtm_device_check_runs_after_the_vendor_gate(intel_cpu_boot: str):
     # An AMD device described by AMD firmware, so an Intel boot must not
     # report on it at all.
     assert verdicts(intel_cpu_boot, "amd.drtm_device") == []
+
+
+def test_the_northbridge_is_read_on_the_launch_machine(amd_drtm_boot: str):
+    # AMD's northbridge function 0 at 0:18.0, which the Secure Kernel Loader
+    # walks to release SL_DEV through MEMPROT_CR. Before any launch the
+    # register reads zero, as it does on family 1Ah silicon.
+    ((tag, detail),) = results(amd_drtm_boot, "amd.northbridge")
+    assert tag == "INFO"
+    assert "1022:12c0 at 0000:00:18.0" in detail
+    (found,) = fields(amd_drtm_boot, "amd.northbridge")
+    assert found["function"] == "0000:00:18.0"
+    assert int(found["memprot"], 16) == 0
+    assert found["memprot_en"] is False
+
+
+def test_no_northbridge_is_a_fact_not_a_verdict(default_boot: str):
+    # Q35 has an Intel MCH and nothing at 0:18.0. What a loader does about
+    # that is the loader's, so this only says where nothing answered.
+    ((tag, detail),) = results(default_boot, "amd.northbridge")
+    assert tag == "INFO"
+    assert "no AMD function at 0000:00:18.0" in detail
+
+
+def test_northbridge_check_runs_after_the_vendor_gate(intel_cpu_boot: str):
+    assert verdicts(intel_cpu_boot, "amd.northbridge") == []

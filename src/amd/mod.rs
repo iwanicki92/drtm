@@ -11,6 +11,7 @@ pub mod iommu;
 pub mod ivrs;
 pub mod memory;
 pub mod mmconfig;
+pub mod northbridge;
 pub mod psp;
 
 use memory::SlbRegion;
@@ -53,6 +54,7 @@ pub fn report(devices: &Devices) {
     mmconfig::report();
     let iommus = iommu::report(devices);
     ivrs::report(&iommus);
+    northbridge::report(devices);
     psp::report(devices);
     aspt::report(devices);
     drtm_device::report();
