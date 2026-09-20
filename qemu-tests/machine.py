@@ -108,7 +108,11 @@ def options(
     `amd_drtm` boots our QEMU's `-machine q35,amd-drtm=on`, the machine a
     launch runs on: `skinit` on every CPU, an enabled `amd-iommu` at `0:0.2`
     as function 2 of the host bridge, and AMD's northbridge at `0:18.0`.
-    Not with `iommu`, since QEMU takes one IOMMU per machine.
+    Not with `iommu`, since QEMU takes one IOMMU per machine. The platform
+    device runs strict, so a broken launch rule stops the VM as a panic
+    rather than a logged line, and guest errors go to `qemu.log`: a checker
+    that only observes must trip neither. Two processors, so the machine
+    has an AP the way a launch machine does.
 
     `extra_root_bridge` adds a second PCI host bridge (`pxb-pcie`) with a
     root port on bus 0x20, the way a server has one per NUMA node.
@@ -147,6 +151,15 @@ def options(
     ]
     if not vga_and_nic:
         args += ["-vga", "none", "-nic", "none"]
+    if amd_drtm:
+        args += [
+            "-global",
+            "amd-drtm-platform.strict=on",
+            "-d",
+            "guest_errors",
+            "-smp",
+            "2",
+        ]
     if iommu:
         args += ["-device", _amd_iommu(iommu == "enabled", ivrs)]
     if extra_root_bridge:

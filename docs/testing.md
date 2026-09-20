@@ -31,15 +31,16 @@ The first run downloads Dasharo's QEMU Q35 firmware image into
 
 ### The QEMU build
 
-The suite needs our own QEMU, not a distribution one. Seven checks reach
+The suite needs our own QEMU, not a distribution one. Nine checks reach
 outcomes upstream cannot produce: `amd.skinit` passing needs a CPU allowed
 to report the feature bit, `amd.iommu` passing needs an `amd-iommu` whose
-capability reads enabled, `amd.mmconfig` needs `MSR 0xC0010058` to hold a
-value at all, `amd.psp` needs a device with a Secure Processor ID,
-`amd.psp_drtm` needs that device's mailbox registers and the table naming
-where they are, `amd.drtm_device` finding anything needs the SSDT that
-describes it, and `amd.iommu_table` warning needs an IOMMU with no IVRS
-table.
+capability reads enabled, `amd.mmconfig` and `amd.mmconfig_table` need
+`MSR 0xC0010058` to hold a value at all, `amd.psp` needs a device with a
+Secure Processor ID, `amd.psp_drtm` needs that device's mailbox registers
+and the table naming where they are, `amd.drtm_device` finding anything
+needs the SSDT that describes it, `amd.iommu_table` warning needs an IOMMU
+with no IVRS table, and `amd.northbridge` finding a function needs the
+northbridge the launch machine adds.
 What those patches do, and what is still missing, is in
 [qemu-drtm-support.md](qemu-drtm-support.md).
 
@@ -89,6 +90,8 @@ test file still boots only what it names.
 | `amd_iommu_enabled_boot`   | `amd-iommu` enabled by firmware, `amd-psp`, window as mapped  | `level=verbose`              |
 | `mmconfig_above_4gib_boot` | Window crossing 4 GiB, family 1Ah, PSP not ready, DRTM device | `level=trace`, `format=json` |
 | `machine_check_error_boot` | Machine-check error, IOMMU not in ACPI, PSP no ASPT           | `level=trace`, `format=json` |
+| `amd_drtm_boot`            | `amd-drtm=on` strict, two processors, TIS TPM                 | `level=trace`, `format=json` |
+| `unlisted_psp_boot`        | `amd-psp` with an ID no loader's table lists                  | `level=trace`, `format=json` |
 
 `level=verbose` is not a level, and that boot carries it on purpose.
 
@@ -121,6 +124,15 @@ one boot publishing the DRTM ACPI device.
 bank 1 through its `mce` monitor command before the firmware runs. It also
 carries an enabled IOMMU that ACPI leaves out, and a Secure Processor with
 no ASPT, since its tests only read results.
+`amd_drtm_boot` is the machine a launch runs on, and the one boot held to
+more than its serial output. The platform device runs strict, so a broken
+launch rule would stop the VM as a panic and fail the boot, QEMU's guest
+error log is kept and asserted empty, and `query-amd-drtm` is asked once
+the run completes, through `launch_state`, to confirm the checks launched
+nothing and armed nothing. It has a second processor and a TIS TPM, so the
+processor list and the BSP check are read with an AP present.
+`unlisted_psp_boot` carries the one Secure Processor found by class rather
+than by ID.
 
 The binary reads `drtm.conf` from beside itself on the ESP, so `QemuVm`
 writes one into the scratch ESP. Most boots raise the level to `trace` and

@@ -199,11 +199,17 @@ so this is a configured IOMMU no OS would find.
 
 ## What would still be needed
 
-Every precondition check reaches its outcomes, except the two that take a
-deliberately wrong ACPI table: `amd.iommu_table` never meets an IVRS that is
-malformed or disagrees with configuration space, and `amd.psp_drtm` never
-meets an ASPT whose checksum or register structures are wrong. Those are
-left to hardware.
+Every precondition check reaches its outcomes, with four exceptions. Two
+take a deliberately wrong ACPI table: `amd.iommu_table` never meets an IVRS
+that is malformed or disagrees with configuration space, and
+`amd.mmconfig_table` and `amd.psp_drtm` never meet a table whose checksum
+or structures are wrong. Two take state only a launch or firmware leaves:
+`VM_CR` resets to zero and nothing on the command line presets it, so
+`amd.vm_cr` never sees `SVMDIS`, `LOCK` or `R_INIT` set, where family 1Ah
+firmware reads `LOCK`, and `amd-nb` resets `MEMPROT_CR` to zero, so
+`amd.northbridge` never sees `MEMPROT_EN` set. A CPU property for the
+reset value of `VM_CR`, as `mmio-conf-base` is for the MMCONFIG MSR,
+would close the first. The rest are left to hardware.
 
 The launch itself runs: the meta-trenchboot v0.5.2 image boots Xen and
 dom0 through GRUB's EFI TrenchBoot entry with PCR 17 extended, which a
@@ -235,6 +241,10 @@ and some of them no longer hold.
 
 | Date       | QEMU   | Observation                                                                                                               |
 |------------|--------|---------------------------------------------------------------------------------------------------------------------------|
+| 2026-09-20 | ours   | A `drtm` boot of the launch machine under strict mode with `-d guest_errors` leaves the log empty and no launch recorded  |
+| 2026-09-20 | ours   | `amd-nb` answers offset `0x384` through the root bridge protocol, reading zero, as function 0 of a family 1Ah node does   |
+| 2026-09-20 | ours   | `mmio-conf-base=0xb0000021` names the window Dasharo's MCFG publishes, so `amd.mmconfig_table` agrees there alone         |
+| 2026-09-20 | ours   | `VM_CR` reads zero on every boot, so `amd.vm_cr` reaches only its all-clear outcome                                       |
 | 2026-09-20 | ours   | With `SL_DEV` enforced, SKL's first IOMMU pass stops at the event log interrupt, the second completes after the release   |
 | 2026-09-20 | ours   | SKL's `IOMMU event log not empty` with an all-zero dump is that first pass, not a fault: the entry was never written      |
 | 2026-09-20 | ours   | `-machine q35,amd-drtm=on` boots the same image with SKL taking the `0xCF8` route, MSR `0xC0010058` left at zero          |

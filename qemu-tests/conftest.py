@@ -76,6 +76,11 @@ BUILD_TIMEOUT = 300.0
 
 _built_binary: Path | None = None
 
+# What `query-amd-drtm` answered once each launch-machine boot had printed
+# its last record, by log directory. What the platform device saw of the
+# guest, which for a checker that only observes must be nothing.
+_LAUNCH_STATE: dict[Path, dict] = {}
+
 
 def built_efi_binary() -> Path:
     """Builds `drtm.efi` on first use and returns where it landed.
@@ -99,6 +104,7 @@ def boot_and_capture(
     config: str | None = FULL_OUTPUT,
     corrected_error_bank: int | None = None,
     save_firmware_to: Path | None = None,
+    query_launch: bool = False,
     **machine,
 ) -> str:
     """Boots `drtm.efi` once and returns everything it printed.
@@ -112,6 +118,9 @@ def boot_and_capture(
     is an error: the firmware release is pinned, so it either prints this
     or something changed that is worth seeing. Which marker ends the read
     follows from `config`, since the two output forms end differently.
+
+    `query_launch` asks the platform device what it saw once the guest is
+    done, for `launch_state` to read.
     """
     marker = SUMMARY_RECORD if config and "format=json" in config else CHECKS_COMPLETE
     with tempfile.TemporaryDirectory(prefix="drtm-esp-") as scratch:
@@ -128,6 +137,8 @@ def boot_and_capture(
             vm.expect(BOOT_PROMPT, BOOT_PROMPT_TIMEOUT)
             vm.send(b"\r")
             vm.expect(marker, BOOT_TIMEOUT)
+            if query_launch:
+                _LAUNCH_STATE[log_dir] = vm.wait_for_qmp().execute("query-amd-drtm")
             return vm.capture
 
 
@@ -275,10 +286,12 @@ def amd_drtm_boot() -> dict:
     the machine a launch boots on.
 
     The only configuration with the IOMMU at `0:0.2`, where the Secure
-    Kernel Loader looks for it, and with AMD's northbridge at `0:18.0`. The
-    plain `EPYC` model, since the machine adds `skinit` itself.
+    Kernel Loader looks for it, with AMD's northbridge at `0:18.0`, with a
+    second processor and with the platform device running strict. The plain
+    `EPYC` model, since the machine adds `skinit` itself, and a TIS TPM,
+    the interface a launch measures through.
     """
-    return {"amd_drtm": True}
+    return {"amd_drtm": True, "tpm": "tis", "query_launch": True}
 
 
 @boot_configuration
@@ -433,6 +446,18 @@ def summary(capture: str) -> dict:
     """The record a JSON-mode run ends with: a count per tag and a verdict."""
     (found,) = [record for record in records(capture) if record["rec"] == "summary"]
     return found
+
+
+def launch_state(name: str) -> dict:
+    """What the platform device recorded of boot `name`, from
+    `query-amd-drtm`: whether a launch happened, whether SL_DEV is armed and
+    which ranges are kept from DMA."""
+    return _LAUNCH_STATE[SESSION.boot_log_dir(name)]
+
+
+def qemu_log(name: str) -> str:
+    """QEMU's own log of boot `name`, where guest errors and traces land."""
+    return (SESSION.boot_log_dir(name) / "qemu.log").read_text(errors="replace")
 
 
 def completed(capture: str) -> bool:

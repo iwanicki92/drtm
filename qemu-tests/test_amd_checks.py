@@ -21,7 +21,17 @@ is absent from upstream entirely, so it reads zero and the MMCONFIG check
 only ever sees a disabled window.
 """
 
-from conftest import completed, dumped, fields, messages, records, results, verdicts
+from conftest import (
+    completed,
+    dumped,
+    fields,
+    launch_state,
+    messages,
+    qemu_log,
+    records,
+    results,
+    verdicts,
+)
 
 # Size and alignment SKINIT requires of the Secure Loader Block, mirroring
 # SLB_SIZE in src/amd/memory.rs.
@@ -566,3 +576,29 @@ def test_vm_cr_is_decoded(default_boot: str):
 
 def test_vm_cr_check_runs_after_the_vendor_gate(intel_cpu_boot: str):
     assert verdicts(intel_cpu_boot, "amd.vm_cr") == []
+
+
+def test_the_checks_launch_nothing(amd_drtm_boot: str):
+    # A check observes the platform and leaves it as it found it. The
+    # platform device is the witness: no launch recorded, SL_DEV never
+    # armed, no range kept from DMA, and no rule broken, which under strict
+    # mode would have stopped the VM before the run completed. The guest
+    # error log is the other: with a TPM mapped, nothing the checks read
+    # falls outside a modelled register, so it stays empty.
+    assert completed(amd_drtm_boot)
+    state = launch_state("amd_drtm_boot")
+    assert state["launched"] is False
+    assert state["sl-dev"] is False
+    assert state["dma-blocks"] == []
+    assert state["hash"] == "none"
+    assert qemu_log("amd_drtm_boot") == ""
+
+
+def test_the_launch_machine_has_an_ap(amd_drtm_boot: str):
+    # Two processors, one of them the BSP we run on, so the BSP check and
+    # the processor list are read on a machine with something to park.
+    (counts,) = dumped(amd_drtm_boot, "processors")
+    assert counts["total"] == 2
+    bsps = [p for p in dumped(amd_drtm_boot, "processor") if p["bsp"]]
+    assert len(bsps) == 1
+    assert verdicts(amd_drtm_boot, "cpu.bsp") == ["PASS"]
