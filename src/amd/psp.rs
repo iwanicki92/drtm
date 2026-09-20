@@ -133,33 +133,20 @@ pub fn report(devices: &Devices) {
 
 /// Says what one match is, and what a loader would do with it.
 fn describe(function: Function, device: u16, drtm: Drtm) {
-    match drtm {
+    let loader = match drtm {
         // The three versions `init_drtm_interface()` maps mailbox registers
         // for, and no other (`secure-kernel-loader:psp.c`).
-        Drtm::V2 | Drtm::V3 | Drtm::Asp => check::info!(
-            "amd.psp",
-            device = check::text!("{VENDOR_AMD:04x}:{device:04x}"),
-            function = check::text!("{function}"),
-            interface = check::text!("{drtm}");
-            "{VENDOR_AMD:04x}:{device:04x} at {function}, {drtm}, the \
-             interface a PSP launch would use"
-        ),
-        Drtm::V1 => check::info!(
-            "amd.psp",
-            device = check::text!("{VENDOR_AMD:04x}:{device:04x}"),
-            function = check::text!("{function}"),
-            interface = check::text!("{drtm}");
-            "{VENDOR_AMD:04x}:{device:04x} at {function}, {drtm}, which no \
-             loader maps a mailbox for"
-        ),
-        Drtm::None => check::info!(
-            "amd.psp",
-            device = check::text!("{VENDOR_AMD:04x}:{device:04x}"),
-            function = check::text!("{function}"),
-            interface = check::text!("{drtm}");
-            "{VENDOR_AMD:04x}:{device:04x} at {function}, {drtm}"
-        ),
-    }
+        Drtm::V2 | Drtm::V3 | Drtm::Asp => ", the interface a PSP launch would use",
+        Drtm::V1 => ", which no loader maps a mailbox for",
+        Drtm::None => "",
+    };
+    check::info!(
+        "amd.psp",
+        device = check::text!("{VENDOR_AMD:04x}:{device:04x}"),
+        function = check::text!("{function}"),
+        interface = check::text!("{drtm}");
+        "{VENDOR_AMD:04x}:{device:04x} at {function}, {drtm}{loader}"
+    );
 }
 
 /// A Secure Processor no loader's table lists. The platform has one, so a
