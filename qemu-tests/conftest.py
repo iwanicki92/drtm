@@ -69,6 +69,9 @@ BOOT_TIMEOUT = 120.0
 # the allowance is only against a machine under load.
 BOOT_PROMPT_TIMEOUT = 60.0
 
+# The rest of a line whose start has already arrived.
+LINE_TIMEOUT = 10.0
+
 # A build this long means something is wedged, not slow: a from-scratch
 # debug build of this crate is seconds.
 BUILD_TIMEOUT = 300.0
@@ -137,6 +140,10 @@ def boot_and_capture(
             vm.expect(BOOT_PROMPT, BOOT_PROMPT_TIMEOUT)
             vm.send(b"\r")
             vm.expect(marker, BOOT_TIMEOUT)
+            # The marker is the start of the last line, and the rest of it
+            # is still in flight. Read to its end, or a loaded host leaves
+            # the summary record cut short and unparsable.
+            vm.expect("\n", LINE_TIMEOUT)
             if query_launch:
                 _LAUNCH_STATE[log_dir] = vm.wait_for_qmp().execute("query-amd-drtm")
             return vm.capture
