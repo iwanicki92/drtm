@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # SPDX-FileCopyrightText: 2026 iwanicki92 <iwanicki92@gmail.com>
 #
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: BSD-3-Clause
 
 # Regenerates docs/dependency-docs: offline rustdoc HTML for drtm's
 # dependencies. The index page is styled like rustdoc's own pages by

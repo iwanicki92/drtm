@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 iwanicki92 <iwanicki92@gmail.com>
 //
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: BSD-3-Clause
 
 //! What the firmware says about itself: its own version, what it published
 //! to us, its component inventory, and SMBIOS.

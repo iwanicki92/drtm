@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 iwanicki92 <iwanicki92@gmail.com>
 //
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: BSD-3-Clause
 
 //! The TPM's interface registers, under whichever layout is active.
 //!

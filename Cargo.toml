@@ -1,12 +1,12 @@
 # SPDX-FileCopyrightText: 2026 iwanicki92 <iwanicki92@gmail.com>
 #
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: BSD-3-Clause
 
 [package]
 name = "drtm"
 version = "0.1.0"
 edition = "2024"
-license = "Apache-2.0"
+license = "BSD-3-Clause"
 
 [features]
 default = ["sink-serial"]

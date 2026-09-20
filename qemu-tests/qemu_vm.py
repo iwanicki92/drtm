@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2026 iwanicki92 <iwanicki92@gmail.com>
 #
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: BSD-3-Clause
 
 """Boots a UEFI binary in QEMU under Dasharo's firmware and exposes its serial
 console for tests to read.

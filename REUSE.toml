@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2026 iwanicki92 <iwanicki92@gmail.com>
 #
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: BSD-3-Clause
 
 version = 1
 
@@ -8,4 +8,4 @@ version = 1
 path = ["Cargo.lock", "qemu-tests/uv.lock", "NOTICE"]
 precedence = "closest"
 SPDX-FileCopyrightText = "2026 iwanicki92 <iwanicki92@gmail.com>"
-SPDX-License-Identifier = "Apache-2.0"
+SPDX-License-Identifier = "BSD-3-Clause"

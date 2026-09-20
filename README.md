@@ -1,7 +1,7 @@
 <!--
 SPDX-FileCopyrightText: 2026 iwanicki92 <iwanicki92@gmail.com>
 
-SPDX-License-Identifier: Apache-2.0
+SPDX-License-Identifier: BSD-3-Clause
 -->
 
 # DRTM
@@ -87,5 +87,6 @@ rest.
 
 ## License
 
-Apache-2.0, see [LICENSE](LICENSE). `qemu-tests/qmp_client.py` is adapted
-from third-party Apache-2.0 code, see [NOTICE](NOTICE).
+BSD-3-Clause, see [LICENSE](LICENSE). `qemu-tests/qmp_client.py` is adapted
+from third-party Apache-2.0 code and stays under that license, see
+[NOTICE](NOTICE).

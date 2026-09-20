@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 iwanicki92 <iwanicki92@gmail.com>
 //
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: BSD-3-Clause
 
 //! Availability of the memory `SKINIT` needs for the Secure Loader Block.
 
