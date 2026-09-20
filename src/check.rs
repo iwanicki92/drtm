@@ -145,65 +145,49 @@ pub fn summary() {
     logging::summary(&Summary { counts, verdict });
 }
 
-/// The platform meets this precondition.
-macro_rules! check_pass {
-    ($id:literal, $($field:ident = $value:expr),+ ; $($detail:tt)*) => {
+/// Shared body of the tag macros below: an id, optional `name = value`
+/// fields, then the detail as `format!` arguments.
+macro_rules! check_report {
+    ($tag:ident, $id:literal, $($field:ident = $value:expr),+ ; $($detail:tt)*) => {
         $crate::check::report(
-            $crate::check::Tag::Pass,
+            $crate::check::Tag::$tag,
             $id,
             &[$((stringify!($field), $value)),+],
             format_args!($($detail)*),
         )
     };
-    ($id:literal, $($detail:tt)*) => {
-        $crate::check::report($crate::check::Tag::Pass, $id, &[], format_args!($($detail)*))
+    ($tag:ident, $id:literal, $($detail:tt)*) => {
+        $crate::check::report($crate::check::Tag::$tag, $id, &[], format_args!($($detail)*))
+    };
+}
+
+/// The platform meets this precondition.
+macro_rules! check_pass {
+    ($($arguments:tt)*) => {
+        $crate::check::check_report!(Pass, $($arguments)*)
     };
 }
 
 /// The platform does not meet it, and no dynamic launch can happen here.
 macro_rules! check_fail {
-    ($id:literal, $($field:ident = $value:expr),+ ; $($detail:tt)*) => {
-        $crate::check::report(
-            $crate::check::Tag::Fail,
-            $id,
-            &[$((stringify!($field), $value)),+],
-            format_args!($($detail)*),
-        )
-    };
-    ($id:literal, $($detail:tt)*) => {
-        $crate::check::report($crate::check::Tag::Fail, $id, &[], format_args!($($detail)*))
+    ($($arguments:tt)*) => {
+        $crate::check::check_report!(Fail, $($arguments)*)
     };
 }
 
 /// Worth knowing, but not a failed precondition: a launch would still go
 /// ahead, with something it would rather have had.
 macro_rules! check_warn {
-    ($id:literal, $($field:ident = $value:expr),+ ; $($detail:tt)*) => {
-        $crate::check::report(
-            $crate::check::Tag::Warn,
-            $id,
-            &[$((stringify!($field), $value)),+],
-            format_args!($($detail)*),
-        )
-    };
-    ($id:literal, $($detail:tt)*) => {
-        $crate::check::report($crate::check::Tag::Warn, $id, &[], format_args!($($detail)*))
+    ($($arguments:tt)*) => {
+        $crate::check::check_report!(Warn, $($arguments)*)
     };
 }
 
 /// The check did not run. Not an anomaly, so it sits at `info` with the
 /// results rather than among the warnings.
 macro_rules! check_skip {
-    ($id:literal, $($field:ident = $value:expr),+ ; $($detail:tt)*) => {
-        $crate::check::report(
-            $crate::check::Tag::Skip,
-            $id,
-            &[$((stringify!($field), $value)),+],
-            format_args!($($detail)*),
-        )
-    };
-    ($id:literal, $($detail:tt)*) => {
-        $crate::check::report($crate::check::Tag::Skip, $id, &[], format_args!($($detail)*))
+    ($($arguments:tt)*) => {
+        $crate::check::check_report!(Skip, $($arguments)*)
     };
 }
 
@@ -211,16 +195,8 @@ macro_rules! check_skip {
 /// rather than judges. Earns its own tag by not claiming a verdict it cannot
 /// support, and can become a pass or a fail once it can.
 macro_rules! check_info {
-    ($id:literal, $($field:ident = $value:expr),+ ; $($detail:tt)*) => {
-        $crate::check::report(
-            $crate::check::Tag::Info,
-            $id,
-            &[$((stringify!($field), $value)),+],
-            format_args!($($detail)*),
-        )
-    };
-    ($id:literal, $($detail:tt)*) => {
-        $crate::check::report($crate::check::Tag::Info, $id, &[], format_args!($($detail)*))
+    ($($arguments:tt)*) => {
+        $crate::check::check_report!(Info, $($arguments)*)
     };
 }
 
@@ -228,6 +204,6 @@ macro_rules! check_info {
 // `macro_rules! warn` cannot be re-exported: the bare name is ambiguous with
 // the built-in `warn` attribute.
 pub(crate) use {
-    check_fail as fail, check_info as info, check_pass as pass, check_skip as skip,
+    check_fail as fail, check_info as info, check_pass as pass, check_report, check_skip as skip,
     check_text as text, check_warn as warn,
 };
