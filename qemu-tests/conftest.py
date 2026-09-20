@@ -15,24 +15,23 @@ a time, so the fixture is usually just waiting on one that is already going.
 """
 
 import json
-import os
 import re
 import subprocess
-import threading
-import time
+import tempfile
 from collections.abc import Callable
-from concurrent.futures import Future, ThreadPoolExecutor
-from datetime import datetime
 from pathlib import Path
 from types import FunctionType
 
 import pytest
-from firmware import cached_firmware_path, warmed_firmware_path
-from qemu_vm import (
-    DEFAULT_CPU,
+from drtmtest.dasharo import BOOT_PROMPT, FIRMWARE, warmed_firmware
+from drtmtest.qemu_vm import QemuVm
+from drtmtest.session import BootSession
+from machine import (
     MMCONFIG_ABOVE_4GIB,
     MMCONFIG_BELOW_4GIB,
-    QemuVm,
+    inject_corrected_error,
+    make_esp,
+    options,
     unsupported_binary,
 )
 
@@ -40,8 +39,7 @@ REPO_ROOT = Path(__file__).parent.parent
 EFI_BINARY = REPO_ROOT / "target" / "x86_64-unknown-uefi" / "debug" / "drtm.efi"
 
 LOGS_DIR = Path(__file__).parent / "logs"
-_RUN_DIR_RE = re.compile(r"^(\d{4})-")
-_MAX_RUN_NUMBER = 9999
+CACHE_DIR = Path(__file__).parent / "dl-cache"
 
 # The last thing src/main.rs prints, in each of the two output forms: the
 # summary record under `format=json`, the prose marker in text mode. Reading
@@ -64,6 +62,10 @@ BAD_LEVEL = "# drtm.conf\nlevel=verbose\n"
 # to report a real hang costs one wait; being too tight turns a loaded
 # machine into a flaky failure that looks exactly like one.
 BOOT_TIMEOUT = 120.0
+
+# The firmware's boot prompt is the first thing on the serial console, so
+# the allowance is only against a machine under load.
+BOOT_PROMPT_TIMEOUT = 60.0
 
 # A build this long means something is wedged, not slow: a from-scratch
 # debug build of this crate is seconds.
@@ -88,125 +90,58 @@ def built_efi_binary() -> Path:
     return _built_binary
 
 
-def _next_run_number() -> int:
-    if not LOGS_DIR.exists():
-        return 1
-    numbers = [
-        int(match.group(1))
-        for path in LOGS_DIR.iterdir()
-        if path.is_dir() and (match := _RUN_DIR_RE.match(path.name))
-    ]
-    return max(numbers, default=0) + 1
-
-
-_run_log_dir: Path | None = None
-_run_log_dir_lock = threading.Lock()
-
-
-def _get_run_log_dir() -> Path:
-    """Creates this run's log directory on first use, then reuses it.
-
-    Locked because concurrent boots reach it from their own threads, and two
-    of them numbering the run at once would make two directories.
-    """
-    global _run_log_dir
-    with _run_log_dir_lock:
-        if _run_log_dir is not None:
-            return _run_log_dir
-        number = _next_run_number()
-        if number > _MAX_RUN_NUMBER:
-            pytest.exit(
-                f"qemu-tests/logs/ has reached run {_MAX_RUN_NUMBER}, the "
-                "4-digit limit. Clean out old runs before testing again.",
-                returncode=1,
-            )
-        now = datetime.now().astimezone()
-        run_dir = LOGS_DIR / f"{number:04d}-{now.date().isoformat()}"
-        run_dir.mkdir(parents=True)
-        (run_dir / "timestamp.txt").write_text(now.isoformat() + "\n")
-        _run_log_dir = run_dir
-        return run_dir
-
-
-_warm_lock = threading.Lock()
-
-
-def warmed_firmware() -> Path:
-    """This release's firmware image after one boot, made on first use.
-
-    Populating the variable store is 2.8s, and the firmware only does it on
-    an image that has never booted, so every boot after this one starts from
-    a store that is already there. Cached beside the download, keyed on the
-    release tag, and produced by a boot like any other.
-    """
-    path = warmed_firmware_path()
-    with _warm_lock:
-        if path.exists():
-            return path
-        scratch = path.with_suffix(".warming")
-        log_dir = _get_run_log_dir() / "boot-warm-firmware"
-        log_dir.mkdir(parents=True, exist_ok=True)
-        with QemuVm(
-            built_efi_binary(),
-            log_dir=log_dir,
-            firmware=cached_firmware_path(),
-            save_firmware_to=scratch,
-        ) as vm:
-            vm.read_serial_until(CHECKS_COMPLETE, timeout=BOOT_TIMEOUT)
-        # Renamed only once it holds a complete boot, so an interrupted run
-        # leaves no half-written image for the next one to trust.
-        scratch.replace(path)
-    return path
-
-
 def boot_and_capture(
     log_dir: Path,
+    firmware: Path,
     tpm: str | None = None,
-    cpu: str = DEFAULT_CPU,
-    iommu: str | None = None,
-    ivrs: bool = True,
-    amd_drtm: bool = False,
     config: str | None = FULL_OUTPUT,
-    extra_root_bridge: bool = False,
     corrected_error_bank: int | None = None,
-    psp: int | None = None,
-    psp_ready: bool = True,
-    psp_aspt: bool = True,
-    psp_drtm_device: bool = False,
-    vga_and_nic: bool = False,
+    save_firmware_to: Path | None = None,
+    **machine,
 ) -> str:
     """Boots `drtm.efi` once and returns everything it printed.
 
     Shared by the configurations below, each of which returns the keyword
-    arguments it wants here. A configuration needing a QEMU argument no other
-    one uses adds a parameter here and on `QemuVm`.
+    arguments it wants here. A configuration needing a QEMU argument no
+    other one uses adds a parameter to `machine.options`.
 
-    Which marker ends the read follows from `config`, since the two output
-    forms end differently.
+    The boot prompt is answered at once, which boots the default entry
+    rather than waiting out the boot manager's 3s timeout. Not reaching it
+    is an error: the firmware release is pinned, so it either prints this
+    or something changed that is worth seeing. Which marker ends the read
+    follows from `config`, since the two output forms end differently.
     """
-    log_dir.mkdir(parents=True, exist_ok=True)
-    with QemuVm(
-        built_efi_binary(),
-        log_dir=log_dir,
-        firmware=warmed_firmware(),
-        tpm=tpm,
-        cpu=cpu,
-        iommu=iommu,
-        ivrs=ivrs,
-        amd_drtm=amd_drtm,
-        config=config,
-        extra_root_bridge=extra_root_bridge,
-        corrected_error_bank=corrected_error_bank,
-        psp=psp,
-        psp_ready=psp_ready,
-        psp_aspt=psp_aspt,
-        psp_drtm_device=psp_drtm_device,
-        vga_and_nic=vga_and_nic,
-    ) as vm:
-        marker = (
-            SUMMARY_RECORD if config and "format=json" in config else CHECKS_COMPLETE
+    marker = SUMMARY_RECORD if config and "format=json" in config else CHECKS_COMPLETE
+    with tempfile.TemporaryDirectory(prefix="drtm-esp-") as scratch:
+        esp = make_esp(Path(scratch), built_efi_binary(), config)
+        with QemuVm(
+            log_dir,
+            options(esp, corrected_error_bank=corrected_error_bank, **machine),
+            firmware=firmware,
+            tpm=tpm,
+            save_firmware_to=save_firmware_to,
+        ) as vm:
+            if corrected_error_bank is not None:
+                inject_corrected_error(vm, corrected_error_bank)
+            vm.expect(BOOT_PROMPT, BOOT_PROMPT_TIMEOUT)
+            vm.send(b"\r")
+            vm.expect(marker, BOOT_TIMEOUT)
+            return vm.capture
+
+
+def _warmed_firmware() -> Path:
+    """This release's firmware image after one boot of the binary in text
+    mode, made on first use."""
+
+    def boot(scratch: Path) -> None:
+        boot_and_capture(
+            SESSION.run_log_dir() / "boot-warm-firmware",
+            FIRMWARE.fetch(CACHE_DIR),
+            config=None,
+            save_firmware_to=scratch,
         )
-        return vm.read_serial_until(marker, timeout=BOOT_TIMEOUT)
+
+    return warmed_firmware(CACHE_DIR, boot)
 
 
 _BOOT_CONFIGS: dict[str, Callable[[], dict]] = {}
@@ -224,34 +159,14 @@ def boot_configuration(config: FunctionType):
 
     @pytest.fixture(scope="session", name=name)
     def wait_for_boot() -> str:
-        return _booted(name)
+        return SESSION.booted(name)
 
     wait_for_boot.__doc__ = config.__doc__
     return wait_for_boot
 
 
-def _boot_log_dir(name: str) -> Path:
-    """`default_boot` writes to `boot-default`, so a log directory names the
-    configuration that produced it.
-    """
-    stem = name.removesuffix("_boot").replace("_", "-")
-    return _get_run_log_dir() / f"boot-{stem}"
-
-
-def _run_boot(name: str) -> str:
-    """Boots one configuration, in a pool thread or in the caller's own."""
-    return boot_and_capture(_boot_log_dir(name), **_BOOT_CONFIGS[name]())
-
-
-def _booted(name: str) -> str:
-    """That configuration's serial output, waiting for its boot to finish.
-
-    Collection submits every boot the run needs, so this usually just takes
-    the result. A configuration reached some other way still boots here
-    rather than failing.
-    """
-    future = _boot_futures.get(name)
-    return future.result() if future is not None else _run_boot(name)
+def _boot(name: str, log_dir: Path) -> str:
+    return boot_and_capture(log_dir, _warmed_firmware(), **_BOOT_CONFIGS[name]())
 
 
 @boot_configuration
@@ -389,47 +304,29 @@ def tpm_crb_boot() -> dict:
     return {"tpm": "crb", "config": None}
 
 
-# One boot keeps a core busy, so overlapping them pays off up to the core
-# count and not past it: eight at a time on this four-core machine measured
-# slower than four.
-_BOOT_WORKERS = os.cpu_count() or 1
-
-_boot_pool: ThreadPoolExecutor | None = None
-_boot_futures: dict[str, Future[str]] = {}
-
-
-@pytest.hookimpl(trylast=True)
-def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]):
-    """Starts every boot the collected tests need, before the first one runs.
-
-    Boots share nothing, so they overlap and a session's wall time tracks the
-    slowest batch rather than the number of configurations. Only what was
-    collected is submitted, so running one test still boots once. They are
-    submitted in the order the tests ask for them, so the pool works on what
-    is wanted first.
-
-    Last of its hook, so `-k` and `-m` have already dropped what is not
-    being run and their boots are never started.
-    """
-    if config.option.collectonly:
-        return
-    first_wanted: dict[str, int] = {}
-    for index, item in enumerate(items):
-        # Only a test function carries a fixture closure, and only that is
-        # what names the boot it needs.
-        for name in getattr(item, "fixturenames", ()):
-            if name in _BOOT_CONFIGS:
-                first_wanted.setdefault(name, index)
-    if not first_wanted:
-        return
-    # Both ahead of the pool: the build is one build and the warming is one
-    # boot, and four threads racing for either would only queue up behind it.
+def _prepare(names: list[str]) -> None:
+    """The one build and the one warming boot, ahead of the pool: four
+    threads racing for either would only queue up behind it."""
     built_efi_binary()
-    warmed_firmware()
-    global _boot_pool
-    _boot_pool = ThreadPoolExecutor(_BOOT_WORKERS, thread_name_prefix="boot")
-    for name in sorted(first_wanted, key=first_wanted.__getitem__):
-        _boot_futures[name] = _boot_pool.submit(_run_boot, name)
+    _warmed_firmware()
+
+
+def _check() -> str | None:
+    # Upstream QEMU refuses the default boot's options, which would
+    # otherwise surface as every test erroring on a boot that never started.
+    reason = unsupported_binary()
+    if reason is None:
+        return None
+    return f"This suite needs our QEMU build, see docs/testing.md: {reason}"
+
+
+SESSION = BootSession(
+    LOGS_DIR, _boot, _BOOT_CONFIGS.keys(), prepare=_prepare, check=_check
+)
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    config.pluginmanager.register(SESSION)
 
 
 # Every check reports a tag, an identifier and a detail (see `src/check.rs`),
@@ -539,86 +436,3 @@ def verdicts(capture: str, identifier: str) -> list[str]:
     the detail said.
     """
     return [tag for tag, _ in results(capture, identifier)]
-
-
-_reports: list[pytest.TestReport] = []
-_session_start = 0.0
-
-
-def pytest_sessionstart(session: pytest.Session) -> None:
-    global _session_start
-    _session_start = time.monotonic()
-    # Upstream QEMU refuses the default boot's options, which would otherwise
-    # surface as every test erroring on a boot that never started.
-    reason = unsupported_binary()
-    if reason is not None:
-        pytest.exit(
-            f"This suite needs our QEMU build, see docs/testing.md: {reason}",
-            returncode=1,
-        )
-
-
-def pytest_runtest_logreport(report: pytest.TestReport) -> None:
-    _reports.append(report)
-
-
-def _outcome_per_test() -> dict[str, tuple[str, float]]:
-    """Collapses every phase report into one outcome and duration per test.
-
-    All three phases are summed, because a boot fixture's cost lands in setup
-    and its teardown in the last test's teardown. Attributing only the `call`
-    phase would report every test as taking 0.0s. A non-passing phase decides
-    the outcome, so a failed fixture shows up as that test's error rather than
-    being lost.
-    """
-    collapsed: dict[str, tuple[str, float]] = {}
-    for report in _reports:
-        outcome, duration = collapsed.get(report.nodeid, ("passed", 0.0))
-        if report.outcome != "passed":
-            outcome = report.outcome
-        collapsed[report.nodeid] = (outcome, duration + report.duration)
-    return collapsed
-
-
-def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
-    """Writes `results.txt` next to the run's QEMU logs, so a log directory
-    records what was being tested and how it went, not just what the guest
-    printed.
-    """
-    if _boot_pool is not None:
-        # Drops boots nothing ever waited for, which is what -x leaves
-        # queued. One already running still has to finish.
-        _boot_pool.shutdown(wait=True, cancel_futures=True)
-    if not _reports:
-        return
-
-    collapsed = _outcome_per_test()
-    counts: dict[str, int] = {}
-    for outcome, _ in collapsed.values():
-        counts[outcome] = counts.get(outcome, 0) + 1
-    summary = ", ".join(
-        f"{count} {outcome}" for outcome, count in sorted(counts.items())
-    )
-
-    lines = [
-        f"finished:    {datetime.now().astimezone().isoformat()}",
-        f"exit status: {exitstatus}",
-        f"summary:     {summary} in {time.monotonic() - _session_start:.1f}s",
-        "",
-    ]
-    lines += [
-        f"{outcome.upper():<7} {duration:7.1f}s  {nodeid}"
-        for nodeid, (outcome, duration) in collapsed.items()
-    ]
-
-    failures = [report for report in _reports if report.failed]
-    if failures:
-        lines.append("")
-        for report in failures:
-            lines += [
-                f"=== {report.nodeid} ({report.when}) ===",
-                report.longreprtext,
-                "",
-            ]
-
-    (_get_run_log_dir() / "results.txt").write_text("\n".join(lines) + "\n")

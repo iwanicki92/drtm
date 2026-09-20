@@ -13,7 +13,10 @@ are supported, to prove the UEFI application itself boots and runs correctly.
 
 `cargo` must be on `PATH` (the test fixture builds the binary itself). Test
 dependencies are managed by [uv](https://docs.astral.sh/uv/) via
-`qemu-tests/pyproject.toml`, no separate venv setup needed:
+`qemu-tests/pyproject.toml`, no separate venv setup needed. The QEMU
+harness itself, the `drtmtest` package, lives in the `drtm-tests`
+repository and is taken from a checkout beside this one, `../drtm-tests`,
+until that repository has a remote to pin instead.
 
 ```sh
 task test
@@ -161,26 +164,26 @@ machine-check bank count, scrapes it out of the detail and says so. An
 identifier that reports nothing yields an empty list, which is how a skipped
 phase or a vendor gate is asserted.
 
-For each boot, `qemu-tests/qemu_vm.py` builds a scratch working directory
-(under the system temp dir, removed on exit) containing:
+For each boot, `qemu-tests/machine.py` builds a scratch ESP (under the
+system temp dir, removed on exit) holding `EFI/BOOT/BOOTX64.EFI`, a copy
+of the built `drtm.efi`, placed where UEFI's removable-media boot path
+picks it up automatically, so it needs no boot entry or bootloader, and
+the boot's `drtm.conf` beside it. The same module turns a configuration's
+keyword arguments into the QEMU options for that boot: the machine, the
+CPU model and the devices only our build has.
 
-- `esp/EFI/BOOT/BOOTX64.EFI`: a copy of the built `drtm.efi`, placed where
-    UEFI's removable-media boot path picks it up automatically, so it needs
-    no boot entry or bootloader.
-- `firmware.rom`: a copy of the warmed Dasharo firmware image, variable
-    store included. Nothing here depends on the settings it holds, since the
-    binary is found as removable media rather than through a boot entry.
+`drtmtest.qemu_vm` runs it: a copy of the warmed Dasharo firmware image
+as pflash, variable store included, that ESP as a FAT-formatted drive, an
+`swtpm` when the boot asks for a TPM, serial on a raw TCP port (see below)
+and QMP on a short-lived Unix socket. Nothing here depends on the settings
+the store holds, since the binary is found as removable media rather than
+through a boot entry.
 
 The warmed image is the download after one boot, cached beside it under the
-release tag. Populating the variable store is 2.8s and the firmware only
+download's hash. Populating the variable store is 2.8s and the firmware only
 does it on an image that has never booted, so the first boot of a fresh
 clone makes it and every boot after starts from a store that is already
 there. Deleting `qemu-tests/dl-cache/` costs one boot, not correctness.
-
-It then launches `qemu-system-x86_64` on a Q35 machine, with that ESP
-attached as a FAT-formatted drive and that firmware image as pflash. Serial
-is exposed on a raw TCP port (see below) and QMP on a short-lived Unix
-socket, both used by the test to interact with the VM.
 
 The firmware's boot prompt is answered with a carriage return as soon as it
 appears, which boots the default entry at once rather than after the boot
@@ -213,12 +216,14 @@ differed.
 A stuck `drtm.efi` fails the run rather than wedging it. Layers, innermost
 first:
 
-- `read_serial_until` raises with the output captured so far. Boot waits use
-    `BOOT_TIMEOUT` (120s), far above the ~5s a real boot takes, so a loaded
-    machine does not fail looking like a hang.
+- `QemuVm.expect` raises with the output captured since its last match.
+    Boot waits use `BOOT_TIMEOUT` (120s), far above the ~5s a real boot
+    takes, so a loaded machine does not fail looking like a hang. A console
+    silent for `IDLE_TIMEOUT` (90s) or a VM stopped as panicked ends the
+    wait earlier, with that reason.
 - `QemuVm.__exit__` always tears QEMU down (`terminate`, then `kill` after
     5s), so a timed-out test leaves no stray process.
-- `_connect_serial` waits at most 5s for QEMU to open its serial port,
+- The serial connection waits at most 10s for QEMU to open its port,
     `QmpClient` bounds every socket operation at 10s, and the `cargo build`
     in `built_efi_binary` is capped at `BUILD_TIMEOUT` (300s).
 - `pytest-timeout` backstops the rest at 300s per test, with the `signal`
@@ -236,9 +241,10 @@ Each pytest invocation gets its own numbered, gitignored folder under
     the setup, call and teardown phases, so a shared boot's cost shows
     against the test that triggered it rather than every test reading 0.0s.
 - One subfolder per boot, named after its configuration, e.g. `default_boot`
-    to `boot-default/`, with that boot's captured `serial.log` and
-    `qemu.log`, plus the `qemu-args.txt` it was launched with. Boots with a
-    TPM also get `swtpm.log`, and the run that warms a firmware image gets
+    to `boot-default/`, with that boot's captured `serial.log`, the
+    process's own output in `qemu-stderr.log`, its `-D` log in `qemu.log`,
+    and the `qemu-args.txt` it was launched with. Boots with a TPM also get
+    `swtpm.log`, and the run that warms a firmware image gets
     `boot-warm-firmware/`.
 
 `swtpm.log` is empty after a healthy run: swtpm writes errors to stderr,
@@ -265,12 +271,8 @@ project wants. QEMU is driven directly from Python over its serial console,
 exposed as a raw TCP socket (`-serial tcp:...`, not `telnet:...`, to avoid
 depending on Python's removed/deprecated `telnetlib`, which RF's own
 `Telnet` library needs), plus its QMP socket for VM control (reset, quit).
-See `qemu-tests/qemu_vm.py`.
-
-`qemu-tests/qmp_client.py` is adapted from
-Dasharo/open-source-firmware-validation's `lib/QemuMonitor.py` (Apache-2.0,
-see its SPDX header and this repo's `NOTICE` file), with the
-Robot-Framework-specific bits stripped.
+See `drtmtest.qemu_vm` in the `drtm-tests` repository, which also carries
+the QMP client and its Apache-2.0 attribution.
 
 ## DRTM under QEMU
 

@@ -87,6 +87,4 @@ rest.
 
 ## License
 
-BSD-3-Clause, see [LICENSE](LICENSE). `qemu-tests/qmp_client.py` is adapted
-from third-party Apache-2.0 code and stays under that license, see
-[NOTICE](NOTICE).
+BSD-3-Clause, see [LICENSE](LICENSE).

@@ -188,10 +188,8 @@ directly, so `rustup component add rustfmt clippy` is needed once too.
 
 The project is BSD-3-Clause (`LICENSE`, a symlink into `LICENSES/`) and aims
 for [REUSE](https://reuse.software/) compliance, checked by the `reuse`
-pre-commit hook. The one exception is `qemu-tests/qmp_client.py`, adapted
-from Dasharo's Open Source Firmware Validation and kept under Apache-2.0
-with its attribution in `NOTICE`. New files need an `SPDX-FileCopyrightText`
-/ `SPDX-License-Identifier` header (see any existing file for the style).
+pre-commit hook. New files need an `SPDX-FileCopyrightText` /
+`SPDX-License-Identifier` header (see any existing file for the style).
 For ones that cannot carry a header (generated lockfiles, `NOTICE`), add an
 entry to `REUSE.toml` instead.
 
@@ -211,7 +209,8 @@ pages, and adds a link back to that index on each crate's root page.
 
 - `src/`: the Rust binary.
 - `qemu-tests/`: the pytest-based QEMU test suite (kept out of Cargo's own
-  `tests/` directory to avoid confusion between the two).
+  `tests/` directory to avoid confusion between the two). The harness it
+  boots with is the `drtmtest` package from the `drtm-tests` repository.
 - `scripts/`: standalone helper scripts, e.g. dependency doc generation.
 - `docs/`: this folder.
 - `Taskfile.yml`, `.pre-commit-config.yaml`: see above.

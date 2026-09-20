@@ -8,9 +8,16 @@ version = "0.1.0"
 requires-python = ">=3.12"
 license = "BSD-3-Clause"
 dependencies = [
+    "drtm-tests",
     "pytest",
     "pytest-timeout>=2.4.0",
 ]
+
+[tool.uv.sources]
+# The QEMU harness lives in drtm-tests, taken from a checkout beside this
+# repository. TODO: point this at the git remote once drtm-tests has one,
+# so a clone of drtm alone can run the suite.
+drtm-tests = { path = "../../drtm-tests", editable = true }
 
 [tool.pytest.ini_options]
 # Backstop for hangs the harness's own timeouts don't cover, e.g. a blocked
