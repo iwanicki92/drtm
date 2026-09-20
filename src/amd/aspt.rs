@@ -14,6 +14,7 @@ use log::debug;
 
 use crate::acpi;
 use crate::amd::psp;
+use crate::bytes::{read_u16, read_u32, read_u64};
 use crate::check;
 use crate::pci::Devices;
 
@@ -63,14 +64,9 @@ pub fn report(devices: &Devices) {
         return;
     }
 
-    let table = match acpi::find(SIGNATURE) {
-        Ok(Some(table)) => table,
-        missing => {
-            let why = if missing.is_err() {
-                "no ACPI tables"
-            } else {
-                "no ASPT"
-            };
+    let table = match acpi::find_or(SIGNATURE, "no ASPT") {
+        Ok(table) => table,
+        Err(why) => {
             check::info!(
                 "amd.psp_drtm",
                 "{why}, so nothing says where the Secure Processor's \
@@ -196,22 +192,4 @@ fn feature_offset(table: &[u8]) -> Option<u32> {
         .into_iter()
         .find(|structure| structure.kind == STRUCTURE_GLOBAL)?;
     field(global.bytes, GLOBAL_FEATURE)
-}
-
-fn read_u16(bytes: &[u8], offset: usize) -> Option<u16> {
-    Some(u16::from_le_bytes(
-        bytes.get(offset..offset + 2)?.try_into().ok()?,
-    ))
-}
-
-fn read_u32(bytes: &[u8], offset: usize) -> Option<u32> {
-    Some(u32::from_le_bytes(
-        bytes.get(offset..offset + 4)?.try_into().ok()?,
-    ))
-}
-
-fn read_u64(bytes: &[u8], offset: usize) -> Option<u64> {
-    Some(u64::from_le_bytes(
-        bytes.get(offset..offset + 8)?.try_into().ok()?,
-    ))
 }

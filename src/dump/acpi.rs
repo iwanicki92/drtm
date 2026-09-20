@@ -11,16 +11,13 @@
 
 use core::slice;
 
-use crate::acpi::{self, FADT_DSDT, FADT_FIRMWARE_CTRL, FADT_X_DSDT, FADT_X_FIRMWARE_CTRL};
+use crate::acpi::{self, AML, FADT_DSDT, FADT_FIRMWARE_CTRL, FADT_X_DSDT, FADT_X_FIRMWARE_CTRL};
+use crate::bytes::{read_u32, read_u64};
 use crate::check;
 use crate::logging::record;
 
-/// The RSDP's 2.0 form, and the header every other table starts with.
+/// The RSDP's 2.0 form.
 const RSDP_LEN: usize = 36;
-const HEADER_LEN: usize = 36;
-
-/// The tables whose body is AML, an encoding nothing here interprets.
-const AML: [&[u8; 4]; 3] = [b"DSDT", b"SSDT", b"PSDT"];
 
 /// How much AML goes in whole. A DSDT runs to a hundred times this, and a
 /// prefix of one is no use to a disassembler, so past it only the header
@@ -82,7 +79,7 @@ pub fn dump() {
 /// `hex` then being the header alone while `len` stays the whole size.
 fn emit(table: &[u8]) {
     let cut = table.len() > AML_CAP && AML.iter().any(|sig| table[..4] == **sig);
-    let kept = if cut { HEADER_LEN } else { table.len() };
+    let kept = if cut { acpi::HEADER_LEN } else { table.len() };
     let head: [(&str, check::Value); 4] = [
         ("sig", check::text!("{}", signature(table))),
         ("addr", check::hex(table.as_ptr() as u64)),
@@ -105,18 +102,6 @@ fn emit(table: &[u8]) {
 /// whose header is unreadable is worth saying so about rather than hiding.
 fn signature(table: &[u8]) -> &str {
     str::from_utf8(&table[..4]).unwrap_or("?")
-}
-
-fn read_u32(bytes: &[u8], offset: usize) -> Option<u32> {
-    Some(u32::from_le_bytes(
-        bytes.get(offset..offset + 4)?.try_into().ok()?,
-    ))
-}
-
-fn read_u64(bytes: &[u8], offset: usize) -> Option<u64> {
-    Some(u64::from_le_bytes(
-        bytes.get(offset..offset + 8)?.try_into().ok()?,
-    ))
 }
 
 /// The FACS and DSDT, which the FADT points to rather than the root table.

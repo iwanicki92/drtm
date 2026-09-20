@@ -11,6 +11,7 @@ use alloc::vec::Vec;
 
 use crate::acpi;
 use crate::amd::iommu::Iommu;
+use crate::bytes::read_u16;
 use crate::check;
 use crate::pci::Function;
 
@@ -36,14 +37,9 @@ const IVHD_MIN_LEN: usize = 24;
 /// entry with no IOMMU behind it likely points at a firmware bug, and warns
 /// too.
 pub fn report(found: &[Iommu]) {
-    let table = match acpi::find(SIGNATURE) {
-        Ok(Some(table)) => table,
-        missing => {
-            let why = if missing.is_err() {
-                "no ACPI tables"
-            } else {
-                "no IVRS table"
-            };
+    let table = match acpi::find_or(SIGNATURE, "no IVRS table") {
+        Ok(table) => table,
+        Err(why) => {
             if found.is_empty() {
                 check::skip!("amd.iommu_table", "{why}, and no IOMMU for one to describe");
             } else {
@@ -142,9 +138,4 @@ fn listed(table: &[u8]) -> Option<Vec<Iommu>> {
         offset += len;
     }
     Some(listed)
-}
-
-fn read_u16(bytes: &[u8], offset: usize) -> Option<u16> {
-    let raw = bytes.get(offset..offset + 2)?;
-    Some(u16::from_le_bytes([raw[0], raw[1]]))
 }

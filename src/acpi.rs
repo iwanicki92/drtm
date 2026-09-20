@@ -24,6 +24,9 @@ const RSDP_XSDT: usize = 24;
 pub const HEADER_LEN: usize = 36;
 const HEADER_LENGTH: usize = 4;
 
+/// The tables whose body is AML: the DSDT and the secondary tables.
+pub const AML: [&[u8; 4]; 3] = [b"DSDT", b"SSDT", b"PSDT"];
+
 /// Likely far above any table firmware ships, so a corrupt length is refused
 /// rather than read.
 const MAX_TABLE_LEN: usize = 1 << 20;
@@ -138,6 +141,16 @@ pub fn find(signature: &[u8; 4]) -> Result<Option<&'static [u8]>, NoAcpi> {
         .into_iter()
         .skip(1)
         .find(|table| table[..4] == *signature))
+}
+
+/// [`find`] for a check that reports why a table is not there: `missing`
+/// when the root table lists none, and no ACPI at all otherwise.
+pub fn find_or(signature: &[u8; 4], missing: &'static str) -> Result<&'static [u8], &'static str> {
+    match find(signature) {
+        Ok(Some(table)) => Ok(table),
+        Ok(None) => Err(missing),
+        Err(NoAcpi) => Err("no ACPI tables"),
+    }
 }
 
 /// The 64-bit FADT field where set and present, else the 32-bit one.

@@ -8,17 +8,13 @@
 //! device, so its absence is not known to stop a launch, and UEFI exposes no
 //! namespace to ask whether firmware reports it enabled.
 
-use crate::acpi;
+use crate::acpi::{self, AML};
 use crate::check;
 
 /// The device's hardware ID, which AML carries as a plain string. What a
 /// board calls the device and which table it puts it in are firmware's, so
 /// this is the part worth matching on.
 const HID: &[u8] = b"DRTM0002";
-
-/// The tables that carry AML, so a match is a device description rather than
-/// eight bytes of some other table's data.
-const AML: [&[u8; 4]; 3] = [b"DSDT", b"SSDT", b"PSDT"];
 
 /// Header fields naming who wrote the table, as corroboration for a reader
 /// comparing one machine against another (ACPI 6.5, section 5.2.6).
