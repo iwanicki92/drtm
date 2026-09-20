@@ -4,13 +4,13 @@
 
 //! CPUID leaves, the processors firmware started, and MSRs.
 
-use core::arch::asm;
 use core::arch::x86_64::{__cpuid, __cpuid_count, CpuidResult};
 
 use uefi::boot::{self, OpenProtocolAttributes, OpenProtocolParams};
 use uefi::proto::pi::mp::MpServices;
 
 use crate::check;
+use crate::cpu_state::read_cr;
 use crate::logging::record;
 use crate::msr;
 use crate::platform::{Cpu, Vendor};
@@ -151,20 +151,6 @@ pub fn dump_cpuid(cpu: &Cpu) {
             ],
         );
     }
-}
-
-fn read_cr(register: u8) -> u64 {
-    let value: u64;
-    // Safety: reading a control register needs ring 0, which a UEFI
-    // application has, and changes nothing.
-    unsafe {
-        match register {
-            0 => asm!("mov {}, cr0", out(reg) value, options(nomem, nostack, preserves_flags)),
-            3 => asm!("mov {}, cr3", out(reg) value, options(nomem, nostack, preserves_flags)),
-            _ => asm!("mov {}, cr4", out(reg) value, options(nomem, nostack, preserves_flags)),
-        }
-    }
-    value
 }
 
 /// Every processor MP services knows, with its APIC ID and location.

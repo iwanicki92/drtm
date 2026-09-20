@@ -63,12 +63,18 @@ pub fn on_bsp() -> Bsp {
     }
 }
 
-fn read_cr0() -> u64 {
+/// CR0, CR3 or CR4. Any other `register` reads CR4.
+pub fn read_cr(register: u8) -> u64 {
     let value: u64;
-    // Safety: reading CR0 needs ring 0, which a UEFI application has. It
-    // writes only the output register, touching no memory and no flags.
+    // Safety: reading a control register needs ring 0, which a UEFI
+    // application has. It writes only the output register, touching no
+    // memory and no flags.
     unsafe {
-        asm!("mov {}, cr0", out(reg) value, options(nomem, nostack, preserves_flags));
+        match register {
+            0 => asm!("mov {}, cr0", out(reg) value, options(nomem, nostack, preserves_flags)),
+            3 => asm!("mov {}, cr3", out(reg) value, options(nomem, nostack, preserves_flags)),
+            _ => asm!("mov {}, cr4", out(reg) value, options(nomem, nostack, preserves_flags)),
+        }
     }
     value
 }
@@ -111,7 +117,7 @@ fn report_bsp() {
 /// unconditionally. It is still worth saying, because firmware leaving caches
 /// off is a sign of something else being wrong.
 fn report_control_registers() {
-    let cr0 = read_cr0();
+    let cr0 = read_cr(0);
     let eflags = read_eflags();
     let mut deviations = 0;
     for (deviates, description) in [
