@@ -8,6 +8,7 @@
 //! whether that means MMCONFIG or the legacy ports and neither has to be
 //! reached for directly. Checks that need a device identify it out of here.
 
+use alloc::vec::Vec;
 use core::fmt;
 
 use log::debug;
@@ -82,29 +83,12 @@ pub struct Device {
     bridge: usize,
 }
 
-/// Fills the unused tail of a [`Devices`], which `count` keeps anything
-/// from reading.
-const ABSENT: Device = Device {
-    function: Function {
-        segment: 0,
-        bus: 0,
-        device: 0,
-        function: 0,
-    },
-    vendor: 0,
-    device: 0,
-    class: 0,
-    subclass: 0,
-    bridge: 0,
-};
-
 /// What one walk of configuration space found.
 ///
 /// Built once by [`scan`] and handed to every check, so the walk that costs
 /// something happens once however many checks read configuration space.
 pub struct Devices {
-    entries: [Device; MAX_FUNCTIONS],
-    len: usize,
+    entries: Vec<Device>,
 }
 
 impl Devices {
@@ -114,19 +98,18 @@ impl Devices {
         if self.iter().any(|seen| seen.function == device.function) {
             return false;
         }
-        if self.len < MAX_FUNCTIONS {
-            self.entries[self.len] = device;
-            self.len += 1;
+        if self.entries.len() < MAX_FUNCTIONS {
+            self.entries.push(device);
         }
         true
     }
 
     pub fn iter(&self) -> impl Iterator<Item = &Device> {
-        self.entries[..self.len].iter()
+        self.entries.iter()
     }
 
     pub fn count(&self) -> usize {
-        self.len
+        self.entries.len()
     }
 }
 
@@ -229,8 +212,7 @@ fn for_each_bridge(mut visit: impl FnMut(&PciIoAccessPci<'_>, u32, usize)) {
 /// rather than run once per check.
 pub fn scan() -> Devices {
     let mut devices = Devices {
-        entries: [ABSENT; MAX_FUNCTIONS],
-        len: 0,
+        entries: Vec::new(),
     };
     let mut bridges = 0;
     let mut repeated = 0;
