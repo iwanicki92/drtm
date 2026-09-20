@@ -7,10 +7,10 @@ SPDX-License-Identifier: Apache-2.0
 # DRTM support in QEMU
 
 What upstream QEMU models of the AMD DRTM path, what our own build adds on
-top, and what would have to exist before more of that path could be
-exercised here. Everything said about upstream was checked against
-`v11.1.1`, which is what our build branches from. How the test suite drives
-QEMU, and how to build it, is in `testing.md`.
+top, up to a launch that boots TrenchBoot's Xen, and what it still models
+loosely. Everything said about upstream was checked against `v11.1.1`,
+which is what our build branches from. How the test suite drives QEMU, and
+how to build it, is in `testing.md`.
 
 Observations from our own boots go in [Findings](#findings), one row each,
 so the page stays a reference rather than growing a section per discovery.
@@ -86,10 +86,54 @@ they make observable rather than by their diff. All are opt-in, so a guest
 that does not ask for them behaves as it would upstream.
 
 **The `skinit` CPUID bit can be asked for.** `-cpu EPYC,+skinit` then
-reports the feature instead of being refused. The instruction still raises
-`#UD`, so this advertises a capability the CPU does not have: enough for
-code that checks for `SKINIT` before attempting a launch, and nothing past
-that.
+reports the feature instead of being refused. On its own this advertises a
+capability the CPU does not have, which is enough for code that checks for
+`SKINIT` before attempting a launch.
+
+**`SKINIT` executes.** With `-device amd-drtm-platform` on `q35` the
+instruction does what _APM Vol 2, section 15.27_ describes: it reads the
+two-word header at the base in `EAX`, hashes that many bytes through the
+TPM's locality 4 sequence, resets the core to the flat entry state with
+`GIF` clear and `DPD`, `R_INIT` and `DIS_A20M` ORed into `VM_CR`, and jumps
+to the entry offset. Without the device it raises `#UD` as upstream does.
+The other CPUs must be parked in wait-for-SIPI first, and each one started
+after the launch arrives with the same `VM_CR` bits and `GIF` clear. Under
+TCG a halted CPU never woke for INIT alone, only for the SIPI after it,
+which the branch fixes since parking the APs depends on it.
+
+**`VM_CR` exists.** MSR `0xC0010114` carries `DPD`, `R_INIT`, `DIS_A20M`,
+`LOCK` and `SVMDIS`. Reserved bits raise `#GP`, `LOCK` freezes `SVMDIS`, and
+INIT clears `SVMDIS` unless locked, so the Secure Kernel Loader and Xen
+find the bits they clear after a launch.
+
+**The locality 4 hash reaches `swtpm`.** `SKINIT` sends `CMD_HASH_START`,
+`CMD_HASH_DATA` and `CMD_HASH_END` over the control channel
+(`backends/tpm/tpm_ioctl.h`), which resets PCRs 17 to 22 and extends PCR 17
+with the block's digest in every bank. The TIS frontends carry it, while
+their locality 4 register window still ignores guest writes, so only the
+instruction can start it. `query-amd-drtm` reports whether the hash went
+through, and `unsupported` for a backend without the capability.
+
+**An AMD northbridge function.** `-device amd-nb` adds `00:18.0` with AMD's
+vendor ID, the host bridge class and `MEMPROT_CR` at `0x384`. The Secure
+Kernel Loader writes that register back with `MEMPROT_EN` clear to lift
+`SL_DEV` protection of the block, and the device records the release. The
+loader reaches the register through MMCONFIG when MSR `0xC0010058` says
+the window is enabled, and otherwise through `0xCF8` with AMD's extended
+bits, which `hw/pci/pci_host.c` masks off. So a launch also passes
+`mmio-conf-base=0xb0000001`, which is where Dasharo maps its window.
+`-global q35-pcihost.mch-multifunction=on` lets the IOMMU sit at `00:00.2`,
+where the loader looks for it, as function 2 of the host bridge.
+
+**The launch is observable.** `query-amd-drtm` returns whether a launch
+happened, the block's base and length, whether `SL_DEV` is still armed,
+the hash outcome and the ranges kept from DMA. `x-amd-drtm-launch` records
+and measures a launch without executing the instruction, for tests. Trace
+events cover the instruction, `VM_CR` writes, APs started after the
+launch, the northbridge write and the platform object. A block shorter
+than its header, an entry offset past its end, an AP not parked, a
+release with no launch and a missing TPM are guest errors under
+`-d guest_errors`.
 
 **`amd-iommu` can report its capability as enabled.**
 `-device amd-iommu,firmware-enabled=on` sets bit 0 of the capability's base
@@ -101,8 +145,8 @@ this the bit can only ever read clear.
 **`MSR 0xC0010058` holds a value.** `-cpu EPYC,mmio-conf-base=0xe0000021`
 gives the MMIO configuration base register a reset value, since no firmware
 here programs it, and writes to it stick. Nothing is mapped: the register
-reports a window rather than backing one, which is what software reading it
-to locate configuration space needs and nothing more.
+reports a window rather than backing one, so it has to name a window the
+firmware did map for software that then uses it.
 
 **A Secure Processor with mailbox registers.** `-device amd-psp` adds an AMD
 function with the Turin ASP's device ID, `156e`, and `device-id=` picks any
@@ -131,30 +175,36 @@ Every precondition check reaches its outcomes, except the two that take a
 deliberately wrong ACPI table: `amd.iommu_table` never meets an IVRS that is
 malformed or disagrees with configuration space, and `amd.psp_drtm` never
 meets an ASPT whose checksum or register structures are wrong. Those are
-left to hardware. What is left is the launch itself.
+left to hardware.
 
-1. **The `SKINIT` instruction**, including the hash transaction it drives:
-    hashing the Secure Loader Block, extending PCR 17, and entering the SL
-    with interrupts and DMA shut off (_APM Vol 2, section 15.27_). This is
-    the bulk of the work and nothing past the instruction is reachable
-    without it.
-2. **The TPM side of that transaction.** `SKINIT` measures through locality
-    4 with `_TPM_Hash_Start` / `_TPM_Hash_Data` / `_TPM_Hash_End`, which is
-    a hardware interface rather than an ordinary command. The `swtpm`
-    control channel already carries all three as `CMD_HASH_START`,
-    `CMD_HASH_DATA` and `CMD_HASH_END` (`backends/tpm/tpm_ioctl.h`), but
-    QEMU sends none of them, and the TIS device ignores every write to the
-    locality 4 window (`hw/tpm/tpm_tis_common.c`).
-3. **A writable IOMMU enable bit.** Our property sets it at realize and
-    leaves it read-only, which is enough to observe but not to program. The
-    Secure Kernel Loader sets up the IOMMU itself and expects the bit to
-    take a write (RW1S), along with the capability-block lock that implies.
-4. **`SL_DEV` or its family 17h successor**, for anything that wants to
-    observe the DMA protection a launch establishes.
+The launch itself runs: the meta-trenchboot v0.5.2 image boots Xen and
+dom0 through GRUB's EFI TrenchBoot entry with PCR 17 extended, which a
+functional test in the QEMU tree checks, since it exercises the emulator
+rather than this binary. What the build still models loosely, in the order
+a stricter guest would notice:
 
-Emulating DRTM in QEMU is out of scope for this project. This list exists
-so the gaps are written down, and so a future effort has somewhere to
-start.
+1. **`SL_DEV` is a record, not a protection.** The block's range is listed
+    as kept from DMA and dropped on release, but no device DMA is blocked.
+2. **Extended configuration over `0xCF8`.** AMD's address bits 24 to 27
+    are masked off by `hw/pci/pci_host.c`, so a loader that has not found
+    an MMCONFIG window writes into the first 256 bytes instead. The
+    `mmio-conf-base` value above is the workaround.
+3. **The locality 4 registers.** The TIS window for locality 4 still
+    ignores writes, so a guest driving the hash sequence through the
+    registers rather than the instruction gets nothing.
+4. **A writable IOMMU enable bit.** The property sets it at realize and
+    leaves it read-only. The Secure Kernel Loader programs the IOMMU's MMIO
+    registers, which upstream models, but a loader that expects the
+    capability bit to take a write (RW1S) would not see it stick.
+5. **INIT while `GIF` is clear.** A real core holds INIT until `STGI`.
+    Under TCG the reset is taken before the target sees the interrupt, so
+    an INIT arriving between `SKINIT` and `STGI` resets the CPU. `#SX` is
+    not raised either.
+6. **The Secure Processor's DRTM service.** Mailbox writes are dropped, so
+    the loader's PSP-driven variant stops where it would issue a command.
+
+This project's own launch stays on hold, so the emulation is exercised by
+TrenchBoot's loader rather than by `drtm`.
 
 ## Findings
 
@@ -164,6 +214,10 @@ and some of them no longer hold.
 
 | Date       | QEMU   | Observation                                                                                                               |
 |------------|--------|---------------------------------------------------------------------------------------------------------------------------|
+| 2026-09-20 | ours   | meta-trenchboot v0.5.2 boots Xen and dom0 through `SKINIT`, PCR 17 extended in every bank, PCR 18 in SHA-1 and SHA-256    |
+| 2026-09-20 | ours   | SKL writes `MEMPROT_CR` over `0xCF8` with AMD's extended bits unless MSR `0xC0010058` is enabled, bits QEMU masks off     |
+| 2026-09-20 | ours   | Dasharo maps MMCONFIG at `0xb0000000`, so `mmio-conf-base=0xb0000001` names the window it did map                         |
+| 2026-09-20 | ours   | SKL's serial lines sit between Xen's EFI stub banner and its first `(XEN)` line, so they read as part of Xen's boot       |
 | 2026-09-18 | ours   | `-device amd-psp,drtm-device=on` publishes the SSDT AMD firmware does, so `amd.drtm_device` finds it                      |
 | 2026-09-18 | ours   | `-device amd-psp` answers C2PMSG_72 through the window its ASPT declares, so `amd.psp_drtm` reads it both ways            |
 | 2026-09-18 | ours   | `-device amd-psp` publishes an ASPT of the same 112 bytes and revision Turin firmware does, differing in the base address |

@@ -274,21 +274,21 @@ Robot-Framework-specific bits stripped.
 
 ## DRTM under QEMU
 
-QEMU models no part of a real DRTM launch, so a launch path has to keep the
-surrounding work (SLB construction, memory layout, header validation)
-exercisable without executing `SKINIT`. Which pieces are missing, and what
-each check can therefore prove here, is in `qemu-drtm-support.md`. Dasharo's
-own TrenchBoot QEMU tests never get further: GRUB stops at its own
-precondition checks.
+Upstream QEMU models no part of a real DRTM launch. Our build does, from
+`SKINIT` through the locality 4 hash to the northbridge register the Secure
+Kernel Loader releases the block through, and boots TrenchBoot's Xen with
+it. That end-to-end test lives in the QEMU tree rather than here, since it
+exercises the emulator and not this binary. This project's launch path is
+still on hold, so the checks run on a platform that could launch and is not
+asked to. What each check can prove, and what the build still models
+loosely, is in `qemu-drtm-support.md`. Dasharo's own TrenchBoot QEMU tests
+run on upstream and never get further than GRUB's precondition checks.
 
 Dasharo's `trenchboot/*.robot` tests are a useful model for DRTM-aware test
 structure later. They run against a fully booted Linux and read PCRs from
 `/sys/class/tpm/tpm0/pcr-*` and the event log from
 `/sys/kernel/security/slaunch/eventlog`, though not applicable verbatim
 since we don't boot a full OS.
-
-Adding DRTM emulation to QEMU is out of scope here. `qemu-drtm-support.md`
-records what it would take, for whoever picks it up.
 
 ## Boot time
 
