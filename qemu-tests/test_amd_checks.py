@@ -6,8 +6,9 @@
 
 These run only on an AMD CPU, so they take a boot fixture QEMU gives an
 `EPYC` model: `default_boot` for the checks themselves, `amd_iommu_boot`
-where an IOMMU has to be present. That the skip path really skips them is
-asserted in `test_platform_checks.py`.
+where an IOMMU has to be present, `amd_drtm_boot` for the machine a launch
+runs on. That the skip path really skips them is asserted in
+`test_platform_checks.py`.
 
 Assertions key on a check's identifier and verdict via `results`/`verdicts`,
 not on its wording, except where a test needs a value out of the detail text.
@@ -180,8 +181,9 @@ def test_iommu_enabled_by_firmware_passes(amd_iommu_enabled_boot: str):
 
 
 def test_iommu_away_from_the_launch_address_is_reported(amd_iommu_boot: str):
-    # QEMU never puts it at 0:00.2, where SKL expects one, so this branch is
-    # exercised on every boot with the device attached.
+    # Attached on its own, the device lands at whatever slot is free rather
+    # than 0:00.2, where SKL expects one, so this branch is exercised on
+    # every boot with `-device amd-iommu`.
     notes = [
         detail for tag, detail in results(amd_iommu_boot, "amd.iommu") if tag == "INFO"
     ]
@@ -192,6 +194,42 @@ def test_iommu_address_is_never_a_warning(amd_iommu_enabled_boot: str):
     # No specification fixes where the IOMMU sits, so a configured one away
     # from the address one loader expects leaves nothing to warn about.
     assert "WARN" not in verdicts(amd_iommu_enabled_boot, "amd.iommu")
+
+
+def test_iommu_at_the_launch_address_has_nothing_to_note(amd_drtm_boot: str):
+    # The launch machine puts the IOMMU at 0:00.2 as function 2 of the host
+    # bridge, so the check finds it where SKL looks and the note stays out.
+    assert verdicts(amd_drtm_boot, "amd.iommu") == ["PASS"]
+    (found,) = [
+        found for found in fields(amd_drtm_boot, "amd.iommu") if "capability" in found
+    ]
+    assert found["function"] == "0000:00:00.2"
+
+
+def test_pci_scan_finds_the_northbridge_beside_the_mch(amd_drtm_boot: str):
+    # AMD's northbridge function at 0:18.0, which SKL's node walk reads, next
+    # to the Intel MCH the machine keeps at 0:00.0. Both host bridges, one
+    # per vendor, so the scan tells them apart by address rather than class.
+    devices = {device["fn"]: device for device in dumped(amd_drtm_boot, "device")}
+    northbridge = devices["0000:00:18.0"]
+    assert int(northbridge["vendor"], 16) == 0x1022
+    assert int(northbridge["device"], 16) == 0x12C0
+    assert int(northbridge["class"], 16) == 0x060000
+    assert int(devices["0000:00:00.0"]["vendor"], 16) == 0x8086
+    assert int(devices["0000:00:00.0"]["class"], 16) == 0x060000
+
+
+def test_every_launch_precondition_passes_on_the_launch_machine(amd_drtm_boot: str):
+    # The one configuration where the AMD checks a launch depends on pass
+    # together: skinit from the machine rather than the CPU model, the IOMMU
+    # enabled and listed in IVRS, and the block allocated.
+    assert verdicts(amd_drtm_boot, "amd.skinit") == ["PASS"]
+    assert verdicts(amd_drtm_boot, "amd.slb") == ["PASS"]
+    assert verdicts(amd_drtm_boot, "amd.iommu") == ["PASS"]
+    ((tag, detail),) = results(amd_drtm_boot, "amd.iommu_table")
+    assert tag == "INFO"
+    assert "listed in IVRS: 1, matching configuration space" in detail
+    assert completed(amd_drtm_boot)
 
 
 def test_missing_iommu_warns_rather_than_fails(default_boot: str):

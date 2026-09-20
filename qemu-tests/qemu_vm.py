@@ -170,9 +170,14 @@ class QemuVm:
 
     `iommu` attaches QEMU's `amd-iommu`, which shows up as an AMD function
     carrying the secure-device capability an IOMMU scan looks for. QEMU puts
-    it at `0:1.0`, not the `0:0.2` of real silicon. `"disabled"` leaves the
-    capability's enable bit clear as upstream QEMU does, `"enabled"` sets it
-    the way firmware would.
+    it at whatever slot is free, not the `0:0.2` of real silicon.
+    `"disabled"` leaves the capability's enable bit clear as upstream QEMU
+    does, `"enabled"` sets it the way firmware would.
+
+    `amd_drtm` boots our QEMU's `-machine q35,amd-drtm=on`, the machine a
+    launch runs on: `skinit` on every CPU, an enabled `amd-iommu` at `0:0.2`
+    as function 2 of the host bridge, and AMD's northbridge at `0:18.0`.
+    Not with `iommu`, since QEMU takes one IOMMU per machine.
 
     `ivrs=False` has our QEMU leave that IOMMU out of ACPI, so the guest sees
     no IVRS table at all.
@@ -212,6 +217,7 @@ class QemuVm:
         cpu: str = DEFAULT_CPU,
         iommu: str | None = None,
         ivrs: bool = True,
+        amd_drtm: bool = False,
         config: str | None = None,
         extra_root_bridge: bool = False,
         corrected_error_bank: int | None = None,
@@ -229,12 +235,15 @@ class QemuVm:
             raise ValueError(
                 f"iommu must be None, 'disabled' or 'enabled', got {iommu!r}"
             )
+        if amd_drtm and iommu is not None:
+            raise ValueError("amd_drtm brings its own IOMMU, so iommu must be None")
         self.efi_binary = Path(efi_binary)
         self.log_dir = Path(log_dir)
         self.tpm = tpm
         self.cpu = cpu
         self.iommu = iommu
         self.ivrs = ivrs
+        self.amd_drtm = amd_drtm
         self.config = config
         self.extra_root_bridge = extra_root_bridge
         self.corrected_error_bank = corrected_error_bank
@@ -290,7 +299,7 @@ class QemuVm:
         args = [
             _binary(),
             "-machine",
-            "q35,smm=on",
+            "q35,smm=on" + (",amd-drtm=on" if self.amd_drtm else ""),
             "-cpu",
             self.cpu,
             "-m",

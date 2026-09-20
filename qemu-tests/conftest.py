@@ -165,6 +165,7 @@ def boot_and_capture(
     cpu: str = DEFAULT_CPU,
     iommu: str | None = None,
     ivrs: bool = True,
+    amd_drtm: bool = False,
     config: str | None = FULL_OUTPUT,
     extra_root_bridge: bool = False,
     corrected_error_bank: int | None = None,
@@ -192,6 +193,7 @@ def boot_and_capture(
         cpu=cpu,
         iommu=iommu,
         ivrs=ivrs,
+        amd_drtm=amd_drtm,
         config=config,
         extra_root_bridge=extra_root_bridge,
         corrected_error_bank=corrected_error_bank,
@@ -342,6 +344,18 @@ def amd_iommu_enabled_boot() -> dict:
     device with the Turin ASP's device ID whose DRTM service is ready.
     """
     return {"iommu": "enabled", "config": BAD_LEVEL, "psp": 0x156E}
+
+
+@boot_configuration
+def amd_drtm_boot() -> dict:
+    """Serial output of one boot on our QEMU's `-machine q35,amd-drtm=on`,
+    the machine a launch boots on.
+
+    The only configuration with the IOMMU at `0:0.2`, where the Secure
+    Kernel Loader looks for it, and with AMD's northbridge at `0:18.0`. The
+    plain `EPYC` model, since the machine adds `skinit` itself.
+    """
+    return {"amd_drtm": True}
 
 
 @boot_configuration
