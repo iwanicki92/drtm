@@ -151,3 +151,17 @@ def test_the_gate_blocks_without_a_tpm(launch_blocked_boot: str):
     assert "tpm.present" in gate["detail"]
     assert not checks(launch_blocked_boot, "launch.start")
     assert launch_state("launch_blocked_boot")["launched"] is False
+
+
+def test_a_tpm_1_2_measures_the_image(launch_tpm_1_2_boot: str):
+    # One SHA-1 bank, read a PCR at a time. The hash transaction is the
+    # same locality 4 one a TPM 2.0 gets.
+    (pcr17,) = checks(launch_tpm_1_2_boot, "launch.pcr17")
+    assert pcr17["result"] == "pass"
+    assert pcr17["fields"]["bank"] == "sha1"
+    assert pcr17["fields"]["pcr17"] == expected_pcr17("sha1")
+    assert [r["result"] for r in checks(launch_tpm_1_2_boot, "launch.pcr18_22")] == [
+        "pass"
+    ]
+    assert launch_state("launch_tpm_1_2_boot")["hash"] == "ok"
+    assert qemu_log("launch_tpm_1_2_boot") == ""

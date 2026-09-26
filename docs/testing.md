@@ -304,11 +304,11 @@ could launch and is not asked to. The launch boots in `test_launch.py` read
 on past the checks' summary to the Secure Loader's `launch.halted`: one
 through a TIS TPM that must measure the image in SHA-1 and SHA-256, one with
 the PSP DRTM service holding localities 1 to 4, one on the defaults with a
-SHA-384 bank, one through a CRB TPM that fails `tpm.locality` and launches
-anyway, and one the gate blocks. The tests recompute PCR 17 from
-`target/sl.bin` rather than trusting what drtm printed. What each check can
-prove, and what the build still models loosely, is in
-`qemu-drtm-support.md`. Dasharo's own TrenchBoot QEMU tests
+SHA-384 bank, one through a TPM 1.2, one through a CRB TPM that fails
+`tpm.locality` and launches anyway, and one the gate blocks. The tests
+recompute PCR 17 from `target/sl.bin` rather than trusting what drtm
+printed. What each check can prove, and what the build still models
+loosely, is in `qemu-drtm-support.md`. Dasharo's own TrenchBoot QEMU tests
 run on upstream and never get further than GRUB's precondition checks.
 
 Dasharo's `trenchboot/*.robot` tests are a useful model for DRTM-aware test

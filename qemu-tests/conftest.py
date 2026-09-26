@@ -427,6 +427,18 @@ def launch_crb_boot() -> dict:
 
 
 @boot_configuration
+def launch_tpm_1_2_boot() -> dict:
+    """Serial output of one launch through a TPM 1.2 behind TIS, whose one
+    SHA-1 bank the SL reads a PCR at a time with `TPM_PcrRead`."""
+    return {
+        "amd_drtm": True,
+        "tpm": "tis-1.2",
+        "launch": LAUNCH_HALTED,
+        "query_launch": True,
+    }
+
+
+@boot_configuration
 def launch_blocked_boot() -> dict:
     """Serial output of one boot on the launch machine with no TPM, so
     `tpm.present` fails and the gate refuses to launch."""
