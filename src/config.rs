@@ -68,10 +68,20 @@ const fn default_format() -> Format {
     }
 }
 
+/// Whether a run ends in a launch once the checks allow one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Launch {
+    /// The classic `SKINIT` launch, the default.
+    Skinit,
+    /// The checks and the dump only.
+    Off,
+}
+
 /// Settings, and whatever went wrong reading them.
 pub struct Config {
     pub level: LevelFilter,
     pub format: Format,
+    pub launch: Launch,
     problems: Vec<Problem>,
 }
 
@@ -83,6 +93,7 @@ enum Problem {
     UnknownKey { line: usize, key: String },
     BadLevel { line: usize, value: String },
     BadFormat { line: usize, value: String },
+    BadLaunch { line: usize, value: String },
 }
 
 impl fmt::Display for Problem {
@@ -101,6 +112,9 @@ impl fmt::Display for Problem {
             Self::BadFormat { line, value } => {
                 write!(f, "line {line}: format {value:?} is not text or json")
             }
+            Self::BadLaunch { line, value } => {
+                write!(f, "line {line}: launch {value:?} is not skinit or off")
+            }
         }
     }
 }
@@ -112,6 +126,7 @@ impl Config {
         let mut config = Self {
             level: DEFAULT_LEVEL,
             format: DEFAULT_FORMAT,
+            launch: Launch::Skinit,
             problems: Vec::new(),
         };
         let mut buffer = [0; MAX_SIZE + 1];
@@ -156,6 +171,14 @@ impl Config {
                     "text" => self.format = Format::Text,
                     "json" => self.format = Format::Json,
                     _ => self.problems.push(Problem::BadFormat {
+                        line: line_number,
+                        value: value.to_string(),
+                    }),
+                },
+                "launch" => match value {
+                    "skinit" => self.launch = Launch::Skinit,
+                    "off" => self.launch = Launch::Off,
+                    _ => self.problems.push(Problem::BadLaunch {
                         line: line_number,
                         value: value.to_string(),
                     }),

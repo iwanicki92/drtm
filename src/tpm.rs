@@ -10,7 +10,7 @@
 
 use common::tpm::{self, Bank, DRTM_PCR_COUNT, DrtmPcrs, FIRST_DRTM_PCR, ReadError};
 use log::trace;
-use uefi::boot::{self, OpenProtocolAttributes, OpenProtocolParams};
+use uefi::boot::{self, OpenProtocolAttributes, OpenProtocolParams, ScopedProtocol};
 use uefi::proto::tcg::v2::Tcg;
 
 use crate::check;
@@ -277,13 +277,12 @@ enum PcrReadError {
     Malformed,
 }
 
-/// Reads the SHA-256 bank of PCR 17 to 22 through the firmware's TCG2
-/// protocol. A read changes nothing in the TPM.
-fn read_drtm_pcrs() -> Result<DrtmPcrs, PcrReadError> {
-    let handle = boot::get_handle_for_protocol::<Tcg>().map_err(|_| PcrReadError::NoProtocol)?;
+/// The firmware's TCG2 protocol, if it publishes one.
+fn tcg() -> Option<ScopedProtocol<Tcg>> {
+    let handle = boot::get_handle_for_protocol::<Tcg>().ok()?;
     // Safety: the handle came from `get_handle_for_protocol` for this
     // protocol, and `GetProtocol` leaves its driver alone.
-    let tcg = unsafe {
+    unsafe {
         boot::open_protocol::<Tcg>(
             OpenProtocolParams {
                 handle,
@@ -292,8 +291,21 @@ fn read_drtm_pcrs() -> Result<DrtmPcrs, PcrReadError> {
             },
             OpenProtocolAttributes::GetProtocol,
         )
-    };
-    let mut tcg = tcg.map_err(|_| PcrReadError::NoProtocol)?;
+    }
+    .ok()
+}
+
+/// The active PCR banks, as `EFI_TCG2_EVENT_ALGORITHM_BITMAP` flags, where
+/// the TCG2 protocol says.
+pub fn active_banks() -> Option<u32> {
+    let banks = tcg()?.get_active_pcr_banks().ok()?;
+    (!banks.is_empty()).then(|| banks.bits())
+}
+
+/// Reads the SHA-256 bank of PCR 17 to 22 through the firmware's TCG2
+/// protocol. A read changes nothing in the TPM.
+fn read_drtm_pcrs() -> Result<DrtmPcrs, PcrReadError> {
+    let mut tcg = tcg().ok_or(PcrReadError::NoProtocol)?;
     // Header, update counter, the echoed selection and six 32-byte digests
     // come to 232 bytes. Twice that leaves room for a TPM that pads.
     let mut response = [0u8; 512];

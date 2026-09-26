@@ -75,13 +75,27 @@ def unsupported_binary() -> str | None:
     return qemu_vm.unsupported_binary(PROBE_OPTIONS, PROBE_REJECTS)
 
 
-def make_esp(scratch: Path, efi_binary: Path, config: str | None) -> Path:
+# What every boot's `drtm.conf` ends with unless it launches, so a run stops
+# after the checks and the dump as it did before the launch existed.
+NO_LAUNCH = "launch=off\n"
+
+
+def make_esp(
+    scratch: Path, efi_binary: Path, config: str | None, launch: bool = False
+) -> Path:
     """A scratch ESP with the binary where the removable-media path finds
-    it, so it needs no boot entry, and `drtm.conf` beside it if given."""
+    it, so it needs no boot entry, and `drtm.conf` beside it if given.
+
+    Without `launch` the file also turns the launch off, and exists for that
+    even where `config` is `None`. With it, `config` is written as given,
+    and `None` leaves no file at all.
+    """
     esp = scratch / "esp"
     boot_dir = esp / "EFI" / "BOOT"
     boot_dir.mkdir(parents=True)
     shutil.copy(efi_binary, boot_dir / "BOOTX64.EFI")
+    if not launch:
+        config = (config or "") + NO_LAUNCH
     if config is not None:
         (boot_dir / "drtm.conf").write_text(config)
     return esp
@@ -93,12 +107,14 @@ def options(
     iommu: str | None = None,
     ivrs: bool = True,
     amd_drtm: bool = False,
+    strict: bool = True,
     extra_root_bridge: bool = False,
     corrected_error_bank: int | None = None,
     psp: int | None = None,
     psp_ready: bool = True,
     psp_aspt: bool = True,
     psp_drtm_device: bool = False,
+    psp_drtm_service: bool = False,
     vga_and_nic: bool = False,
 ) -> list[str]:
     """The machine for one boot of the ESP, without the flash, the TPM or
@@ -121,7 +137,10 @@ def options(
     device runs strict, so a broken launch rule stops the VM as a panic
     rather than a logged line, and guest errors go to `qemu.log`: a checker
     that only observes must trip neither. Two processors, so the machine
-    has an AP the way a launch machine does.
+    has an AP the way a launch machine does, and no reboot, so a launch
+    that triple-faults stops QEMU rather than booting drtm again.
+    `strict=False` logs a broken rule and carries on, for a launch expected
+    to break one.
 
     `extra_root_bridge` adds a second PCI host bridge (`pxb-pcie`) with a
     root port on bus 0x20, the way a server has one per NUMA node.
@@ -130,7 +149,9 @@ def options(
     device ID and its mailbox registers behind it. `psp_ready` sets the bit
     the DRTM service sets when it will take a command, `psp_aspt` leaves
     the ACPI table naming those registers' address out, and `psp_drtm_device`
-    publishes the SSDT describing the DRTM ACPI device.
+    publishes the SSDT describing the DRTM ACPI device. `psp_drtm_service`
+    runs the DRTM service behind the mailbox, which locks TPM localities 1
+    to 4 from reset until a PSP launch, as Turin firmware leaves them.
 
     `vga_and_nic` keeps QEMU's default display adapter and network card.
     They cost 1.3s of firmware initialisation each boot, so only the boot
@@ -163,11 +184,12 @@ def options(
     if amd_drtm:
         args += [
             "-global",
-            "amd-drtm-platform.strict=on",
+            f"amd-drtm-platform.strict={'on' if strict else 'off'}",
             "-d",
             "guest_errors",
             "-smp",
             "2",
+            "-no-reboot",
         ]
     if iommu:
         args += ["-device", _amd_iommu(iommu == "enabled", ivrs)]
@@ -183,6 +205,7 @@ def options(
         device += f",drtm-ready={'on' if psp_ready else 'off'}"
         device += f",aspt={'on' if psp_aspt else 'off'}"
         device += f",drtm-device={'on' if psp_drtm_device else 'off'}"
+        device += f",drtm-service={'on' if psp_drtm_service else 'off'}"
         args += ["-device", device]
     if corrected_error_bank is not None:
         args.append("-S")

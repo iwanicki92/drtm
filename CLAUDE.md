@@ -49,11 +49,11 @@ and `docs/testing.md`. This file only covers agent-operational specifics.
 
 ## Commands
 
-Requires `cargo`/`rustc` (via rustup, with the `x86_64-unknown-uefi` target
-added) on `PATH`. If this machine's Rust toolchain lives somewhere other than
-the default `~/.rustup`/`~/.cargo`, set `RUSTUP_HOME`/`CARGO_HOME`
-accordingly first. Check for a machine-specific note before assuming
-defaults.
+Requires `cargo`/`rustc` (via rustup, with the `x86_64-unknown-uefi` and
+`x86_64-unknown-none` targets added) on `PATH`. If this machine's Rust
+toolchain lives somewhere other than the default `~/.rustup`/`~/.cargo`, set
+`RUSTUP_HOME`/`CARGO_HOME` accordingly first. Check for a machine-specific
+note before assuming defaults.
 
 - Build the EFI binary: `cargo build` (target is `x86_64-unknown-uefi`, set
     via `.cargo/config.toml`, output at
@@ -65,7 +65,8 @@ defaults.
     `rustup component add rustfmt clippy`). Clippy by hand is plain
     `cargo clippy -- -D warnings`: `--all-targets` fails on a duplicate
     `panic_impl`, since the test target links `std` against the `uefi`
-    crate's panic handler.
+    crate's panic handler. `sl` and `common` have hooks of their own, for
+    their own targets, in the same config.
 - Run the host unit tests: `cargo test-host`, an alias for `cargo test`
     on the host target of the crates that can run there (`common`).
 - `task build`/`task lint`/`task test`/`task test-host` (Taskfile.yml) wrap

@@ -73,6 +73,11 @@ pub fn init() {
     log::set_max_level(LevelFilter::Trace);
 }
 
+/// Whether UEFI offered a serial device to write to.
+pub fn has_serial() -> bool {
+    !SERIAL.load(Ordering::Relaxed).is_null()
+}
+
 /// Opens the serial device for one write.
 ///
 /// Opened per record rather than held, so nothing borrowed outlives the

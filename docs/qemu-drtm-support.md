@@ -228,8 +228,11 @@ a stricter guest would notice:
     only the BSP's write moves the window, and PCIEXBAR and the MSR share
     it, so whichever was written last wins.
 
-This project's own launch stays on hold, so the emulation is exercised by
-TrenchBoot's loader rather than by `drtm`.
+Both TrenchBoot's loader and `drtm`'s own launch exercise the emulation:
+`drtm`'s launch boots in `test_launch.py` go through `SKINIT` on the strict
+platform, with the PSP DRTM service's locality locks in one of them. A CRB
+TPM still has no locality 4 path, so its launch boot runs lenient and the
+hash never reaches it.
 
 ## Findings
 

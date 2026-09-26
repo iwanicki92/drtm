@@ -17,9 +17,12 @@ it worked.
 
 ## Status
 
-Early scaffolding: a UEFI binary that boots and logs a line, plus a QEMU test
-proving it does. No DRTM launch logic yet. See
-[docs/design.md](docs/design.md) for the planned scope.
+A UEFI binary that checks whether an AMD platform meets the preconditions of
+a dynamic launch, dumps the platform state behind them, and then launches
+through `SKINIT` into its own Secure Loader. The Secure Loader reads the DRTM
+PCRs, reports whether the TPM measured it, and halts the machine, which then
+needs a power cycle. `launch=off` stops a run after the checks. See
+[docs/design.md](docs/design.md) for how it works and what it leaves out.
 
 ## Requirements
 
@@ -52,12 +55,13 @@ optional: with no file the defaults apply. One `key=value` per line, `#`
 starting a comment, and anything wrong in it is reported and the default
 kept.
 
-| Key      | Values                                           | Default |
-|----------|--------------------------------------------------|---------|
-| `level`  | `off`, `error`, `warn`, `info`, `debug`, `trace` | `info`  |
-| `format` | `text`, `json`                                   | `text`  |
+| Key      | Values                                           | Default  |
+|----------|--------------------------------------------------|----------|
+| `level`  | `off`, `error`, `warn`, `info`, `debug`, `trace` | `info`   |
+| `format` | `text`, `json`                                   | `text`   |
+| `launch` | `skinit`, `off`                                  | `skinit` |
 
-The same two can be built in, for a binary copied to an ESP with no
+The first two can be built in, for a binary copied to an ESP with no
 `drtm.conf` beside it, along with where records go. A `drtm.conf` on the
 machine still wins over either.
 

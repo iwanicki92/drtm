@@ -71,3 +71,19 @@ repos:
         language: system
         files: \.rs$
         pass_filenames: false
+
+      - id: cargo-clippy-sl
+        name: cargo clippy (sl)
+        description: Lint the Secure Loader for its own target
+        entry: cargo clippy -p sl --target x86_64-unknown-none --profile sl -- -D warnings
+        language: system
+        files: \.rs$
+        pass_filenames: false
+
+      - id: cargo-clippy-common
+        name: cargo clippy (common)
+        description: Lint the shared crate and its tests on the host
+        entry: cargo clippy -p common --target x86_64-unknown-linux-gnu --all-targets -- -D warnings
+        language: system
+        files: \.rs$
+        pass_filenames: false

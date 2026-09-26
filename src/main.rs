@@ -14,6 +14,7 @@ mod check;
 mod config;
 mod cpu_state;
 mod dump;
+mod launch;
 mod logging;
 mod msr;
 mod pci;
@@ -65,6 +66,8 @@ fn main() -> Status {
     // Terminal marker. The QEMU test harness reads serial output until this
     // line, so it knows it has every check's result and not a partial boot.
     check::summary();
+
+    launch::run(&config, &cpu);
 
     Status::SUCCESS
 }

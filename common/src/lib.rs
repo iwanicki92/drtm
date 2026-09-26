@@ -11,6 +11,7 @@
 extern crate std;
 
 pub mod clock;
+pub mod out;
 pub mod params;
 pub mod record;
 pub mod spcr;

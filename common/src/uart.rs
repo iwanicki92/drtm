@@ -18,11 +18,14 @@ pub enum Space {
 
 /// One 16550: where its registers start and how wide each is, 1 byte or 4.
 /// Registers sit `width` bytes apart, as SPCR's access size implies.
+///
+/// Only built through [`Uart::new`], whose contract is what makes writing
+/// to one sound.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Uart {
-    pub space: Space,
-    pub base: u64,
-    pub width: u8,
+    space: Space,
+    base: u64,
+    width: u8,
 }
 
 /// The legacy COM1 port, which a board without SPCR most likely wires its
@@ -43,22 +46,43 @@ const LSR_THRE: u8 = 1 << 5;
 const SPIN_LIMIT: u32 = 100_000;
 
 impl Uart {
+    /// # Safety
+    ///
+    /// `base` must be where a UART's eight registers are, `width` bytes
+    /// apart, in the given space: firmware's word, from SPCR or the
+    /// preamble's probe. An MMIO base must lie below 4 GiB, which every
+    /// user of a sink maps, and `width` be 1 or 4.
+    pub const unsafe fn new(space: Space, base: u64, width: u8) -> Self {
+        Self { space, base, width }
+    }
+
+    pub fn space(&self) -> Space {
+        self.space
+    }
+
+    pub fn base(&self) -> u64 {
+        self.base
+    }
+
+    pub fn width(&self) -> u8 {
+        self.width
+    }
+
     fn read(&self, register: u64) -> u8 {
         let at = self.base + register * u64::from(self.width);
         match (self.space, self.width) {
             (Space::Io, _) => {
                 let value: u8;
-                // Safety: port I/O touches no memory, and the port was chosen
-                // as this UART's.
+                // Safety: `new`'s contract makes this port the UART's, and
+                // port I/O touches no memory.
                 unsafe {
                     asm!("in al, dx", in("dx") at as u16, out("al") value,
                          options(nomem, nostack, preserves_flags));
                 }
                 value
             }
-            // Safety: the MMIO address is this UART's register, below 4 GiB
-            // as the sink list requires, and identity-mapped wherever this
-            // runs.
+            // Safety: `new`'s contract makes this address one of the UART's
+            // registers, mapped wherever a sink is used.
             (Space::Mmio, 4) => unsafe { (at as *const u32).read_volatile() as u8 },
             // Safety: as above.
             (Space::Mmio, _) => unsafe { (at as *const u8).read_volatile() },

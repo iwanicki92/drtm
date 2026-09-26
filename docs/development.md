@@ -33,9 +33,16 @@ System packages needed alongside it:
 
 The repository is a Cargo workspace. The root package is `drtm`, the EFI
 binary, and the workspace's only default member, so a plain `cargo build`
-or `cargo clippy` builds that and nothing else. `common` holds what `drtm`
-shares with the Secure Loader that runs after `SKINIT`, such as the record
-format, and needs neither UEFI nor a particular processor mode. Its unit
+or `cargo clippy` builds that and nothing else. `sl` is the Secure Loader
+that runs after `SKINIT`, built for `x86_64-unknown-none` by `build.rs` and
+embedded in `drtm.efi`, so it needs that target added:
+
+```sh
+rustup target add x86_64-unknown-none
+```
+
+`common` holds what the two share, such as the record format and the TPM
+commands, and needs neither UEFI nor a particular processor mode. Its unit
 tests run on the host:
 
 ```sh
@@ -84,6 +91,8 @@ read at startup. It is optional: with no file the defaults apply.
 level=info
 # what it looks like: text or json
 format=text
+# whether the run ends in a launch: skinit or off
+launch=skinit
 ```
 
 `level=info` is the default and prints one line per check. `debug` adds the
@@ -124,6 +133,12 @@ The verdict is `fail` if any check failed, `warn` if any warned, and `pass`
 otherwise, since a skipped check and a reported fact decide nothing. The
 counts hold what ran rather than what printed, so lowering the level does not
 move them.
+
+`launch=skinit` is the default: once the checks allow it, the run goes on
+through `SKINIT` into the Secure Loader, which reports and halts. With the
+defaults, a missing `drtm.conf` launches too. `launch=off` stops after the
+summary, as a run did before the launch existed. See `docs/design.md` for
+what the gate blocks on.
 
 A line that is not `key=value`, an unknown key and an unusable value are
 each reported as a `config` warning naming the line, and the default is kept.
@@ -183,7 +198,12 @@ cargo build
 ```
 
 Produces `target/x86_64-unknown-uefi/debug/drtm.efi`. The target is fixed in
-`.cargo/config.toml`, so no `--target` flag is needed.
+`.cargo/config.toml`, so no `--target` flag is needed. `build.rs` first builds
+the Secure Loader with its own `sl` profile into a target directory under
+`OUT_DIR`, flattens it into the image `SKINIT` measures, fails the build on
+anything the SLB layout does not allow, and computes the PCR 17 values the
+launch should leave. It also copies the image to `target/sl.bin`, where the
+QEMU tests recompute those values.
 
 ## Linting
 
@@ -198,7 +218,9 @@ pre-commit run --all-files    # run everything once, e.g. after cloning
 ```
 
 `cargo-fmt` and `cargo-clippy` hooks shell out to the local toolchain
-directly, so `rustup component add rustfmt clippy` is needed once too.
+directly, so `rustup component add rustfmt clippy` is needed once too. Clippy
+runs three times, once per target: `drtm` for UEFI, `sl` for
+`x86_64-unknown-none` and `common` on the host with its tests.
 
 ## Licensing
 
@@ -223,7 +245,9 @@ pages, and adds a link back to that index on each crate's root page.
 
 ## Layout
 
-- `src/`: the Rust binary.
+- `src/`: the Rust binary. `src/launch/` is the gate and the preamble.
+- `sl/`: the Secure Loader, with its linker script `sl.ld`.
+- `common/`: what `drtm` and the Secure Loader share.
 - `qemu-tests/`: the pytest-based QEMU test suite (kept out of Cargo's own
   `tests/` directory to avoid confusion between the two). The harness it
   boots with is the `drtmtest` package from the `drtm-tests` repository.

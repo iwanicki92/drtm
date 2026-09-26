@@ -19,11 +19,15 @@ common = { path = "common" }
 log = "0.4"
 uefi = { version = "0.36.1", features = ["alloc", "global_allocator", "panic_handler"] }
 
+[build-dependencies]
+sha1 = { version = "0.10", default-features = false }
+sha2 = { version = "0.10", default-features = false }
+
 [lints]
 workspace = true
 
 [workspace]
-members = [".", "common"]
+members = [".", "common", "sl"]
 # `cargo build` at the root builds the EFI binary. The other members target
 # something else, see docs/development.md.
 default-members = ["."]
@@ -33,3 +37,13 @@ default-members = ["."]
 # because pre-commit runs clippy with `-D warnings` anyway, and a bare
 # `cargo clippy` during development should report rather than stop.
 undocumented_unsafe_blocks = "warn"
+
+# The Secure Loader, which build.rs builds with this profile. The measured
+# image has to stay under 60 KiB with room left in the SLB behind it.
+[profile.sl]
+inherits = "release"
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
+debug = false

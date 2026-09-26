@@ -94,32 +94,51 @@ pub struct Tpm {
     tsc_per_ms: u64,
 }
 
-fn read8(address: usize) -> u8 {
-    // Safety: every caller passes an address in the TPM's MMIO windows,
-    // which the chipset decodes (or answers with all ones) at any time.
+/// Bytes in one locality's register window.
+const WINDOW: usize = 0x1000;
+
+/// # Safety
+///
+/// `address` must be device memory that is safe to read a byte from: a
+/// TPM register, or a CRB buffer the TPM names.
+unsafe fn read8(address: usize) -> u8 {
+    // Safety: the caller's contract.
     unsafe { ptr::read_volatile(address as *const u8) }
 }
 
-fn write8(address: usize, value: u8) {
-    // Safety: as for `read8`.
+/// # Safety
+///
+/// As for [`read8`], for a write.
+unsafe fn write8(address: usize, value: u8) {
+    // Safety: the caller's contract.
     unsafe { ptr::write_volatile(address as *mut u8, value) }
 }
 
-fn read32(address: usize) -> u32 {
-    // Safety: as for `read8`, and every register read this way is 4-byte
-    // aligned.
+/// # Safety
+///
+/// As for [`read8`], and `address` 4-byte aligned.
+unsafe fn read32(address: usize) -> u32 {
+    // Safety: the caller's contract.
     unsafe { ptr::read_volatile(address as *const u32) }
 }
 
-fn write32(address: usize, value: u32) {
-    // Safety: as for `read32`.
+/// # Safety
+///
+/// As for [`read32`], for a write.
+unsafe fn write32(address: usize, value: u32) {
+    // Safety: the caller's contract.
     unsafe { ptr::write_volatile(address as *mut u32, value) }
 }
 
 impl Tpm {
     /// The TPM at `locality`, not yet requested. `tsc_per_ms` bounds every
     /// wait.
+    ///
+    /// # Panics
+    ///
+    /// On a locality above 4, which has no window.
     pub fn new(interface: Interface, locality: u8, tsc_per_ms: u64) -> Self {
+        assert!(locality <= 4, "no TPM locality {locality}");
         Self {
             interface,
             locality,
@@ -131,8 +150,32 @@ impl Tpm {
         self.locality
     }
 
-    fn register(&self, offset: usize) -> usize {
+    /// The address of the register at `offset`, which is always inside this
+    /// locality's window: the chipset decodes the whole range at any time,
+    /// and a TPM that is not there reads all ones rather than faulting.
+    fn register(&self, offset: usize, width: usize) -> usize {
+        assert!(offset + width <= WINDOW && offset.is_multiple_of(width));
         locality_base(self.locality) + offset
+    }
+
+    fn reg8(&self, offset: usize) -> u8 {
+        // Safety: `register` keeps the address in the TPM window.
+        unsafe { read8(self.register(offset, 1)) }
+    }
+
+    fn set8(&self, offset: usize, value: u8) {
+        // Safety: as for `reg8`.
+        unsafe { write8(self.register(offset, 1), value) }
+    }
+
+    fn reg32(&self, offset: usize) -> u32 {
+        // Safety: as for `reg8`, and `register` checks the alignment.
+        unsafe { read32(self.register(offset, 4)) }
+    }
+
+    fn set32(&self, offset: usize, value: u32) {
+        // Safety: as for `reg32`.
+        unsafe { write32(self.register(offset, 4), value) }
     }
 
     fn wait(&self, ms: u64, mut done: impl FnMut() -> bool) -> bool {
@@ -151,8 +194,8 @@ impl Tpm {
     /// What the locality's access register reads, which requests nothing.
     pub fn access(&self) -> u32 {
         match self.interface {
-            Interface::Tis => u32::from(read8(self.register(TIS_ACCESS))),
-            Interface::Crb => read32(self.register(CRB_LOC_STATE)),
+            Interface::Tis => u32::from(self.reg8(TIS_ACCESS)),
+            Interface::Crb => self.reg32(CRB_LOC_STATE),
         }
     }
 
@@ -160,11 +203,11 @@ impl Tpm {
     pub fn active(&self) -> bool {
         match self.interface {
             Interface::Tis => {
-                let access = read8(self.register(TIS_ACCESS));
+                let access = self.reg8(TIS_ACCESS);
                 access != 0xFF && access & ACCESS_VALID != 0 && access & ACCESS_ACTIVE != 0
             }
             Interface::Crb => {
-                let state = read32(self.register(CRB_LOC_STATE));
+                let state = self.reg32(CRB_LOC_STATE);
                 state != u32::MAX
                     && state & LOC_STATE_VALID != 0
                     && state & LOC_STATE_ASSIGNED != 0
@@ -179,8 +222,8 @@ impl Tpm {
             return Ok(());
         }
         match self.interface {
-            Interface::Tis => write8(self.register(TIS_ACCESS), ACCESS_REQUEST),
-            Interface::Crb => write32(self.register(CRB_LOC_CTRL), LOC_CTRL_REQUEST),
+            Interface::Tis => self.set8(TIS_ACCESS, ACCESS_REQUEST),
+            Interface::Crb => self.set32(CRB_LOC_CTRL, LOC_CTRL_REQUEST),
         }
         if self.wait(TIMEOUT_A_MS, || self.active()) {
             Ok(())
@@ -193,8 +236,8 @@ impl Tpm {
     /// written to may not answer reads.
     pub fn relinquish(&self) {
         match self.interface {
-            Interface::Tis => write8(self.register(TIS_ACCESS), ACCESS_ACTIVE),
-            Interface::Crb => write32(self.register(CRB_LOC_CTRL), LOC_CTRL_RELINQUISH),
+            Interface::Tis => self.set8(TIS_ACCESS, ACCESS_ACTIVE),
+            Interface::Crb => self.set32(CRB_LOC_CTRL, LOC_CTRL_RELINQUISH),
         }
     }
 
@@ -208,23 +251,21 @@ impl Tpm {
     }
 
     fn sts(&self) -> u8 {
-        read8(self.register(TIS_STS))
+        self.reg8(TIS_STS)
     }
 
     fn burst(&self) -> usize {
-        let low = read8(self.register(TIS_BURST));
-        let high = read8(self.register(TIS_BURST + 1));
+        let low = self.reg8(TIS_BURST);
+        let high = self.reg8(TIS_BURST + 1);
         usize::from(u16::from_le_bytes([low, high]))
     }
 
     fn transmit_tis(&self, command: &[u8], response: &mut [u8]) -> Result<usize, Error> {
-        let sts = self.register(TIS_STS);
-        write8(sts, STS_READY);
+        self.set8(TIS_STS, STS_READY);
         if !self.wait(TIMEOUT_B_MS, || self.sts() & STS_READY != 0) {
             return Err(Error::NotReady);
         }
 
-        let fifo = self.register(TIS_FIFO);
         let mut sent = 0;
         while sent < command.len() {
             let mut burst = 0;
@@ -235,7 +276,7 @@ impl Tpm {
                 return Err(Error::Transfer);
             }
             for &byte in command[sent..].iter().take(burst) {
-                write8(fifo, byte);
+                self.set8(TIS_FIFO, byte);
                 sent += 1;
             }
         }
@@ -245,7 +286,7 @@ impl Tpm {
             return Err(Error::Transfer);
         }
 
-        write8(sts, STS_GO);
+        self.set8(TIS_STS, STS_GO);
         let answered = || self.sts() & (STS_VALID | STS_DATA) == STS_VALID | STS_DATA;
         if !self.wait(TIMEOUT_B_MS, answered) {
             return Err(Error::Timeout);
@@ -258,7 +299,7 @@ impl Tpm {
             }
             let burst = self.burst().max(1);
             for _ in 0..burst.min(size - read) {
-                *response.get_mut(read).ok_or(Error::Response)? = read8(fifo);
+                *response.get_mut(read).ok_or(Error::Response)? = self.reg8(TIS_FIFO);
                 read += 1;
             }
             if read >= 10 {
@@ -269,7 +310,7 @@ impl Tpm {
             }
         }
         // Back to idle, which drops anything the TPM still holds.
-        write8(sts, STS_READY);
+        self.set8(TIS_STS, STS_READY);
         if read == size {
             Ok(size)
         } else {
@@ -278,18 +319,19 @@ impl Tpm {
     }
 
     fn transmit_crb(&self, command: &[u8], response: &mut [u8]) -> Result<usize, Error> {
-        let request = self.register(CRB_CTRL_REQ);
-        write32(request, CTRL_REQ_READY);
-        if !self.wait(TIMEOUT_B_MS, || read32(request) & CTRL_REQ_READY == 0) {
+        self.set32(CRB_CTRL_REQ, CTRL_REQ_READY);
+        if !self.wait(TIMEOUT_B_MS, || {
+            self.reg32(CRB_CTRL_REQ) & CTRL_REQ_READY == 0
+        }) {
             return Err(Error::NotReady);
         }
 
-        let command_size = read32(self.register(CRB_CMD_SIZE)) as usize;
-        let command_at = u64::from(read32(self.register(CRB_CMD_LOW)))
-            | (u64::from(read32(self.register(CRB_CMD_HIGH))) << 32);
-        let response_size = read32(self.register(CRB_RSP_SIZE)) as usize;
-        let response_at = u64::from(read32(self.register(CRB_RSP_ADDR)))
-            | (u64::from(read32(self.register(CRB_RSP_ADDR + 4))) << 32);
+        let command_size = self.reg32(CRB_CMD_SIZE) as usize;
+        let command_at =
+            u64::from(self.reg32(CRB_CMD_LOW)) | (u64::from(self.reg32(CRB_CMD_HIGH)) << 32);
+        let response_size = self.reg32(CRB_RSP_SIZE) as usize;
+        let response_at =
+            u64::from(self.reg32(CRB_RSP_ADDR)) | (u64::from(self.reg32(CRB_RSP_ADDR + 4)) << 32);
         let reachable =
             |at: u64, len: usize| at.checked_add(len as u64).is_some_and(|end| end <= 1 << 32);
         if !reachable(command_at, command_size) || !reachable(response_at, response_size) {
@@ -299,29 +341,33 @@ impl Tpm {
             return Err(Error::Transfer);
         }
         for (i, &byte) in command.iter().enumerate() {
-            write8(command_at as usize + i, byte);
+            // Safety: the TPM names this range as its command buffer, and it
+            // was checked to lie below 4 GiB, which every caller maps.
+            unsafe { write8(command_at as usize + i, byte) };
         }
 
-        let start = self.register(CRB_CTRL_START);
-        write32(start, 1);
-        if !self.wait(TIMEOUT_B_MS, || read32(start) & 1 == 0) {
+        self.set32(CRB_CTRL_START, 1);
+        if !self.wait(TIMEOUT_B_MS, || self.reg32(CRB_CTRL_START) & 1 == 0) {
             return Err(Error::Timeout);
         }
-        if read32(self.register(CRB_CTRL_STS)) & CTRL_STS_ERROR != 0 {
+        if self.reg32(CRB_CTRL_STS) & CTRL_STS_ERROR != 0 {
             return Err(Error::Timeout);
         }
         let mut header = [0; 10];
         for (i, byte) in header.iter_mut().enumerate() {
-            *byte = read8(response_at as usize + i);
+            // Safety: as for the command buffer, for the response buffer,
+            // and the header is within its checked size.
+            *byte = unsafe { read8(response_at as usize + i) };
         }
         let size = crate::tpm::response_size(&header).ok_or(Error::Response)?;
         if size < 10 || size > response.len() || size > response_size {
             return Err(Error::Response);
         }
         for (i, byte) in response[..size].iter_mut().enumerate() {
-            *byte = read8(response_at as usize + i);
+            // Safety: as for the header, `size` checked against the buffer's.
+            *byte = unsafe { read8(response_at as usize + i) };
         }
-        write32(request, CTRL_REQ_IDLE);
+        self.set32(CRB_CTRL_REQ, CTRL_REQ_IDLE);
         Ok(size)
     }
 }

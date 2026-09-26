@@ -68,11 +68,9 @@ pub fn decode(table: &[u8]) -> Result<Uart, Unusable> {
         SPACE_IO => Space::Io,
         other => return Err(Unusable::Space(other)),
     };
-    Ok(Uart {
-        space,
-        base: address,
-        width,
-    })
+    // Safety: the firmware's SPCR names this UART, and the checks above
+    // keep an MMIO one below 4 GiB with 1 or 4-byte registers.
+    Ok(unsafe { Uart::new(space, address, width) })
 }
 
 #[cfg(test)]
@@ -90,31 +88,27 @@ mod tests {
         table
     }
 
+    fn parts(uart: Uart) -> (Space, u64, u8) {
+        (uart.space(), uart.base(), uart.width())
+    }
+
     #[test]
     fn io_port() {
         assert_eq!(
-            decode(&table(0, SPACE_IO, 8, 1, 0x2F8)),
-            Ok(Uart {
-                space: Space::Io,
-                base: 0x2F8,
-                width: 1
-            })
+            decode(&table(0, SPACE_IO, 8, 1, 0x2F8)).map(parts),
+            Ok((Space::Io, 0x2F8, 1))
         );
     }
 
     #[test]
     fn mmio_below_4gib() {
         assert_eq!(
-            decode(&table(0x12, SPACE_MEMORY, 32, 3, 0xFEDC_9000)),
-            Ok(Uart {
-                space: Space::Mmio,
-                base: 0xFEDC_9000,
-                width: 4
-            })
+            decode(&table(0x12, SPACE_MEMORY, 32, 3, 0xFEDC_9000)).map(parts),
+            Ok((Space::Mmio, 0xFEDC_9000, 4))
         );
         // Width from the bit width alone, as older tables give it.
         assert_eq!(
-            decode(&table(0, SPACE_MEMORY, 8, 0, 0xFEDC_9000)).map(|u| u.width),
+            decode(&table(0, SPACE_MEMORY, 8, 0, 0xFEDC_9000)).map(|u| u.width()),
             Ok(1)
         );
     }

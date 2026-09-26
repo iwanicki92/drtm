@@ -14,6 +14,7 @@ and assert against it. Collection starts every boot the run needs, several at
 a time, so the fixture is usually just waiting on one that is already going.
 """
 
+import dataclasses
 import functools
 import json
 import re
@@ -25,7 +26,7 @@ from types import FunctionType
 
 import pytest
 from drtmtest.dasharo import BOOT_PROMPT, FIRMWARE, warmed_firmware
-from drtmtest.qemu_vm import QemuVm
+from drtmtest.qemu_vm import QemuVm, Settings
 from drtmtest.session import BootSession
 from machine import (
     MMCONFIG_ABOVE_4GIB,
@@ -50,6 +51,19 @@ CACHE_DIR = Path(__file__).parent / "dl-cache"
 # rather than a partially booted guest.
 SUMMARY_RECORD = 'drtm: {"rec":"summary"'
 CHECKS_COMPLETE = "drtm: checks complete"
+
+# What a launch boot prints last, from the Secure Loader, and what ends one
+# early: a blocked gate, a failed preamble, or the SL refusing its
+# parameters or panicking. Both forms carry the identifier as is.
+LAUNCH_HALTED = "launch.halted"
+LAUNCH_GATE = "launch.gate"
+LAUNCH_STOPPED = [
+    "launch.gate",
+    "launch.params",
+    "launch.panic",
+    "[FAIL] launch.preamble",
+    '"id":"launch.preamble","result":"fail"',
+]
 
 # The `drtm.conf` most boots get: records rather than prose, so tests key on
 # fields instead of wording, and `trace`, since the `[SCAN]` lines some of
@@ -109,6 +123,8 @@ def boot_and_capture(
     corrected_error_bank: int | None = None,
     save_firmware_to: Path | None = None,
     query_launch: bool = False,
+    launch: str | None = None,
+    pcr_banks: tuple[str, ...] | None = None,
     **machine,
 ) -> str:
     """Boots `drtm.efi` once and returns everything it printed.
@@ -125,16 +141,25 @@ def boot_and_capture(
 
     `query_launch` asks the platform device what it saw once the guest is
     done, for `launch_state` to read.
+
+    `launch` leaves the launch on and reads on past the summary to the
+    line it names: `LAUNCH_HALTED`, the Secure Loader's last, or
+    `LAUNCH_GATE` for a launch the gate blocks. `pcr_banks` gives the TPM
+    other banks than the session's.
     """
     marker = SUMMARY_RECORD if config and "format=json" in config else CHECKS_COMPLETE
     with tempfile.TemporaryDirectory(prefix="drtm-esp-") as scratch:
-        esp = make_esp(Path(scratch), built_efi_binary(), config)
+        esp = make_esp(Path(scratch), built_efi_binary(), config, launch is not None)
+        settings = Settings.from_environment()
+        if pcr_banks is not None:
+            settings = dataclasses.replace(settings, banks=pcr_banks)
         with QemuVm(
             log_dir,
             options(esp, corrected_error_bank=corrected_error_bank, **machine),
             firmware=firmware,
             tpm=tpm,
             save_firmware_to=save_firmware_to,
+            settings=settings,
         ) as vm:
             if corrected_error_bank is not None:
                 inject_corrected_error(vm, corrected_error_bank)
@@ -145,6 +170,10 @@ def boot_and_capture(
             # is still in flight. Read to its end, or a loaded host leaves
             # the summary record cut short and unparsable.
             vm.expect("\n", LINE_TIMEOUT)
+            if launch is not None:
+                stops = [stop for stop in LAUNCH_STOPPED if stop != launch]
+                vm.expect(launch, BOOT_TIMEOUT, failures=stops)
+                vm.expect("\n", LINE_TIMEOUT)
             if query_launch:
                 _LAUNCH_STATE[log_dir] = vm.wait_for_qmp().execute("query-amd-drtm")
             return vm.capture
@@ -333,6 +362,75 @@ def tpm_crb_boot() -> dict:
     boot also covers the defaults.
     """
     return {"tpm": "crb", "config": None}
+
+
+@boot_configuration
+def launch_boot() -> dict:
+    """Serial output of one boot that launches: the launch machine with a
+    TIS TPM, as `amd_drtm_boot`, but with the launch left on, so the run
+    goes on past the checks through `SKINIT` to the Secure Loader's report.
+    """
+    return {
+        "amd_drtm": True,
+        "tpm": "tis",
+        "launch": LAUNCH_HALTED,
+        "query_launch": True,
+    }
+
+
+@boot_configuration
+def launch_psp_boot() -> dict:
+    """Serial output of one launch with the PSP DRTM service ready, which
+    keeps TPM localities 1 to 4 locked, as Turin firmware does until a PSP
+    launch the classic path never issues. The SL can only read at 0.
+    """
+    return {
+        "amd_drtm": True,
+        "tpm": "tis",
+        "psp": 0x156E,
+        "psp_drtm_service": True,
+        "launch": LAUNCH_HALTED,
+    }
+
+
+@boot_configuration
+def launch_defaults_boot() -> dict:
+    """Serial output of one launch with no `drtm.conf`, so it runs on the
+    defaults, prose at `info`, and launches because that is the default.
+    Its TPM also has a SHA-384 bank, which the build computes no value for.
+    """
+    return {
+        "amd_drtm": True,
+        "tpm": "tis",
+        "config": None,
+        "launch": LAUNCH_HALTED,
+        "pcr_banks": ("sha1", "sha256", "sha384"),
+    }
+
+
+@boot_configuration
+def launch_crb_boot() -> dict:
+    """Serial output of one launch through a CRB TPM, which our QEMU gives
+    locality 0 alone and no locality 4 path to hash through.
+
+    So `tpm.locality` fails and the launch goes ahead regardless, as a FAIL
+    outside the gate's list should. The platform runs lenient, since the
+    missing hash breaks one of its rules on purpose.
+    """
+    return {
+        "amd_drtm": True,
+        "strict": False,
+        "tpm": "crb",
+        "launch": LAUNCH_HALTED,
+        "query_launch": True,
+    }
+
+
+@boot_configuration
+def launch_blocked_boot() -> dict:
+    """Serial output of one boot on the launch machine with no TPM, so
+    `tpm.present` fails and the gate refuses to launch."""
+    return {"amd_drtm": True, "launch": LAUNCH_GATE, "query_launch": True}
 
 
 def _prepare(names: list[str]) -> None:

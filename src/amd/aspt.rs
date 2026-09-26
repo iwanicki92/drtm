@@ -9,6 +9,9 @@
 //! this platform needs goes through it.
 
 use alloc::vec::Vec;
+use core::sync::atomic::{AtomicU8, Ordering};
+
+use common::params::PspDrtm;
 
 use log::debug;
 
@@ -19,6 +22,19 @@ use crate::check;
 use crate::pci::Devices;
 
 pub const SIGNATURE: &[u8; 4] = b"ASPT";
+
+/// What the report below read of the service, for the launch to pass on:
+/// 0 nothing, 1 not ready, 2 ready.
+static STATE: AtomicU8 = AtomicU8::new(0);
+
+/// What `amd.psp_drtm` read of the DRTM service this run.
+pub fn drtm_state() -> PspDrtm {
+    match STATE.load(Ordering::Relaxed) {
+        1 => PspDrtm::NotReady,
+        2 => PspDrtm::Ready,
+        _ => PspDrtm::Unknown,
+    }
+}
 
 /// The header is followed by where the Secure Processor's registers are and
 /// how many pages of them there are, then by the structures saying what is
@@ -101,6 +117,7 @@ pub fn report(devices: &Devices) {
     // whose read issues nothing: a command is a write.
     let value = unsafe { (mailbox as *const u32).read_volatile() };
     let ready = value & READY != 0;
+    STATE.store(if ready { 2 } else { 1 }, Ordering::Relaxed);
     check::info!(
         "amd.psp_drtm",
         mailbox = check::hex(mailbox as u64),

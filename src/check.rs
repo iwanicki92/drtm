@@ -18,7 +18,7 @@
 //! back out of the sentence. The prose is unchanged by it.
 
 use core::fmt;
-use core::sync::atomic::{AtomicU32, Ordering};
+use core::sync::atomic::{AtomicU8, AtomicU32, Ordering};
 
 use log::Level;
 
@@ -69,12 +69,43 @@ macro_rules! check_text {
 /// One counter per tag, indexed by the tag's own discriminant.
 static COUNTS: [AtomicU32; Tag::ALL.len()] = [const { AtomicU32::new(0) }; Tag::ALL.len()];
 
+/// The results the launch gate reads back, by identifier, and which tags
+/// each reported, one bit per tag.
+const TRACKED: [&str; 5] = [
+    "amd.skinit",
+    "cpu.machine_check",
+    "cpu.bsp",
+    "amd.slb",
+    "tpm.present",
+];
+static REPORTED: [AtomicU8; TRACKED.len()] = [const { AtomicU8::new(0) }; TRACKED.len()];
+
+/// Whether `id`, one of the results the gate reads, reported `tag` at least
+/// once this run.
+pub fn reported(id: &str, tag: Tag) -> bool {
+    TRACKED
+        .iter()
+        .position(|&tracked| tracked == id)
+        .is_some_and(|at| REPORTED[at].load(Ordering::Relaxed) & (1 << tag as u8) != 0)
+}
+
+/// Reports a result that no summary counts, because it follows the one
+/// the checks end with. Filtered at its tag's level all the same.
+pub fn after_summary(tag: Tag, id: &str, fields: &[(&str, Value)], detail: fmt::Arguments) {
+    if level(tag) <= log::max_level() {
+        logging::check(tag, id, fields, detail);
+    }
+}
+
 /// Reports one result. Called by the macros below rather than directly.
 ///
 /// Counted whether or not it prints, so a run at `level=error` still ends
 /// with a summary that agrees with a run at `level=info`.
 pub fn report(tag: Tag, id: &str, fields: &[(&str, Value)], detail: fmt::Arguments) {
     COUNTS[tag as usize].fetch_add(1, Ordering::Relaxed);
+    if let Some(at) = TRACKED.iter().position(|&tracked| tracked == id) {
+        REPORTED[at].fetch_or(1 << tag as u8, Ordering::Relaxed);
+    }
     if level(tag) <= log::max_level() {
         logging::check(tag, id, fields, detail);
     }

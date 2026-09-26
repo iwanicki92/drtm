@@ -113,9 +113,9 @@ impl Params {
         page[32..40].copy_from_slice(&self.tsc_per_ms.to_le_bytes());
         for (slot, uart) in self.sinks.iter().flatten().enumerate() {
             let at = SINKS + slot * SINK_SIZE;
-            page[at] = uart.space as u8;
-            page[at + 1] = uart.width;
-            page[at + 8..at + 16].copy_from_slice(&uart.base.to_le_bytes());
+            page[at] = uart.space() as u8;
+            page[at + 1] = uart.width();
+            page[at + 8..at + 16].copy_from_slice(&uart.base().to_le_bytes());
         }
         page[SHA1..SHA256].copy_from_slice(&self.expected_sha1);
         page[SHA256..SIZE].copy_from_slice(&self.expected_sha256);
@@ -188,7 +188,9 @@ impl Params {
             if !matches!(width, 1 | 4) || !fits {
                 return Err(Invalid::Field("sink"));
             }
-            *sink = Some(Uart { space, base, width });
+            // Safety: the preamble listed this UART from SPCR or its own
+            // probe, and the checks above keep it to what `new` asks.
+            *sink = Some(unsafe { Uart::new(space, base, width) });
         }
         let mut expected_sha1 = [0; 20];
         expected_sha1.copy_from_slice(&page[SHA1..SHA256]);
@@ -225,11 +227,8 @@ mod tests {
             tsc_per_ms: 2_000_000,
             sinks: [
                 Some(COM1),
-                Some(Uart {
-                    space: Space::Mmio,
-                    base: 0xFEDC_9000,
-                    width: 4,
-                }),
+                // Safety: never written to, only encoded.
+                Some(unsafe { Uart::new(Space::Mmio, 0xFEDC_9000, 4) }),
                 None,
                 None,
             ],
