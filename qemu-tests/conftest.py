@@ -44,8 +44,9 @@ from machine import (
 
 REPO_ROOT = Path(__file__).parent.parent
 EFI_BINARY = REPO_ROOT / "target" / "x86_64-unknown-uefi" / "debug" / "drtm.efi"
-# The signed SL the build embeds in the binary.
-SL_IMAGE = REPO_ROOT / "target" / "sl.bin"
+# The signed SLs the build embeds in the binary, one per launch path.
+SL_CLASSIC = REPO_ROOT / "target" / "sl-classic.bin"
+SL_PSP = REPO_ROOT / "target" / "sl-psp.bin"
 
 LOGS_DIR = Path(__file__).parent / "logs"
 CACHE_DIR = Path(__file__).parent / "dl-cache"
@@ -152,7 +153,7 @@ def boot_and_capture(
     line it names: `LAUNCH_HALTED`, the Secure Loader's last, or
     `LAUNCH_GATE` for a launch the gate blocks. `pcr_banks` gives the TPM
     other banks than the session's. `sl_patch` names a field of the signed
-    SL that `machine.patch_sl` changes in the ESP's copy of the binary.
+    PSP SL that `machine.patch_sl` changes in the ESP's copy of the binary.
     """
     marker = SUMMARY_RECORD if config and "format=json" in config else CHECKS_COMPLETE
     with tempfile.TemporaryDirectory(prefix="drtm-esp-") as scratch:
@@ -160,7 +161,7 @@ def boot_and_capture(
         if sl_patch is not None:
             patched = Path(scratch) / "patched.efi"
             patched.write_bytes(
-                patch_sl(binary.read_bytes(), SL_IMAGE.read_bytes(), sl_patch)
+                patch_sl(binary.read_bytes(), SL_PSP.read_bytes(), sl_patch)
             )
             binary = patched
         esp = make_esp(Path(scratch), binary, config, launch is not None)

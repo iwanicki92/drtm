@@ -143,9 +143,11 @@ PCR predictions and the SHA-256 of the IVRS the checks read. Then, after
 `bootloader_data_offset` at byte 68, where TrenchBoot's layout has it, and
 the measured length is padded to a multiple of 16. The signature block
 follows it, then the parameter page, then `.bss`, a 6 KiB stack and three
-pages of page tables at the end of the 64 KiB. One image serves both paths
-and fits with little room to spare. Should it outgrow the SLB, it can be
-split in two, one image per path.
+pages of page tables at the end of the 64 KiB. It is built once per launch
+path, through the `classic` and `psp` features, and the preamble writes the
+image of the path it takes into the SLB. Each image carries only its path's
+code, so the PSP one keeps room in the SLB that a single image for both paths
+would not.
 
 The 32-bit entry loads an empty IDT, clears `VM_CR.DIS_A20M`, loads its own
 GDT through `SS`, zeroes `.bss` and enters long mode with the low 4 GiB

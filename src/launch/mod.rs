@@ -18,11 +18,25 @@ use crate::config::{Config, Launch};
 use crate::pci::Devices;
 use crate::platform::Cpu;
 
-/// The Secure Loader image and what `build.rs` computed from it.
-mod image {
-    include!(concat!(env!("OUT_DIR"), "/sl.rs"));
+/// A Secure Loader image and what `build.rs` computed from it.
+pub struct Image {
+    pub bytes: &'static [u8],
+    /// Bytes `SKINIT` measures.
+    pub measured: usize,
+    /// Where the parameter page goes in the SLB, and its size.
+    pub params_offset: usize,
+    pub params_size: usize,
+    /// PCR 17 after `SKINIT`, per bank.
+    pub expected_sha1: [u8; 20],
+    pub expected_sha256: [u8; 32],
+}
 
-    pub const BYTES: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/sl.bin"));
+/// The SL built for each path, `CLASSIC` and `PSP`, and the PCRs the PSP
+/// service's `LAUNCH` should leave.
+mod image {
+    use super::Image;
+
+    include!(concat!(env!("OUT_DIR"), "/sl.rs"));
 }
 
 /// Launches, if `drtm.conf` and the checks allow it. Returns where they do

@@ -40,9 +40,10 @@ const SLB_SIZE: usize = 0x10000;
 const PAGE: usize = 0x1000;
 const BELOW_4GIB: u64 = u32::MAX as u64;
 
-// The SL reserves its parameter page from the same `params::SIZE`, which
-// build.rs read back from its ELF.
-const _: () = assert!(image::PARAMS_SIZE == params::SIZE);
+// Both SLs reserve their parameter page from the same `params::SIZE`, which
+// build.rs read back from their ELFs.
+const _: () =
+    assert!(image::CLASSIC.params_size == params::SIZE && image::PSP.params_size == params::SIZE);
 
 /// Pages holding a 64 KiB block on a 2 MiB boundary wherever the firmware
 /// puts them. The SL maps its SLB with one 2 MiB page from that boundary.
@@ -247,6 +248,11 @@ pub fn launch(config: &Config, sinks: Sinks, service: Option<Service>, tsc_per_m
         return;
     }
     let slb = (block as usize).next_multiple_of(SLB_ALIGN) as *mut u8;
+    let image = if service.is_some() {
+        &image::PSP
+    } else {
+        &image::CLASSIC
+    };
 
     let params = Params {
         format: config.format,
@@ -265,8 +271,8 @@ pub fn launch(config: &Config, sinks: Sinks, service: Option<Service>, tsc_per_m
         psp_drtm: aspt::drtm_state(),
         tsc_per_ms,
         sinks: sinks.uarts,
-        expected_sha1: image::EXPECTED_SHA1,
-        expected_sha256: image::EXPECTED_SHA256,
+        expected_sha1: image.expected_sha1,
+        expected_sha256: image.expected_sha256,
         path: if service.is_some() {
             Path::Psp
         } else {
@@ -291,11 +297,11 @@ pub fn launch(config: &Config, sinks: Sinks, service: Option<Service>, tsc_per_m
     // a page of loader code below 4 GiB, neither used by anything else.
     unsafe {
         ptr::write_bytes(slb, 0, SLB_SIZE);
-        ptr::copy_nonoverlapping(image::BYTES.as_ptr(), slb, image::BYTES.len());
+        ptr::copy_nonoverlapping(image.bytes.as_ptr(), slb, image.bytes.len());
         let page_bytes = params.encode();
         ptr::copy_nonoverlapping(
             page_bytes.as_ptr(),
-            slb.add(image::PARAMS_OFFSET),
+            slb.add(image.params_offset),
             params::SIZE,
         );
         trampoline::install(page);
@@ -306,14 +312,13 @@ pub fn launch(config: &Config, sinks: Sinks, service: Option<Service>, tsc_per_m
         "launch.skinit",
         &[
             ("slb", Value::Hex(slb as u64)),
-            ("measured", Value::Count(image::MEASURED as u64)),
-            ("expected_sha1", Value::Bytes(&image::EXPECTED_SHA1)),
-            ("expected_sha256", Value::Bytes(&image::EXPECTED_SHA256)),
+            ("measured", Value::Count(image.measured as u64)),
+            ("expected_sha1", Value::Bytes(&image.expected_sha1)),
+            ("expected_sha256", Value::Bytes(&image.expected_sha256)),
         ],
         format_args!(
             "SLB at {:#x}, {} bytes measured, exiting boot services",
-            slb as u64,
-            image::MEASURED
+            slb as u64, image.measured
         ),
     );
     if let Some(psp) = &params.psp {

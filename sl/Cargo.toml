@@ -13,6 +13,12 @@ name = "sl"
 test = false
 bench = false
 
+# The launch path the image serves. build.rs builds one image with each, so
+# neither carries the other's code.
+[features]
+classic = []
+psp = []
+
 [dependencies]
 common = { path = "../common" }
 

@@ -34,8 +34,9 @@ System packages needed alongside it:
 The repository is a Cargo workspace. The root package is `drtm`, the EFI
 binary, and the workspace's only default member, so a plain `cargo build`
 or `cargo clippy` builds that and nothing else. `sl` is the Secure Loader
-that runs after `SKINIT`, built for `x86_64-unknown-none` by `build.rs` and
-embedded in `drtm.efi`, so it needs that target added:
+that runs after `SKINIT`, built for `x86_64-unknown-none` by `build.rs` once
+per launch path, through its `classic` and `psp` features, and embedded in
+`drtm.efi`, so it needs that target added:
 
 ```sh
 rustup target add x86_64-unknown-none
@@ -203,11 +204,12 @@ cargo build
 
 Produces `target/x86_64-unknown-uefi/debug/drtm.efi`. The target is fixed in
 `.cargo/config.toml`, so no `--target` flag is needed. `build.rs` first builds
-the Secure Loader with its own `sl` profile into a target directory under
-`OUT_DIR`, flattens it into the image `SKINIT` measures, fails the build on
-anything the SLB layout does not allow, and computes the PCR 17 values the
-launch should leave. It also copies the image to `target/sl.bin`, where the
-QEMU tests recompute those values.
+the Secure Loader twice with its own `sl` profile into a target directory
+under `OUT_DIR`, once per launch path. It flattens each build into the image
+`SKINIT` measures, fails the build on anything the SLB layout does not allow,
+and computes the PCR values that launch should leave. It also copies the
+images to `target/sl-classic.bin` and `target/sl-psp.bin`, where the QEMU
+tests recompute those values.
 
 ## Linting
 
@@ -223,8 +225,8 @@ pre-commit run --all-files    # run everything once, e.g. after cloning
 
 `cargo-fmt` and `cargo-clippy` hooks shell out to the local toolchain
 directly, so `rustup component add rustfmt clippy` is needed once too. Clippy
-runs three times, once per target: `drtm` for UEFI, `sl` for
-`x86_64-unknown-none` and `common` on the host with its tests.
+runs four times: `drtm` for UEFI, `sl` for `x86_64-unknown-none` once per
+launch path and `common` on the host with its tests.
 
 ## Licensing
 

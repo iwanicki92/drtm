@@ -7,23 +7,39 @@
 //! It reads the DRTM PCRs, judges whether the TPM measured this image,
 //! reports on the sinks the parameter page lists, and halts. Nothing runs
 //! after it, so it extends nothing and wakes no processor.
+//!
+//! It is built once per launch path, the `classic` or `psp` feature, and
+//! the preamble writes the image of the path it takes into the SLB.
 
 #![no_std]
 #![no_main]
 
+#[cfg(not(any(
+    all(feature = "classic", not(feature = "psp")),
+    all(feature = "psp", not(feature = "classic"))
+)))]
+compile_error!("build the SL with exactly one of the classic and psp features");
+
 mod entry;
+#[cfg(feature = "psp")]
 mod probe;
+#[cfg(feature = "psp")]
 mod psp;
 
 use core::fmt::{self, Write};
 use core::panic::PanicInfo;
 
-use common::params::{self, Family, Params, Path, PspDrtm};
-use common::record::{Tag, Value};
+use common::params::{self, Family, Params};
+use common::record::Tag;
 use common::tpm::{self, Bank, DrtmPcrs, FIRST_DRTM_PCR, ReadError};
 use common::transport::{self, Tpm};
 use common::uart;
-use common::verdict::{self, Pcr17};
+#[cfg(feature = "classic")]
+use {
+    common::params::PspDrtm,
+    common::record::Value,
+    common::verdict::{self, Pcr17},
+};
 
 use common::out::Out;
 
@@ -95,9 +111,17 @@ extern "C" fn sl_main(slb: u32) -> ! {
     let mut out = Out::new(params.sinks, params.format, params.level);
     out.debug(format_args!("SL running, SLB at {slb:#x}"));
 
-    match (params.path, &params.psp) {
-        (Path::Psp, Some(psp)) => psp::run(&mut out, &params, psp, slb),
-        _ => classic(&mut out, &params),
+    #[cfg(feature = "classic")]
+    classic(&mut out, &params);
+    #[cfg(feature = "psp")]
+    match &params.psp {
+        Some(psp) => psp::run(&mut out, &params, psp, slb),
+        None => out.unchecked(
+            Tag::Fail,
+            "launch.params",
+            &[],
+            format_args!("the parameter page names no PSP service for this PSP SL"),
+        ),
     }
 
     out.debug(format_args!("stack used: {} bytes", stack_used()));
@@ -112,6 +136,7 @@ extern "C" fn sl_main(slb: u32) -> ! {
 }
 
 /// The classic path: the PCRs `SKINIT` left, judged against the build.
+#[cfg(feature = "classic")]
 fn classic(out: &mut Out, params: &Params) {
     let (tpm, locality_granted) = take_locality(out, params);
     match params.family {
@@ -138,6 +163,7 @@ pub(crate) fn tpm(params: &Params, locality: u8) -> Tpm {
 
 /// Asks for locality 2 and reports whether it came. Without it the PCRs
 /// are read at locality 0, which every TPM allows.
+#[cfg(feature = "classic")]
 fn take_locality(out: &mut Out, params: &Params) -> (Tpm, bool) {
     let access: [u32; 5] = core::array::from_fn(|locality| tpm(params, locality as u8).access());
     out.debug(format_args!(
@@ -224,6 +250,7 @@ pub(crate) fn read(tpm: &Tpm, family: Family, bank: Bank) -> Result<DrtmPcrs, Fa
 }
 
 /// Reads one bank and judges it.
+#[cfg(feature = "classic")]
 fn report_bank(out: &mut Out, params: &Params, tpm: &Tpm, bank: Bank) {
     let name = bank.name();
     let locality = Value::Count(tpm.locality().into());

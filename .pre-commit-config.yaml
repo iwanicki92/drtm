@@ -77,10 +77,18 @@ repos:
         files: \.rs$
         pass_filenames: false
 
-      - id: cargo-clippy-sl
-        name: cargo clippy (sl)
-        description: Lint the Secure Loader for its own target
-        entry: cargo clippy -p sl --target x86_64-unknown-none --profile sl -- -D warnings
+      - id: cargo-clippy-sl-classic
+        name: cargo clippy (sl, classic)
+        description: Lint the classic Secure Loader for its own target
+        entry: cargo clippy -p sl --target x86_64-unknown-none --profile sl --features classic -- -D warnings
+        language: system
+        files: \.rs$
+        pass_filenames: false
+
+      - id: cargo-clippy-sl-psp
+        name: cargo clippy (sl, psp)
+        description: Lint the PSP Secure Loader for its own target
+        entry: cargo clippy -p sl --target x86_64-unknown-none --profile sl --features psp -- -D warnings
         language: system
         files: \.rs$
         pass_filenames: false

@@ -5,14 +5,14 @@
 """The PSP DRTM launch: `SKINIT`, then the service's `LAUNCH` and every
 command after it, as the Secure Loader reports them.
 
-The PCRs are predicted here from `target/sl.bin`, apart from what the
+The PCRs are predicted here from `target/sl-psp.bin`, apart from what the
 build predicted, so a wrong prediction in either shows.
 """
 
 import hashlib
 import re
 
-from conftest import SL_IMAGE, launch_state, messages, qemu_log, qemu_traces, records
+from conftest import SL_PSP, launch_state, messages, qemu_log, qemu_traces, records
 from test_launch import after_launch, checks, measured_image
 
 # The signature block behind the measured image: the `$AS1` header, then
@@ -46,15 +46,15 @@ def extend(pcr: bytes, digest: bytes) -> bytes:
 
 
 def token() -> bytes:
-    image = SL_IMAGE.read_bytes()
-    at = len(measured_image()) + SIG_HEADER_LEN + SIGNATURE_LEN
+    image = SL_PSP.read_bytes()
+    at = len(measured_image(SL_PSP)) + SIG_HEADER_LEN + SIGNATURE_LEN
     return image[at : at + TOKEN_LEN]
 
 
 def expected_pcr17(anti_rollback: int, tsme: int) -> str:
     """SHA-256 PCR 17 after `LAUNCH`: the `SKINIT` value, then an SPLT
     version of 0, then the TSME and anti-rollback words."""
-    pcr = extend(bytes(32), sha256(measured_image()))
+    pcr = extend(bytes(32), sha256(measured_image(SL_PSP)))
     pcr = extend(pcr, sha256((0).to_bytes(4, "little")))
     words = tsme.to_bytes(4, "little") + anti_rollback.to_bytes(4, "little")
     return extend(pcr, sha256(words)).hex()

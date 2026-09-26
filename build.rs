@@ -2,13 +2,13 @@
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
-//! Builds the Secure Loader, flattens it into the image `SKINIT` measures,
-//! signs it for the PSP DRTM service, and computes the PCR values both
-//! launches should leave.
+//! Builds the Secure Loader once per launch path, flattens each build into
+//! the image `SKINIT` measures, signs it for the PSP DRTM service, and
+//! computes the PCR values its launch should leave.
 //!
-//! Writes `sl.bin`, the measured image and its signature block, and `sl.rs`
-//! into `OUT_DIR` for `src/launch` to embed, and copies `sl.bin` to
-//! `target/` for the QEMU tests. `DRTM_SL_KEY` names a PKCS#8 PEM key to
+//! Writes `sl-classic.bin` and `sl-psp.bin`, each the measured image and its
+//! signature block, and `sl.rs` into `OUT_DIR` for `src/launch` to embed,
+//! and copies both images to `target/` for the QEMU tests. `DRTM_SL_KEY` names a PKCS#8 PEM key to
 //! sign with in place of the test key in `keys/test/`.
 
 use std::env;
@@ -50,7 +50,18 @@ fn main() {
         .and_then(|pem| sign::Key::from_pem(&pem))
         .unwrap_or_else(|e| panic!("the SL key {} is unusable: {e}", key_path.display()));
 
-    let elf = fs::read(build(&root, &out)).expect("the SL ELF reads");
+    let mut rust = String::new();
+    for (feature, name) in [("classic", "CLASSIC"), ("psp", "PSP")] {
+        rust += &build_image(&root, &out, &key, feature, name);
+    }
+    fs::write(out.join("sl.rs"), rust).unwrap();
+}
+
+/// Builds, flattens and signs the SL with `feature`, writes it to
+/// `sl-{feature}.bin` in `OUT_DIR` and `target/`, and returns the Rust that
+/// describes it as the `Image` called `name`.
+fn build_image(root: &Path, out: &Path, key: &sign::Key, feature: &str, name: &str) -> String {
+    let elf = fs::read(build(root, out, feature)).expect("the SL ELF reads");
     let mut image = flatten(&elf);
     let header = |at: usize| usize::from(u16::from_le_bytes([image[at], image[at + 1]]));
     let (length, params) = (header(2), header(PARAMS_FIELD));
@@ -64,40 +75,43 @@ fn main() {
 
     let sha1 = extend::<Sha1>(&image);
     let sha256 = extend::<Sha256>(&image);
-    let token = key.token();
-    let psp_pcr17 = sign::launch_pcr17(sha256.as_slice().try_into().unwrap());
-    let psp_pcr18 = sign::launch_pcr18(&token);
-    let block = sign::sign(&image, &key);
+    let block = sign::sign(&image, key);
     image.extend_from_slice(&block);
-    fs::write(out.join("sl.bin"), &image).unwrap();
-    fs::write(
-        out.join("sl.rs"),
-        format!(
-            "/// Bytes `SKINIT` measures.\n\
-             pub const MEASURED: usize = {length:#x};\n\
-             /// Where the parameter page goes in the SLB.\n\
-             pub const PARAMS_OFFSET: usize = {params:#x};\n\
-             /// Bytes the SL reserves there.\n\
-             pub const PARAMS_SIZE: usize = {params_size:#x};\n\
-             /// PCR 17 after the launch, per bank.\n\
-             pub const EXPECTED_SHA1: [u8; 20] = {sha1:?};\n\
-             pub const EXPECTED_SHA256: [u8; 32] = {sha256:?};\n\
-             /// SHA-256 PCR 17, all but the last extend, and PCR 18 after\n\
-             /// the PSP service's `LAUNCH`.\n\
-             pub const PSP_PCR17: [u8; 32] = {psp_pcr17:?};\n\
-             pub const PSP_PCR18: [u8; 32] = {psp_pcr18:?};\n"
-        ),
-    )
-    .unwrap();
-
+    let file = format!("sl-{feature}.bin");
+    fs::write(out.join(&file), &image).unwrap();
     let target = env::var_os("CARGO_TARGET_DIR").map_or_else(|| root.join("target"), PathBuf::from);
     fs::create_dir_all(&target).unwrap();
-    fs::write(target.join("sl.bin"), &image).unwrap();
+    fs::write(target.join(&file), &image).unwrap();
+
+    let bytes = out.join(&file);
+    let mut rust = format!(
+        "pub const {name}: Image = Image {{
+    bytes: include_bytes!({bytes:?}),
+    measured: {length:#x},
+    params_offset: {params:#x},
+    params_size: {params_size:#x},
+    expected_sha1: {sha1:?},
+    expected_sha256: {sha256:?},
+}};
+"
+    );
+    if feature == "psp" {
+        let pcr17 = sign::launch_pcr17(sha256.as_slice().try_into().unwrap());
+        let pcr18 = sign::launch_pcr18(&key.token());
+        rust += &format!(
+            "/// SHA-256 PCR 17, all but the last extend, and PCR 18 after the
+/// PSP service's `LAUNCH` of the `PSP` image.
+pub const PSP_PCR17: [u8; 32] = {pcr17:?};
+pub const PSP_PCR18: [u8; 32] = {pcr18:?};
+"
+        );
+    }
+    rust
 }
 
 /// Builds `sl` in a target directory of its own under `OUT_DIR`, so it
 /// never waits on the lock the outer build holds, and returns its ELF.
-fn build(root: &Path, out: &Path) -> PathBuf {
+fn build(root: &Path, out: &Path, feature: &str) -> PathBuf {
     let target_dir = out.join("sl-target");
     let mut cargo = Command::new(env::var("CARGO").unwrap());
     cargo
@@ -111,6 +125,8 @@ fn build(root: &Path, out: &Path) -> PathBuf {
             "sl",
             "--target",
             SL_TARGET,
+            "--features",
+            feature,
         ])
         .arg("--target-dir")
         .arg(&target_dir);

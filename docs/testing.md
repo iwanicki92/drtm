@@ -318,7 +318,8 @@ whose `LAUNCH` times out, one without an IVRS, and five whose `LAUNCH` the
 service refuses. Four of those patch a field of the signed image inside the
 ESP's copy of `drtm.efi`, through `machine.patch_sl`, and one raises the
 platform's patch level. The tests recompute PCR 17 and 18 from the measured part
-of `target/sl.bin` and its key token rather than trusting what drtm printed.
+of `target/sl-psp.bin` and its key token rather than trusting what drtm
+printed.
 What each check can prove, and what the build still models loosely, is in
 `qemu-drtm-support.md`. Dasharo's own TrenchBoot QEMU tests run on upstream and
 never get further than GRUB's precondition checks.

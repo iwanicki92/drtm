@@ -10,8 +10,9 @@ of its own, so the helpers in `conftest` read both parts of a launch boot.
 
 import hashlib
 import re
+from pathlib import Path
 
-from conftest import SL_IMAGE, launch_state, qemu_log, qemu_traces, records, results
+from conftest import SL_CLASSIC, launch_state, qemu_log, qemu_traces, records, results
 
 
 def checks(capture: str, identifier: str) -> list[dict]:
@@ -23,17 +24,18 @@ def checks(capture: str, identifier: str) -> list[dict]:
     ]
 
 
-def measured_image() -> bytes:
-    """What SKINIT measures of `target/sl.bin`: the length its header's
+def measured_image(path: Path = SL_CLASSIC) -> bytes:
+    """What SKINIT measures of the SL at `path`: the length its header's
     second word gives. The signature block behind it is not measured."""
-    image = SL_IMAGE.read_bytes()
+    image = path.read_bytes()
     return image[: int.from_bytes(image[2:4], "little")]
 
 
 def expected_pcr17(algorithm: str) -> str:
-    """PCR 17 after SKINIT measures `target/sl.bin`: zero extended with the
-    image's digest. Computed here from the file rather than taken from what
-    drtm printed, so a wrong length or padding in the build shows."""
+    """PCR 17 after SKINIT measures `target/sl-classic.bin`: zero extended
+    with the image's digest. Computed here from the file rather than taken
+    from what drtm printed, so a wrong length or padding in the build
+    shows."""
     digest = hashlib.new(algorithm, measured_image()).digest()
     return hashlib.new(algorithm, bytes(len(digest)) + digest).hexdigest()
 
