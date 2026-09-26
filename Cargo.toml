@@ -15,10 +15,20 @@ sink-serial = []
 sink-console = []
 
 [dependencies]
+common = { path = "common" }
 log = "0.4"
 uefi = { version = "0.36.1", features = ["alloc", "global_allocator", "panic_handler"] }
 
-[lints.clippy]
+[lints]
+workspace = true
+
+[workspace]
+members = [".", "common"]
+# `cargo build` at the root builds the EFI binary. The other members target
+# something else, see docs/development.md.
+default-members = ["."]
+
+[workspace.lints.clippy]
 # Every unsafe block must say why it is sound. `warn` rather than `deny`
 # because pre-commit runs clippy with `-D warnings` anyway, and a bare
 # `cargo clippy` during development should report rather than stop.

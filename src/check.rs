@@ -24,64 +24,17 @@ use log::Level;
 
 use crate::logging;
 
-/// What a check concluded. Three of these are verdicts, [`Tag::Skip`] says
-/// the check did not run, and [`Tag::Info`] reports a platform fact while
-/// gating nothing.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Tag {
-    Pass,
-    Fail,
-    Warn,
-    Skip,
-    Info,
-}
+pub use common::record::{Summary, Tag, Value};
 
-impl Tag {
-    /// In the order a summary reads best, worst first.
-    const ALL: [Self; 5] = [Self::Fail, Self::Warn, Self::Pass, Self::Info, Self::Skip];
-
-    pub const fn name(self) -> &'static str {
-        match self {
-            Self::Pass => "PASS",
-            Self::Fail => "FAIL",
-            Self::Warn => "WARN",
-            Self::Skip => "SKIP",
-            Self::Info => "INFO",
-        }
+/// The level a result is filtered at. A failure is an error and a warning a
+/// warning, so a run cut down to `level=error` still shows what stops a
+/// launch.
+const fn level(tag: Tag) -> Level {
+    match tag {
+        Tag::Fail => Level::Error,
+        Tag::Warn => Level::Warn,
+        _ => Level::Info,
     }
-
-    pub const fn result(self) -> &'static str {
-        match self {
-            Self::Pass => "pass",
-            Self::Fail => "fail",
-            Self::Warn => "warn",
-            Self::Skip => "skip",
-            Self::Info => "info",
-        }
-    }
-
-    /// The level this result is filtered at. A failure is an error and a
-    /// warning a warning, so a run cut down to `level=error` still shows
-    /// what stops a launch.
-    const fn level(self) -> Level {
-        match self {
-            Self::Fail => Level::Error,
-            Self::Warn => Level::Warn,
-            _ => Level::Info,
-        }
-    }
-}
-
-/// One named value in a record, whether a check's or the platform dump's.
-/// What a field is decides how it is written: counts are JSON numbers, while
-/// addresses and register values are `"0x..."` strings, since a 64-bit value
-/// does not survive every JSON parser as a number.
-pub enum Value<'a> {
-    Count(u64),
-    Hex(u64),
-    Flag(bool),
-    Bytes(&'a [u8]),
-    Text(fmt::Arguments<'a>),
 }
 
 /// A plain count, written as a number.
@@ -116,33 +69,22 @@ macro_rules! check_text {
 /// One counter per tag, indexed by the tag's own discriminant.
 static COUNTS: [AtomicU32; Tag::ALL.len()] = [const { AtomicU32::new(0) }; Tag::ALL.len()];
 
-/// What the checks added up to.
-pub struct Summary {
-    pub counts: [(Tag, u32); Tag::ALL.len()],
-    pub verdict: Tag,
-}
-
 /// Reports one result. Called by the macros below rather than directly.
 ///
 /// Counted whether or not it prints, so a run at `level=error` still ends
 /// with a summary that agrees with a run at `level=info`.
 pub fn report(tag: Tag, id: &str, fields: &[(&str, Value)], detail: fmt::Arguments) {
     COUNTS[tag as usize].fetch_add(1, Ordering::Relaxed);
-    if tag.level() <= log::max_level() {
+    if level(tag) <= log::max_level() {
         logging::check(tag, id, fields, detail);
     }
 }
 
 /// Ends the run, reporting the tally and the worst verdict in it.
 pub fn summary() {
-    let counts = Tag::ALL.map(|tag| (tag, COUNTS[tag as usize].load(Ordering::Relaxed)));
-    // A skipped check is not a verdict, and neither is a reported fact, so
-    // neither can decide this one.
-    let verdict = counts
-        .iter()
-        .find(|&&(tag, count)| count > 0 && matches!(tag, Tag::Fail | Tag::Warn))
-        .map_or(Tag::Pass, |&(tag, _)| tag);
-    logging::summary(&Summary { counts, verdict });
+    logging::summary(&Summary::new(|tag| {
+        COUNTS[tag as usize].load(Ordering::Relaxed)
+    }));
 }
 
 /// Shared body of the tag macros below: an id, optional `name = value`

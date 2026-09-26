@@ -29,6 +29,22 @@ System packages needed alongside it:
   and their virtual environment, see `docs/testing.md`.
 - `qemu-system-x86_64`: for the test suite.
 
+## Crates
+
+The repository is a Cargo workspace. The root package is `drtm`, the EFI
+binary, and the workspace's only default member, so a plain `cargo build`
+or `cargo clippy` builds that and nothing else. `common` holds what `drtm`
+shares with the Secure Loader that runs after `SKINIT`, such as the record
+format, and needs neither UEFI nor a particular processor mode. Its unit
+tests run on the host:
+
+```sh
+cargo test-host
+```
+
+`test-host` is an alias in `.cargo/config.toml`, since the configured
+default target is UEFI and a bare `cargo test` would build for it.
+
 ## Build features
 
 Log records go to the serial device by default, because that is what an

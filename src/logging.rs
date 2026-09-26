@@ -8,10 +8,8 @@
 //! sink is the text console. The console hard-wraps at 80 columns mid-word,
 //! so anything longer arrives split.
 //!
-//! [`emit`] holds the record format and depends on nothing but
-//! [`core::fmt::Write`], so the post-`SKINIT` stub can reuse it with a sink
-//! of its own once it exists. What differs between the two is the transport,
-//! not the format.
+//! The record format itself is `common::record`, which the Secure Loader
+//! prints through too. This module owns the UEFI transport.
 
 use core::ffi::c_void;
 use core::fmt::{self, Write};
@@ -20,7 +18,8 @@ use core::sync::atomic::{AtomicPtr, AtomicU8, Ordering};
 
 use log::{Level, LevelFilter, Log, Metadata, Record};
 
-use crate::check::{Summary, Tag, Value};
+pub use common::record::Format;
+use common::record::{self, Summary, Tag, Value};
 use uefi::boot::{self, OpenProtocolAttributes, OpenProtocolParams, ScopedProtocol};
 use uefi::proto::console::serial::Serial;
 use uefi::{Handle, system};
@@ -44,17 +43,6 @@ static SERIAL: AtomicPtr<c_void> = AtomicPtr::new(ptr::null_mut());
 /// Which of the two forms records take. Text until [`set_format`] says
 /// otherwise, so anything printed before `drtm.conf` is read is readable.
 static FORMAT: AtomicU8 = AtomicU8::new(Format::Text as u8);
-
-/// The two output forms, one run at a time.
-///
-/// They reach the same person on the same wire, so emitting both would show
-/// every event twice. JSON therefore has to carry everything the prose does,
-/// down to the detail text.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Format {
-    Text,
-    Json,
-}
 
 /// Picks the form for the rest of the run. Call once, from `drtm.conf`.
 pub fn set_format(format: Format) {
@@ -130,62 +118,9 @@ fn source<'a>(record: &'a Record<'a>) -> Option<(&'a str, u32)> {
     })
 }
 
-/// Writes one record in the form the run is using. `\r\n` because this is a
-/// UART, not a terminal that translates newlines.
-fn emit(sink: &mut dyn Write, record: &Record) -> fmt::Result {
-    match format() {
-        Format::Text => emit_text(sink, record),
-        Format::Json => emit_json(sink, record),
-    }
-}
-
-fn emit_text(sink: &mut dyn Write, record: &Record) -> fmt::Result {
-    match source(record) {
-        None => write!(sink, "drtm: {}\r\n", record.args()),
-        Some((file, line)) => write!(sink, "drtm: {file}:{line}: {}\r\n", record.args()),
-    }
-}
-
-/// One self-contained object per line, so a line lost to noise costs one
-/// record. The `drtm:` prefix stays, since firmware writes to the same UART
-/// and a parser has to find its own lines without trying to parse every one.
-fn emit_json(sink: &mut dyn Write, record: &Record) -> fmt::Result {
-    sink.write_str(r#"drtm: {"rec":"log""#)?;
-    if let Some((file, line)) = source(record) {
-        write!(sink, r#","src":"{file}:{line}""#)?;
-    }
-    sink.write_str(r#","msg":""#)?;
-    write!(Escape(sink), "{}", record.args())?;
-    sink.write_str("\"}\r\n")
-}
-
-/// Forwards to `sink` escaping what a JSON string cannot hold literally.
-/// Nothing here buffers, so a record is written as it is formatted.
-struct Escape<'a, W: Write + ?Sized>(&'a mut W);
-
-impl<W: Write + ?Sized> Write for Escape<'_, W> {
-    fn write_str(&mut self, text: &str) -> fmt::Result {
-        let mut rest = text;
-        while let Some(at) = rest.find(|c: char| c == '"' || c == '\\' || c < ' ') {
-            let (before, tail) = rest.split_at(at);
-            self.0.write_str(before)?;
-            let mut characters = tail.chars();
-            match characters.next() {
-                Some('"') => self.0.write_str("\\\"")?,
-                Some('\\') => self.0.write_str("\\\\")?,
-                // Control characters, which only a malformed read would
-                // produce here. `\u` covers every one of them.
-                Some(control) => write!(self.0, "\\u{:04x}", control as u32)?,
-                None => break,
-            }
-            rest = characters.as_str();
-        }
-        self.0.write_str(rest)
-    }
-}
-
-/// Writes one line to every sink this build and platform have. Both forms
-/// go through here, since the structured one has no reason to own a sink.
+/// Writes one line to every sink this build and platform have. Every kind
+/// of record goes through here, since none of them has a reason to own a
+/// sink.
 fn write_line(mut line: impl FnMut(&mut dyn Write) -> fmt::Result) {
     let mut on_serial = false;
     if SERIAL_SINK && let Some(mut serial) = serial() {
@@ -201,126 +136,23 @@ fn write_line(mut line: impl FnMut(&mut dyn Write) -> fmt::Result) {
     }
 }
 
-/// Writes one check result. The text form is what the checks have always
-/// printed, and the JSON form makes its three fields addressable instead of
-/// leaving a parser to split the same line up again.
+/// Writes one check result.
 pub fn check(tag: Tag, id: &str, fields: &[(&str, Value)], detail: fmt::Arguments) {
-    write_line(|sink| match format() {
-        // Fields say again what the detail already spells out, so prose
-        // leaves them out.
-        Format::Text => write!(sink, "drtm: [{}] {id}: {detail}\r\n", tag.name()),
-        // Identifiers and field names are literals in this crate's own
-        // source, dotted ASCII throughout, so only the values can need
-        // escaping. Fields keep an object of their own, so a check naming
-        // one `id` or `result` cannot shadow the record's own keys.
-        Format::Json => {
-            write!(
-                sink,
-                r#"drtm: {{"rec":"check","id":"{id}","result":"{}""#,
-                tag.result()
-            )?;
-            if let Some(((first, value), rest)) = fields.split_first() {
-                write!(sink, r#","fields":{{"{first}":"#)?;
-                write_value(sink, value)?;
-                for (name, value) in rest {
-                    write!(sink, r#","{name}":"#)?;
-                    write_value(sink, value)?;
-                }
-                sink.write_str("}")?;
-            }
-            sink.write_str(r#","detail":""#)?;
-            write!(Escape(sink), "{detail}")?;
-            sink.write_str("\"}\r\n")
-        }
-    });
+    write_line(|sink| record::check(sink, format(), tag, id, fields, detail));
 }
 
-fn write_value(sink: &mut dyn Write, value: &Value) -> fmt::Result {
-    match value {
-        Value::Count(count) => write!(sink, "{count}"),
-        Value::Hex(bits) => write!(sink, "\"{bits:#x}\""),
-        Value::Flag(flag) => sink.write_str(if *flag { "true" } else { "false" }),
-        Value::Bytes(bytes) => {
-            sink.write_str("\"")?;
-            write_hex(sink, bytes)?;
-            sink.write_str("\"")
-        }
-        Value::Text(text) => {
-            sink.write_str("\"")?;
-            write!(Escape(sink), "{text}")?;
-            sink.write_str("\"")
-        }
-    }
-}
-
-/// `bytes` as hexadecimal digits, a chunk at a time.
-///
-/// Buffered rather than formatted byte by byte: a sink is a firmware call
-/// per write, and a dumped ACPI table is a hundred thousand bytes.
-fn write_hex(sink: &mut dyn Write, bytes: &[u8]) -> fmt::Result {
-    const DIGITS: &[u8; 16] = b"0123456789abcdef";
-    for chunk in bytes.chunks(64) {
-        let mut text = [0u8; 128];
-        for (pair, byte) in text.as_chunks_mut::<2>().0.iter_mut().zip(chunk) {
-            pair[0] = DIGITS[usize::from(byte >> 4)];
-            pair[1] = DIGITS[usize::from(byte & 0xF)];
-        }
-        let Ok(text) = str::from_utf8(&text[..chunk.len() * 2]) else {
-            return Err(fmt::Error);
-        };
-        sink.write_str(text)?;
-    }
-    Ok(())
-}
-
-/// Writes one platform dump record: a kind and its named values, flat,
-/// since both are literals in this crate's source and cannot collide.
-///
-/// JSON only. The dump exists to be parsed, and the hexadecimal it carries
-/// would bury the results a person is reading the prose form for.
+/// Writes one platform dump record. JSON only: the dump exists to be
+/// parsed, and the hexadecimal it carries would bury the results a person
+/// is reading the prose form for.
 pub fn record(kind: &str, fields: &[(&str, Value)]) {
-    if format() != Format::Json {
-        return;
+    if format() == Format::Json {
+        write_line(|sink| record::record(sink, Format::Json, kind, fields));
     }
-    write_line(|sink| {
-        write!(sink, r#"drtm: {{"rec":"{kind}""#)?;
-        for (name, value) in fields {
-            write!(sink, r#","{name}":"#)?;
-            write_value(sink, value)?;
-        }
-        sink.write_str("}\r\n")
-    });
 }
 
 /// Ends the run with what the checks added up to.
-///
-/// Both forms carry the tally, so a person reading prose does not have to
-/// count the lines back. `checks complete` leads the text form because the
-/// QEMU harness reads until it, as it does until the record in JSON.
 pub fn summary(summary: &Summary) {
-    write_line(|sink| match format() {
-        Format::Text => {
-            write!(
-                sink,
-                "drtm: checks complete, verdict {}",
-                summary.verdict.result()
-            )?;
-            let mut separator = ": ";
-            for (tag, count) in summary.counts {
-                write!(sink, "{separator}{count} {}", tag.result())?;
-                separator = ", ";
-            }
-            sink.write_str("\r\n")
-        }
-        Format::Json => {
-            sink.write_str(r#"drtm: {"rec":"summary""#)?;
-            for (tag, count) in summary.counts {
-                write!(sink, r#","{}":{count}"#, tag.result())?;
-            }
-            write!(sink, r#","verdict":"{}"}}"#, summary.verdict.result())?;
-            sink.write_str("\r\n")
-        }
-    });
+    write_line(|sink| record::summary(sink, format(), summary));
 }
 
 impl Log for Logger {
@@ -329,7 +161,7 @@ impl Log for Logger {
     }
 
     fn log(&self, record: &Record) {
-        write_line(|sink| emit(sink, record));
+        write_line(|sink| record::log(sink, format(), source(record), *record.args()));
     }
 
     fn flush(&self) {}

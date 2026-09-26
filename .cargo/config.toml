@@ -4,3 +4,8 @@
 
 [build]
 target = "x86_64-unknown-uefi"
+
+[alias]
+# The members that are not the EFI binary build for other targets, and a
+# bare `cargo test` would build them for UEFI. See docs/development.md.
+test-host = "test --target x86_64-unknown-linux-gnu -p common"

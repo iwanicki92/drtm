@@ -32,13 +32,10 @@ CLI/output). Each DRTM path should be easy to read in isolation: a reader
 looking at "what does the AMD path do" shouldn't have to wade through Intel
 logic or generic plumbing to find it.
 
-DRTM implementation work (the actual AMD SKINIT launch path or otherwise) is
-currently on hold pending further design input. See `CLAUDE.md`.
+## DRTM launch design decisions
 
-## DRTM launch design decisions (for when that work starts)
-
-These were agreed ahead of time so the surrounding scaffolding (logging,
-reporting) can be built without re-litigating them later:
+These were agreed before the launch was built, so the surrounding
+scaffolding (logging, reporting) could be built without re-litigating them:
 
 - The tool embeds its own minimal Secure-Loader-like stub rather than driving
   an externally supplied SL/DLME binary (e.g. TrenchBoot's own). It stays a

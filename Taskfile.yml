@@ -15,6 +15,11 @@ tasks:
     cmds:
       - pre-commit run --all-files {{.CLI_ARGS}}
 
+  test-host:
+    desc: Run the host unit tests of the crates that can run on the host
+    cmds:
+      - cargo test-host {{.CLI_ARGS}}
+
   test:
     desc: Run the QEMU smoke test suite (builds the binary itself first)
     cmds:

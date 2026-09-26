@@ -31,19 +31,18 @@ A `no_std`/`no_main` UEFI binary, exercised by booting it under QEMU. Which
 checks it currently performs is whatever `src/main.rs` reports and
 `qemu-tests/` asserts on, so read those rather than a summary here.
 
-**The DRTM launch itself is on hold.** Do not design or write launch logic
-(building the Secure Loader Block, parking the APs, executing `SKINIT`, or
-the equivalent for another vendor) until the user asks for it. The reference
-material for it has been provided, so what it waits on is an agreed design
-and hardware to validate it on, not missing documentation.
+The classic AMD `SKINIT` launch is being built to an agreed design: the
+preamble in `drtm`, the Secure Loader in `sl`, and what both share in
+`common`. The PSP launch path, Intel TXT and ARM stay out of scope until
+the user asks for them.
 
 Committed files cite upstream sources only: APM section numbers, or paths
 into EDK2/QEMU/Linux. Never the private notes repo the reference material
 arrived in, which a reader of this repo does not have.
 
-Precondition checks are in scope and land one at a time. The line between
-the two: a check only observes the platform and leaves it as it found it.
-Anything that changes machine state to make a launch happen is the launch.
+The line between a check and the launch: a check only observes the platform
+and leaves it as it found it. Anything that changes machine state to make a
+launch happen is the launch, and runs only after the launch gate.
 
 For the "why" behind the project and its testing setup, see `docs/design.md`
 and `docs/testing.md`. This file only covers agent-operational specifics.
@@ -67,5 +66,7 @@ defaults.
     `cargo clippy -- -D warnings`: `--all-targets` fails on a duplicate
     `panic_impl`, since the test target links `std` against the `uefi`
     crate's panic handler.
-- `task build`/`task lint`/`task test` (Taskfile.yml) wrap the three commands
-    above.
+- Run the host unit tests: `cargo test-host`, an alias for `cargo test`
+    on the host target of the crates that can run there (`common`).
+- `task build`/`task lint`/`task test`/`task test-host` (Taskfile.yml) wrap
+    the commands above.
