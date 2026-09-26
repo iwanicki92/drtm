@@ -25,8 +25,18 @@ use common::verdict::{self, Pcr17};
 
 use common::out::Out;
 
+// The parameter page, sized from the one definition the preamble writes
+// it by. `sl.ld` places it after the image and before `.bss`.
+core::arch::global_asm!(
+    ".section .sl.params, \"aw\", @nobits",
+    ".global __params",
+    "__params:",
+    ".skip {size}",
+    ".previous",
+    size = const params::SIZE,
+);
+
 unsafe extern "C" {
-    /// The parameter page, where `sl.ld` reserves it.
     static __params: [u8; params::SIZE];
 }
 
@@ -37,8 +47,8 @@ const SL_LOCALITY: u8 = 2;
 const RESPONSE_MAX: usize = 512;
 
 fn params() -> Result<Params, params::Invalid> {
-    // Safety: `sl.ld` reserves the page inside the SLB, which the page
-    // tables map, and nothing writes it while the SL runs.
+    // Safety: the page lies inside the SLB, which the page tables map, and
+    // nothing writes it while the SL runs.
     Params::decode(unsafe { &__params })
 }
 
@@ -92,15 +102,20 @@ extern "C" fn sl_main(slb: u32) -> ! {
     halt();
 }
 
+/// The TPM at `locality`.
+fn tpm(params: &Params, locality: u8) -> Tpm {
+    // Safety: the SL's page tables identity map the low 4 GiB, which holds
+    // the TPM windows and any CRB buffer the transport will touch.
+    unsafe { Tpm::new(params.interface, locality, params.tsc_per_ms) }
+}
+
 /// Asks for locality 2 and reports whether it came. Without it the PCRs
 /// are read at locality 0, which every TPM allows.
 fn take_locality(out: &mut Out, params: &Params) -> (Tpm, bool) {
-    let access: [u32; 5] = core::array::from_fn(|locality| {
-        Tpm::new(params.interface, locality as u8, params.tsc_per_ms).access()
-    });
+    let access: [u32; 5] = core::array::from_fn(|locality| tpm(params, locality as u8).access());
     out.debug(format_args!("TPM access by locality: {access:02x?}"));
 
-    let wanted = Tpm::new(params.interface, SL_LOCALITY, params.tsc_per_ms);
+    let wanted = tpm(params, SL_LOCALITY);
     if wanted.request().is_ok() {
         out.check(
             Tag::Pass,
@@ -131,7 +146,7 @@ fn take_locality(out: &mut Out, params: &Params) -> (Tpm, bool) {
              not extend PCRs 17 to 22{psp}"
         ),
     );
-    let fallback = Tpm::new(params.interface, 0, params.tsc_per_ms);
+    let fallback = tpm(params, 0);
     let granted = fallback.request().is_ok();
     (fallback, granted)
 }

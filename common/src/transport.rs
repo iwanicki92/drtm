@@ -81,11 +81,13 @@ const CTRL_REQ_READY: u32 = 1 << 0;
 const CTRL_REQ_IDLE: u32 = 1 << 1;
 const CTRL_STS_ERROR: u32 = 1 << 0;
 
-/// PTP's timeouts: A for a locality, B for a state change, and a PCR read
-/// finishes well inside C.
+/// PTP's timeouts: A for a locality, B for a state change, C for a status
+/// bit to settle, and D for a burst count, and a PCR read finishes well
+/// inside B.
 const TIMEOUT_A_MS: u64 = 750;
 const TIMEOUT_B_MS: u64 = 2000;
 const TIMEOUT_C_MS: u64 = 750;
+const TIMEOUT_D_MS: u64 = 750;
 
 /// A TPM at one locality.
 pub struct Tpm {
@@ -134,10 +136,15 @@ impl Tpm {
     /// The TPM at `locality`, not yet requested. `tsc_per_ms` bounds every
     /// wait.
     ///
+    /// # Safety
+    ///
+    /// The TPM's register windows, and any CRB buffer below 4 GiB it names,
+    /// must be mapped as device memory for as long as the `Tpm` is used.
+    ///
     /// # Panics
     ///
     /// On a locality above 4, which has no window.
-    pub fn new(interface: Interface, locality: u8, tsc_per_ms: u64) -> Self {
+    pub unsafe fn new(interface: Interface, locality: u8, tsc_per_ms: u64) -> Self {
         assert!(locality <= 4, "no TPM locality {locality}");
         Self {
             interface,
@@ -159,7 +166,8 @@ impl Tpm {
     }
 
     fn reg8(&self, offset: usize) -> u8 {
-        // Safety: `register` keeps the address in the TPM window.
+        // Safety: `register` keeps the address in the TPM window, which
+        // `new`'s caller vouched is mapped.
         unsafe { read8(self.register(offset, 1)) }
     }
 
@@ -289,15 +297,33 @@ impl Tpm {
         self.set8(TIS_STS, STS_GO);
         let answered = || self.sts() & (STS_VALID | STS_DATA) == STS_VALID | STS_DATA;
         if !self.wait(TIMEOUT_B_MS, answered) {
+            self.set8(TIS_STS, STS_READY);
             return Err(Error::Timeout);
         }
+        let received = self.receive_tis(response);
+        // Back to idle, which drops anything the TPM still holds.
+        self.set8(TIS_STS, STS_READY);
+        received
+    }
+
+    /// Reads the response a burst at a time, waiting before each for the
+    /// TPM to have data and a non-zero burst count, as a FIFO TPM refills
+    /// between bursts.
+    fn receive_tis(&self, response: &mut [u8]) -> Result<usize, Error> {
+        let available = || self.sts() & (STS_VALID | STS_DATA) == STS_VALID | STS_DATA;
         let mut read = 0;
         let mut size = 10;
         while read < size {
-            if self.sts() & STS_DATA == 0 {
-                break;
+            if !self.wait(TIMEOUT_C_MS, available) {
+                return Err(Error::Response);
             }
-            let burst = self.burst().max(1);
+            let mut burst = 0;
+            if !self.wait(TIMEOUT_D_MS, || {
+                burst = self.burst();
+                burst > 0
+            }) {
+                return Err(Error::Transfer);
+            }
             for _ in 0..burst.min(size - read) {
                 *response.get_mut(read).ok_or(Error::Response)? = self.reg8(TIS_FIFO);
                 read += 1;
@@ -309,13 +335,11 @@ impl Tpm {
                 }
             }
         }
-        // Back to idle, which drops anything the TPM still holds.
-        self.set8(TIS_STS, STS_READY);
-        if read == size {
-            Ok(size)
-        } else {
-            Err(Error::Response)
+        // With the whole response read, the TPM has nothing left to give.
+        if !self.wait(TIMEOUT_C_MS, || self.sts() & STS_VALID != 0) || self.sts() & STS_DATA != 0 {
+            return Err(Error::Response);
         }
+        Ok(size)
     }
 
     fn transmit_crb(&self, command: &[u8], response: &mut [u8]) -> Result<usize, Error> {
@@ -342,7 +366,7 @@ impl Tpm {
         }
         for (i, &byte) in command.iter().enumerate() {
             // Safety: the TPM names this range as its command buffer, and it
-            // was checked to lie below 4 GiB, which every caller maps.
+            // was checked to lie below 4 GiB, which `new`'s caller maps.
             unsafe { write8(command_at as usize + i, byte) };
         }
 

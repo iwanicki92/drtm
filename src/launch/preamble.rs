@@ -9,6 +9,8 @@
 //! logger, and progress goes out as `launch.preamble` records through the
 //! sink list at debug level.
 
+use alloc::format;
+
 use core::arch::asm;
 use core::arch::x86_64::__cpuid;
 use core::ptr;
@@ -21,7 +23,9 @@ use common::record::{Tag, Value};
 use common::tpm::Bank;
 use common::transport::{Interface, Tpm};
 use log::LevelFilter;
-use uefi::boot::{self, AllocateType, MemoryType};
+use uefi::boot::{self, AllocateType, MemoryType, OpenProtocolAttributes, OpenProtocolParams};
+use uefi::mem::memory_map::MemoryAttribute;
+use uefi::proto::security::MemoryProtection;
 
 use super::gate::Sinks;
 use super::{image, trampoline};
@@ -33,6 +37,10 @@ use crate::tpm::{self, Probe};
 const SLB_SIZE: usize = 0x10000;
 const PAGE: usize = 0x1000;
 const BELOW_4GIB: u64 = u32::MAX as u64;
+
+// The SL reserves its parameter page from the same `params::SIZE`, which
+// build.rs read back from its ELF.
+const _: () = assert!(image::PARAMS_SIZE == params::SIZE);
 
 /// Pages holding a 64 KiB-aligned 64 KiB block wherever the firmware puts
 /// them, as `amd.slb` probes.
@@ -74,6 +82,33 @@ fn allocate(memory: MemoryType, pages: usize) -> Option<*mut u8> {
     boot::allocate_pages(AllocateType::MaxAddress(BELOW_4GIB), memory, pages)
         .ok()
         .map(|block| block.as_ptr())
+}
+
+/// Makes `page` executable and writable where the firmware protects its
+/// allocations through `EFI_MEMORY_ATTRIBUTE_PROTOCOL`. Firmware without
+/// the protocol leaves new loader code executable, so there is nothing to
+/// do.
+fn make_executable(page: *mut u8) -> uefi::Result {
+    let Ok(handle) = boot::get_handle_for_protocol::<MemoryProtection>() else {
+        return Ok(());
+    };
+    // Safety: the handle came from `get_handle_for_protocol` for this
+    // protocol, and `GetProtocol` leaves its driver alone.
+    let protection = unsafe {
+        boot::open_protocol::<MemoryProtection>(
+            OpenProtocolParams {
+                handle,
+                agent: boot::image_handle(),
+                controller: None,
+            },
+            OpenProtocolAttributes::GetProtocol,
+        )
+    }?;
+    let start = page as u64;
+    protection.clear_memory_attributes(
+        start..start + PAGE as u64,
+        MemoryAttribute::EXECUTE_PROTECT | MemoryAttribute::READ_ONLY,
+    )
 }
 
 fn read_msr(msr: u32) -> u64 {
@@ -149,6 +184,13 @@ pub fn launch(config: &Config, sinks: Sinks) {
         fail("no memory below 4 GiB for the SLB and the trampoline");
         return;
     };
+    if let Err(error) = make_executable(page) {
+        fail(&format!(
+            "the trampoline page could not be made executable ({:?})",
+            error.status()
+        ));
+        return;
+    }
     let slb = (block as usize).next_multiple_of(SLB_SIZE) as *mut u8;
     let tsc_per_ms = calibrate_tsc();
 
@@ -218,7 +260,9 @@ pub fn launch(config: &Config, sinks: Sinks) {
 
     // The firmware's TCG2 driver measured the exit into PCR 5 and may
     // still hold locality 0. The launch starts with none active.
-    Tpm::new(params.interface, 0, tsc_per_ms).relinquish();
+    // Safety: the firmware's page tables, still in use, identity map the
+    // TPM windows, and a relinquish touches no CRB buffer.
+    unsafe { Tpm::new(params.interface, 0, tsc_per_ms) }.relinquish();
     step(&mut out, "locality 0 relinquished");
 
     prepare_cpu();

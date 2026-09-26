@@ -22,9 +22,10 @@ global_asm!(
     .global drtm_trampoline_end
     .code64
 drtm_trampoline_start:
-    /* CR0.PG cannot be cleared with PCIDE set. */
+    /* CR0.PG cannot be cleared with PCIDE set, and with CET set a
+       firmware shadow stack would fault on the far return below. */
     mov rax, cr4
-    and rax, ~(1 << 17)
+    and rax, ~((1 << 17) | (1 << 23))
     mov cr4, rax
 
     lgdt [rdi]

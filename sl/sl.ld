@@ -49,8 +49,7 @@ SECTIONS
     __image_end = .;
 
     .params (NOLOAD) : ALIGN(16) {
-        __params = .;
-        . += 512;
+        KEEP(*(.sl.params))
     }
 
     .bss (NOLOAD) : ALIGN(4096) {

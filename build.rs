@@ -28,10 +28,6 @@ const MAX_MEASURED: usize = 61440;
 const PARAMS_FIELD: usize = 68;
 const HEADER_LEN: usize = 70;
 
-/// The parameter page's size, `common::params::SIZE`, which a build script
-/// cannot take from the crate it builds for another target.
-const PARAMS_SIZE: usize = 156;
-
 const PT_LOAD: u32 = 1;
 const PT_DYNAMIC: u32 = 2;
 const PT_INTERP: u32 = 3;
@@ -43,10 +39,11 @@ fn main() {
         println!("cargo:rerun-if-changed={path}");
     }
 
-    let elf = build(&root, &out);
-    let image = flatten(&fs::read(&elf).expect("the SL ELF reads"));
+    let elf = fs::read(build(&root, &out)).expect("the SL ELF reads");
+    let image = flatten(&elf);
     let header = |at: usize| usize::from(u16::from_le_bytes([image[at], image[at + 1]]));
     let (length, params) = (header(2), header(PARAMS_FIELD));
+    let params_size = params_size(&elf, params);
 
     let sha1 = extend::<Sha1>(&image);
     let sha256 = extend::<Sha256>(&image);
@@ -58,6 +55,8 @@ fn main() {
              pub const MEASURED: usize = {length:#x};\n\
              /// Where the parameter page goes in the SLB.\n\
              pub const PARAMS_OFFSET: usize = {params:#x};\n\
+             /// Bytes the SL reserves there.\n\
+             pub const PARAMS_SIZE: usize = {params_size:#x};\n\
              /// PCR 17 after the launch, per bank.\n\
              pub const EXPECTED_SHA1: [u8; 20] = {sha1:?};\n\
              pub const EXPECTED_SHA256: [u8; 32] = {sha256:?};\n"
@@ -186,11 +185,45 @@ fn flatten(elf: &[u8]) -> Vec<u8> {
         image.len()
     );
     assert!(
-        params >= length && params + PARAMS_SIZE <= SLB_SIZE,
-        "the parameter page at {params:#x} overlaps the image or leaves the SLB"
+        params >= length,
+        "the parameter page at {params:#x} overlaps the image"
     );
     image.resize(length, 0);
     image
+}
+
+/// The size of the section the parameter page is reserved in, checked to
+/// start where the header says and to end inside the SLB. The linker keeps
+/// it clear of `.bss`, which the SL's entry zeroes.
+fn params_size(elf: &[u8], params: usize) -> usize {
+    let (sl_start, _) = section(elf, b".header");
+    let (at, size) = section(elf, b".params");
+    assert!(size > 0, "the SL reserves no parameter page");
+    assert!(
+        at - sl_start == params && params + size <= SLB_SIZE,
+        "the parameter page at {params:#x} is not where the header says or leaves the SLB"
+    );
+    size
+}
+
+/// The address and size of the section called `name`.
+fn section(elf: &[u8], name: &[u8]) -> (usize, usize) {
+    let (shoff, shentsize, shnum, shstrndx) = (
+        u64_at(elf, 0x28),
+        u16_at(elf, 0x3A),
+        u16_at(elf, 0x3C),
+        u16_at(elf, 0x3E),
+    );
+    let header = |i: usize| &elf[shoff + i * shentsize..];
+    let names = u64_at(header(shstrndx), 0x18);
+    (0..shnum)
+        .map(header)
+        .find(|sh| {
+            let at = names + u32_at(sh, 0) as usize;
+            elf[at..].starts_with(name) && elf[at + name.len()] == 0
+        })
+        .map(|sh| (u64_at(sh, 0x10), u64_at(sh, 0x20)))
+        .unwrap_or_else(|| panic!("the SL has no {} section", String::from_utf8_lossy(name)))
 }
 
 /// What PCR 17 holds after `SKINIT` in the bank `D` hashes: its reset
