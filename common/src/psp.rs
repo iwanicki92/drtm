@@ -17,7 +17,7 @@ pub const C2PMSG_72_OFFSET: u64 = 0x10A20;
 const ARGUMENTS: [usize; 3] = [(93 - 72) * 4, (94 - 72) * 4, (95 - 72) * 4];
 
 /// Bit 31, which the service sets once it will take a command and x86
-/// clears by writing one. Bits 27:24 hold the TMR index, 23:16 the
+/// clears by writing zero. Bits 27:24 hold the TMR index, 23:16 the
 /// command and 15:0 the status.
 pub const READY: u32 = 1 << 31;
 const INDEX_SHIFT: u32 = 24;

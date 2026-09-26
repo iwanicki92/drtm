@@ -34,6 +34,10 @@ const SHARED_REQUEST: u32 = 0x10000;
 /// no larger than this.
 const MAX_REGION: u32 = 1 << 20;
 
+/// The SLB `SKINIT` protects, which holds the SL's code, stack and page
+/// tables.
+const SLB_LEN: u64 = 0x10000;
+
 /// The guide's appendix E.1 alignment for the MLE.
 const MLE_ALIGN: u64 = 64 << 20;
 
@@ -201,7 +205,7 @@ pub fn run(out: &mut Out, params: &Params, psp: &Psp, slb: u32) {
     judge_pcrs(&mut session, fuses);
     extend(&mut session, slb);
     tmr_descriptors(&mut session);
-    let shared = shared_memory(&mut session);
+    let shared = shared_memory(&mut session, slb);
     tcg_log(&mut session, slb, shared);
     ivrs(&mut session, shared);
     teardown(&mut session);
@@ -601,7 +605,7 @@ fn tmr_descriptors(s: &mut Session) {
 
 /// Step 5: a buffer the guide calls shared with x86, and does not say what
 /// for. Every outcome is a fact.
-fn shared_memory(s: &mut Session) -> Option<(u64, u64)> {
+fn shared_memory(s: &mut Session, slb: u32) -> Option<(u64, u64)> {
     let answer = s.command(
         "launch.psp_shared",
         Command::AllocateSharedMemory,
@@ -618,7 +622,9 @@ fn shared_memory(s: &mut Session) -> Option<(u64, u64)> {
     }
     let (base, len) = answer.region();
     let in_tmr = inside(base, len.into(), s.psp.tmr_base, s.psp.tmr_size);
-    let written = answer.ok() && write_back(base, len);
+    // A buffer over the SLB would overwrite the running SL.
+    let over_slb = base < u64::from(slb) + SLB_LEN && u64::from(slb) < base + u64::from(len);
+    let written = answer.ok() && !over_slb && write_back(base, len);
     s.out.check(
         Tag::Info,
         "launch.psp_shared",
@@ -627,11 +633,17 @@ fn shared_memory(s: &mut Session) -> Option<(u64, u64)> {
             ("base", Value::Hex(base)),
             ("size", Value::Hex(len.into())),
             ("in_tmr", Value::Flag(in_tmr)),
+            ("over_slb", Value::Flag(over_slb)),
             ("written", Value::Flag(written)),
         ],
         format_args!(
-            "ALLOCATE_SHARED_MEMORY answers {}, {len:#x} bytes at {base:#x}",
-            psp::status_name(answer.status)
+            "ALLOCATE_SHARED_MEMORY answers {}, {len:#x} bytes at {base:#x}{}",
+            psp::status_name(answer.status),
+            if over_slb {
+                ", over the SLB, so not written"
+            } else {
+                ""
+            }
         ),
     );
     (answer.ok() && len > 0).then_some((base, len.into()))

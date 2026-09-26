@@ -92,7 +92,6 @@ const LOC_STATE_ASSIGNED: u32 = 1 << 1;
 const LOC_STATE_ACTIVE_SHIFT: u32 = 2;
 const LOC_CTRL_REQUEST: u32 = 1 << 0;
 const LOC_CTRL_RELINQUISH: u32 = 1 << 1;
-const LOC_CTRL_RESET_SEIZE: u32 = 1 << 3;
 const LOC_STS_SEIZED: u32 = 1 << 1;
 const CTRL_REQ_READY: u32 = 1 << 0;
 const CTRL_REQ_IDLE: u32 = 1 << 1;
@@ -256,11 +255,11 @@ impl Tpm {
         }
     }
 
-    /// Clears the seized flag, which is written 1 to clear.
+    /// Clears the seized flag where software can: TIS's is written 1 to
+    /// clear, and CRB's `beenSeized` in `TPM_LOC_STS_x` is read-only.
     pub fn clear_seized(&self) {
-        match self.interface {
-            Interface::Tis => self.set8(TIS_ACCESS, ACCESS_SEIZED),
-            Interface::Crb => self.set32(CRB_LOC_CTRL, LOC_CTRL_RESET_SEIZE),
+        if self.interface == Interface::Tis {
+            self.set8(TIS_ACCESS, ACCESS_SEIZED);
         }
     }
 

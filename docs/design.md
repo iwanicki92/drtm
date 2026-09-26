@@ -86,7 +86,9 @@ classically. `launch=psp` makes that failure a `launch.gate` blocker, and
 1. `TMR_SETUP` of index 0 over `[0, 4 GiB)` succeeds.
 
 The last two change the service's state, so they run after the checks'
-summary, while UEFI output still works.
+summary, while UEFI output still works. Where the preamble then fails
+before `SKINIT`, it issues `TMR_RELEASE` itself, so the next boot option's
+devices can reach memory again.
 
 ### The gate
 

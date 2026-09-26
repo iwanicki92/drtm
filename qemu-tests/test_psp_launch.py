@@ -112,7 +112,9 @@ def test_every_psp_step_passes(psp_launch_boot: str):
         assert result(psp_launch_boot, identifier) == "pass", identifier
     assert sha256_pcr17(psp_launch_boot)["result"] == "pass"
     # The guide says nothing of the buffer's use, so it is only reported.
-    assert result(psp_launch_boot, "launch.psp_shared") == "info"
+    (shared,) = checks(psp_launch_boot, "launch.psp_shared")
+    assert shared["result"] == "info"
+    assert (shared["fields"]["over_slb"], shared["fields"]["written"]) == (False, True)
     summary = sl_summary(psp_launch_boot)
     assert (summary["fail"], summary["warn"], summary["verdict"]) == (0, 0, "pass")
 

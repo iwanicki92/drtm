@@ -10,6 +10,7 @@
 //! sink list at debug level.
 
 use alloc::format;
+use alloc::string::String;
 
 use core::arch::asm;
 use core::arch::x86_64::__cpuid;
@@ -185,12 +186,18 @@ fn prepare_cpu() {
 /// Prepares and issues `SKINIT`. Returns only where something before
 /// `ExitBootServices()` failed, which it reports.
 pub fn launch(config: &Config, sinks: Sinks, service: Option<Service>, tsc_per_ms: u64) {
+    // The PSP path set its TMR up already, and nothing releases it after
+    // a failure here but this.
     let fail = |detail: &str| {
+        let released = match &service {
+            Some(service) => format!(", {}", service.release_tmr()),
+            None => String::new(),
+        };
         check::after_summary(
             Tag::Fail,
             "launch.preamble",
             &[],
-            format_args!("{detail}, not launching"),
+            format_args!("{detail}{released}, not launching"),
         );
     };
     let Probe::Present { family, interface } = tpm::probe() else {

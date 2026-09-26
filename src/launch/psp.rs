@@ -39,6 +39,20 @@ pub struct Service {
     pub capability: [u32; 3],
 }
 
+impl Service {
+    /// Drops the TMR again where the launch stops before `SKINIT`, so the
+    /// next boot option's devices can reach memory. Says how it went.
+    pub fn release_tmr(&self) -> String {
+        match self
+            .mailbox
+            .command(Command::TmrRelease, 0, [0; 3], psp::TIMEOUT_MS)
+        {
+            Ok(answer) => format!("TMR_RELEASE answers {}", psp::status_name(answer.status)),
+            Err(error) => format!("TMR_RELEASE got no answer ({error:?})"),
+        }
+    }
+}
+
 /// A PCI configuration dword of 0:0.0 through ports `0xCF8` and `0xCFC`.
 ///
 /// # Safety
