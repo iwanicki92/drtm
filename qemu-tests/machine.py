@@ -116,6 +116,7 @@ def options(
     psp_drtm_device: bool = False,
     psp_drtm_service: bool = False,
     vga_and_nic: bool = False,
+    tpm_burst_limit: int | None = None,
 ) -> list[str]:
     """The machine for one boot of the ESP, without the flash, the TPM or
     the console.
@@ -152,6 +153,11 @@ def options(
     publishes the SSDT describing the DRTM ACPI device. `psp_drtm_service`
     runs the DRTM service behind the mailbox, which locks TPM localities 1
     to 4 from reset until a PSP launch, as Turin firmware leaves them.
+
+    `tpm_burst_limit` has our QEMU's TIS FIFO move that many bytes at most
+    before its burst count reads 0 once, as a FIFO TPM refilling does. A
+    byte past the burst count still moves, as hardware would after wait
+    states, and its `tpm_tis_burst_wait` trace names the locality.
 
     `vga_and_nic` keeps QEMU's default display adapter and network card.
     They cost 1.3s of firmware initialisation each boot, so only the boot
@@ -207,6 +213,13 @@ def options(
         device += f",drtm-device={'on' if psp_drtm_device else 'off'}"
         device += f",drtm-service={'on' if psp_drtm_service else 'off'}"
         args += ["-device", device]
+    if tpm_burst_limit is not None:
+        args += [
+            "-global",
+            f"tpm-tis.burst-limit={tpm_burst_limit}",
+            "-trace",
+            "tpm_tis_burst_wait",
+        ]
     if corrected_error_bank is not None:
         args.append("-S")
     return args

@@ -439,6 +439,33 @@ def launch_tpm_1_2_boot() -> dict:
 
 
 @boot_configuration
+def launch_burst_boot() -> dict:
+    """Serial output of one launch through a TIS FIFO that moves 8 bytes a
+    burst and reads a burst count of 0 between bursts, so every command and
+    response before and after SKINIT spans several bursts."""
+    return {
+        "amd_drtm": True,
+        "tpm": "tis",
+        "tpm_burst_limit": 8,
+        "launch": LAUNCH_HALTED,
+        "query_launch": True,
+    }
+
+
+@boot_configuration
+def launch_tpm_1_2_burst_boot() -> dict:
+    """Serial output of one launch through a TPM 1.2 whose FIFO moves 3
+    bytes a burst, so bursts end inside the header's fields."""
+    return {
+        "amd_drtm": True,
+        "tpm": "tis-1.2",
+        "tpm_burst_limit": 3,
+        "launch": LAUNCH_HALTED,
+        "query_launch": True,
+    }
+
+
+@boot_configuration
 def launch_blocked_boot() -> dict:
     """Serial output of one boot on the launch machine with no TPM, so
     `tpm.present` fails and the gate refuses to launch."""

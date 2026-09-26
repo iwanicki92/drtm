@@ -9,6 +9,7 @@ of its own, so the helpers in `conftest` read both parts of a launch boot.
 """
 
 import hashlib
+import re
 
 from conftest import REPO_ROOT, launch_state, qemu_log, records, results
 
@@ -143,6 +144,47 @@ def test_the_sl_reads_through_crb(launch_crb_boot: str):
         assert read["result"] == "fail"
         assert read["fields"]["locality"] == 0
         assert "response code 0x100" in read["detail"]
+
+
+def burst_waits(name: str) -> tuple[set[int], list[str]]:
+    """The localities that moved a TIS FIFO byte past the burst count in
+    boot `name`, and every other line of its `qemu.log`."""
+    localities = set()
+    others = []
+    for line in qemu_log(name).splitlines():
+        found = re.search(r"tpm_tis_burst_wait locality (\d)", line)
+        if found:
+            localities.add(int(found.group(1)))
+        else:
+            others.append(line)
+    return localities, others
+
+
+def test_a_small_tis_burst_still_measures(launch_burst_boot: str):
+    # The SL, at locality 2, waits out every burst. Firmware's TIS driver
+    # at locality 0 may move a byte past one, which a TPM allows.
+    for bank in ("sha1", "sha256"):
+        (pcr17,) = [
+            r
+            for r in checks(launch_burst_boot, "launch.pcr17")
+            if r["fields"]["bank"] == bank
+        ]
+        assert pcr17["result"] == "pass"
+        assert pcr17["fields"]["pcr17"] == expected_pcr17(bank)
+    assert [r["result"] for r in checks(launch_burst_boot, "launch.pcr18_22")] == [
+        "pass",
+        "pass",
+    ]
+    assert launch_state("launch_burst_boot")["hash"] == "ok"
+    assert burst_waits("launch_burst_boot") in ((set(), []), ({0}, []))
+
+
+def test_a_small_tpm_1_2_burst_still_measures(launch_tpm_1_2_burst_boot: str):
+    (pcr17,) = checks(launch_tpm_1_2_burst_boot, "launch.pcr17")
+    assert pcr17["result"] == "pass"
+    assert pcr17["fields"]["pcr17"] == expected_pcr17("sha1")
+    assert launch_state("launch_tpm_1_2_burst_boot")["hash"] == "ok"
+    assert burst_waits("launch_tpm_1_2_burst_boot") in ((set(), []), ({0}, []))
 
 
 def test_the_gate_blocks_without_a_tpm(launch_blocked_boot: str):
