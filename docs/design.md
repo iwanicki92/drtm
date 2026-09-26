@@ -170,10 +170,11 @@ reset value, zero, extended with the image's digest.
 ### The PSP path in the Secure Loader
 
 After `SKINIT` the Secure Loader drives the mailbox itself, with a 5 s
-timeout per command and two minutes for the extend. A timeout skips the
-mailbox steps after it, and the TPM steps still run. After each command it
-reports whether it still holds locality 2 (`launch.psp_seize`) and asks for
-it again if not. In the guide's order:
+timeout per command and 10 s for the extend, and says at `debug` which
+command it waits for. A timeout skips the mailbox steps after it, and the
+TPM steps still run. After each command it reports whether it still holds
+locality 2 (`launch.psp_seize`) and asks for it again if not. In the guide's
+order:
 
 1. `LAUNCH` (`launch.psp_launch`), which checks the signature and extends
     PCR 17 and 18. After a refusal, `launch.psp_cap` checks the cap the

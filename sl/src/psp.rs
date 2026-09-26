@@ -93,6 +93,8 @@ impl Session<'_> {
         } else {
             psp::TIMEOUT_MS
         };
+        self.out
+            .debug(format_args!("{name} sent, waiting up to {timeout} ms"));
         match self.mailbox.command(command, 0, arguments, timeout) {
             Ok(answer) => {
                 self.out.debug(format_args!(

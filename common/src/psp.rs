@@ -24,10 +24,11 @@ const INDEX_SHIFT: u32 = 24;
 const COMMAND_SHIFT: u32 = 16;
 const STATUS_MASK: u32 = 0xFFFF;
 
-/// How long a command may take: the 5 s GRUB and SKL allow, and two
-/// minutes for the extend, which hashed at about 85 KB/s on hardware.
+/// How long a command may take: the 5 s GRUB and SKL allow, and 10 s for
+/// the extend, which hashed at about 85 KB/s on hardware. The SL's range
+/// of under 64 KiB should take well under a second.
 pub const TIMEOUT_MS: u64 = 5000;
-pub const EXTEND_TIMEOUT_MS: u64 = 120_000;
+pub const EXTEND_TIMEOUT_MS: u64 = 10_000;
 
 /// `GET_CAPABILITY`'s first result word: bit 0 DRTM enabled.
 pub const CAP_ENABLED: u32 = 1 << 0;

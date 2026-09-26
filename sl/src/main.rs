@@ -276,10 +276,7 @@ fn report_bank(out: &mut Out, params: &Params, tpm: &Tpm, bank: Bank) {
             Tag::Fail,
             "launch.pcr17",
             &fields,
-            format_args!(
-                "{name} PCR 17 is not this image's measurement, the TPM hashed \
-                 something other than this image (read at locality {at})"
-            ),
+            format_args!("{name} PCR 17 is not this image's measurement (read at locality {at})"),
         ),
         Pcr17::Unjudged => out.check(
             Tag::Info,
@@ -312,10 +309,7 @@ fn report_bank(out: &mut Out, params: &Params, tpm: &Tpm, bank: Bank) {
             Tag::Fail,
             "launch.pcr18_22",
             &rest,
-            format_args!(
-                "{name} PCR 18 to 22 are not all zero, so the launch did not \
-                 reset them or something extended them since"
-            ),
+            format_args!("{name} PCR 18 to 22 are not all zero"),
         );
     }
 }
