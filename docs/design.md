@@ -118,7 +118,9 @@ format, level and sinks, the TPM's family, interface and active banks, the
 time-stamp counter rate and whether the PSP DRTM service was ready, as
 `common::params` lays it out. On the PSP path it also carries the mailbox,
 the capability words, the TMR, the IO-APIC pin the PIT reaches, the build's
-PCR predictions and the SHA-256 of the IVRS the checks read. Then, after
+PCR predictions, the SHA-256 of the IVRS the checks read and the address of
+a copy of the SLB, from its base to the end of the parameter page, in a
+64 KiB block of its own on the next free 64 MiB boundary. Then, after
 `launch.skinit` (and `launch.psp_service` on the PSP path):
 
 1. `ExitBootServices()`. From here nothing reaches the UEFI logger, and
@@ -173,10 +175,10 @@ reset value, zero, extended with the image's digest.
 
 After `SKINIT` the Secure Loader drives the mailbox itself, with a 5 s
 timeout per command and 10 s for the extend, and says at `debug` which
-command it waits for. A timeout skips the mailbox steps after it, and the
-TPM steps still run. After each command it reports whether it still holds
-locality 2 (`launch.psp_seize`) and asks for it again if not. In the guide's
-order:
+command it waits for. A timeout reports what `C2PMSG_72` holds and skips
+the mailbox steps after it, and the TPM steps still run. After each command
+it reports whether it still holds locality 2 (`launch.psp_seize`) and asks
+for it again if not. In the guide's order:
 
 1. `LAUNCH` (`launch.psp_launch`), which checks the signature and extends
     PCR 17 and 18. After a refusal, `launch.psp_cap` checks the cap the
@@ -184,8 +186,11 @@ order:
     reported against the status the guide's appendix A gives it.
 1. Locality 2, which the launch unlocks, and the SHA-256 PCRs against the
     build's predictions.
-1. `EXTEND_OSSL_DIGEST` over the SLB from its base to the end of the
-    parameter page, checked against the PCRs read before it.
+1. `EXTEND_OSSL_DIGEST` over the preamble's copy of the SLB, or the SLB
+    itself where no copy fit, checked against the PCRs read before it.
+    The ranges other loaders extend lie outside their SLB, and the copy
+    keeps this one outside too. The Secure Loader reports whether the copy
+    still matches its SLB.
 1. `GET_TMR_DESCRIPTORS`, `ALLOCATE_SHARED_MEMORY`, `GET_TCG_LOGS` and
     `GET_IVRS_TABLE_INFO`. The log is parsed and replayed against PCR 17
     and 18, and the IVRS compared with the one ACPI holds.

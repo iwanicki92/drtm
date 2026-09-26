@@ -10,6 +10,7 @@
 //! sink list at debug level.
 
 use alloc::format;
+use alloc::string::String;
 
 use core::arch::asm;
 use core::arch::x86_64::__cpuid;
@@ -51,7 +52,7 @@ const SLB_ALIGN: usize = 2 << 20;
 const SLB_PAGES: usize = (SLB_ALIGN + SLB_SIZE - PAGE) / PAGE;
 
 /// The alignment the guide's appendix E.1 asks of the MLE the PSP path
-/// extends, which starts at the SLB.
+/// extends. The SLB and the copy of it the SL extends both keep it.
 const MLE_ALIGN: u64 = 64 << 20;
 
 /// `IA32_APIC_BASE`: the xAPIC's MMIO base in bits 51:12, x2APIC mode in
@@ -230,9 +231,10 @@ pub fn launch(config: &Config, sinks: Sinks, service: Option<Service>, tsc_per_m
         fail("no TPM answers any more");
         return;
     };
-    // The PSP path's extend starts at the SLB, so it goes on a 64 MiB
-    // boundary where one is free.
+    // The PSP path puts the SLB and the copy the SL extends on 64 MiB
+    // boundaries where they are free. Without a copy the SLB is extended.
     let aligned = service.as_ref().and_then(|_| allocate_aligned());
+    let copy = service.as_ref().and_then(|_| allocate_aligned());
     let (Some(block), Some(page)) = (
         aligned.or_else(|| allocate(MemoryType::LOADER_DATA, SLB_PAGES)),
         allocate(MemoryType::LOADER_CODE, 1),
@@ -286,6 +288,7 @@ pub fn launch(config: &Config, sinks: Sinks, service: Option<Service>, tsc_per_m
             tmr_size: psp::TMR_SIZE,
             pcr17: image::PSP_PCR17,
             pcr18: image::PSP_PCR18,
+            extend_copy: copy.map_or(0, |copy| copy as u64),
         }),
         pit: service.as_ref().and_then(|_| pit::find()),
         ivrs_sha256: match acpi::find(b"IVRS") {
@@ -293,8 +296,9 @@ pub fn launch(config: &Config, sinks: Sinks, service: Option<Service>, tsc_per_m
             _ => None,
         },
     };
-    // Safety: `slb` is 64 KiB inside the block just allocated, and `page`
-    // a page of loader code below 4 GiB, neither used by anything else.
+    // Safety: `slb` is 64 KiB inside the block just allocated, `copy` a
+    // 64 KiB block of its own, and `page` a page of loader code below
+    // 4 GiB, none used by anything else.
     unsafe {
         ptr::write_bytes(slb, 0, SLB_SIZE);
         ptr::copy_nonoverlapping(image.bytes.as_ptr(), slb, image.bytes.len());
@@ -304,6 +308,9 @@ pub fn launch(config: &Config, sinks: Sinks, service: Option<Service>, tsc_per_m
             slb.add(image.params_offset),
             params::SIZE,
         );
+        if let Some(copy) = copy {
+            ptr::copy_nonoverlapping(slb, copy, image.params_offset + params::SIZE);
+        }
         trampoline::install(page);
     }
 
@@ -323,6 +330,10 @@ pub fn launch(config: &Config, sinks: Sinks, service: Option<Service>, tsc_per_m
     );
     if let Some(psp) = &params.psp {
         let pit = params.pit;
+        let extended = match psp.extend_copy {
+            0 => String::from("the SLB"),
+            at => format!("a copy of it at {at:#x}"),
+        };
         check::after_summary(
             Tag::Info,
             "launch.psp_service",
@@ -345,13 +356,14 @@ pub fn launch(config: &Config, sinks: Sinks, service: Option<Service>, tsc_per_m
                 ("ioapic", Value::Hex(pit.map_or(0, |pit| pit.ioapic.into()))),
                 ("pit_pin", Value::Count(pit.map_or(0, |pit| pit.pin.into()))),
                 ("ivrs", Value::Flag(params.ivrs_sha256.is_some())),
+                ("extend_copy", Value::Hex(psp.extend_copy)),
                 ("expected_pcr17", Value::Bytes(&psp.pcr17)),
                 ("expected_pcr18", Value::Bytes(&psp.pcr18)),
             ],
             format_args!(
                 "the service at {:#x} from the {} is kicked, TMR 0 is to cover \
                  [{:#x}, {:#x}) once boot services are gone, the SLB is {}on \
-                 a 64 MiB boundary",
+                 a 64 MiB boundary, the extend measures {}",
                 psp.mailbox,
                 psp.source.name(),
                 psp.tmr_base,
@@ -360,7 +372,8 @@ pub fn launch(config: &Config, sinks: Sinks, service: Option<Service>, tsc_per_m
                     ""
                 } else {
                     "not "
-                }
+                },
+                extended
             ),
         );
     }

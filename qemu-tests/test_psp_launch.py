@@ -119,6 +119,17 @@ def test_every_psp_step_passes(psp_launch_boot: str):
     assert (summary["fail"], summary["warn"], summary["verdict"]) == (0, 0, "pass")
 
 
+def test_the_extend_measures_a_copy_of_the_slb(psp_launch_boot: str):
+    (service,) = checks(psp_launch_boot, "launch.psp_service")
+    (skinit,) = checks(psp_launch_boot, "launch.skinit")
+    (extend,) = checks(psp_launch_boot, "launch.psp_extend")
+    copy = int(service["fields"]["extend_copy"], 16)
+    assert copy % (64 << 20) == 0
+    assert copy != int(skinit["fields"]["slb"], 16)
+    assert int(extend["fields"]["base"], 16) == copy
+    assert (extend["fields"]["copy"], extend["fields"]["matches_slb"]) == (True, True)
+
+
 def test_the_launch_measures_as_predicted(psp_launch_boot: str):
     (launch,) = checks(psp_launch_boot, "launch.psp_launch")
     words = {k: int(launch["fields"][k], 16) for k in ("anti_rollback", "tsme")}
@@ -234,7 +245,10 @@ def test_launch_psp_blocks_with_a_tpm_1_2(psp_forced_tpm_1_2_boot: str):
 
 
 def test_a_launch_timeout_skips_the_mailbox(psp_timeout_boot: str):
-    assert result(psp_timeout_boot, "launch.psp_launch") == "fail"
+    (launch,) = checks(psp_timeout_boot, "launch.psp_launch")
+    assert launch["result"] == "fail"
+    # The command still waits in C2PMSG_72, the ready bit clear.
+    assert int(launch["fields"]["c2pmsg_72"], 16) == 0x0004_0000
     for step in AFTER_LAUNCH:
         assert result(psp_timeout_boot, step) == "skip", step
     # The TPM steps still run.

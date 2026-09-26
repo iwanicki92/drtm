@@ -10,7 +10,7 @@
 //! every problem. A mailbox that stops answering ends the mailbox steps,
 //! and what needs only the TPM still runs.
 
-use core::slice;
+use core::{ptr, slice};
 
 use common::out::Out;
 use common::params::{Family, Params, Psp};
@@ -110,13 +110,17 @@ impl Session<'_> {
             }
             Err(error) => {
                 self.dead = Some(command);
+                let register = self.mailbox.register();
                 self.out.check(
                     Tag::Fail,
                     id,
-                    &[("command", Value::Text(format_args!("{name}")))],
+                    &[
+                        ("command", Value::Text(format_args!("{name}"))),
+                        ("c2pmsg_72", Value::Hex(register.into())),
+                    ],
                     format_args!(
-                        "{name} got no answer in {} ms ({}), nothing more is sent",
-                        timeout,
+                        "{name} got no answer in {timeout} ms ({}, C2PMSG_72 \
+                         {register:#010x}), nothing more is sent",
                         error.name()
                     ),
                 );
@@ -443,23 +447,38 @@ fn judge_pcrs(s: &mut Session, fuses: Option<(u32, u32)>) {
 }
 
 /// Step 3: the SLB, from its base to the end of the parameter page, which
-/// nothing else measures.
+/// nothing else measures. The preamble's copy of that range is extended in
+/// its place where there is one.
 fn extend(s: &mut Session, slb: u32) {
     // Both are symbols `sl.ld` defines in the SLB, and only their
     // addresses are taken.
     let (start, params) = (&raw const __sl_start as usize, &raw const __params as usize);
     let len = (params - start + common::params::SIZE) as u32;
-    let base = u64::from(slb);
+    let copy = s.psp.extend_copy != 0;
+    let base = if copy {
+        s.psp.extend_copy
+    } else {
+        u64::from(slb)
+    };
     let aligned = base.is_multiple_of(MLE_ALIGN);
+    let (at, len_usize) = (base as usize, len as usize);
     let before = s.pcrs(Bank::Sha256);
     let mut hash = sha256::Sha256::new();
-    // Safety: the SLB lies below 4 GiB, which the SL identity maps.
-    unsafe { hash.update_from(slb as usize, len as usize) };
+    // Safety: the SLB and the copy, which the parameter page checked, lie
+    // below 4 GiB, which the SL identity maps. Both are read a byte at a
+    // time, since the SLB holds the SL's own static variables.
+    let matches = unsafe {
+        hash.update_from(at, len_usize);
+        (0..len_usize).all(|i| {
+            ptr::read_volatile((at + i) as *const u8)
+                == ptr::read_volatile((slb as usize + i) as *const u8)
+        })
+    };
     let digest = hash.finish();
     let Some(answer) = s.command(
         "launch.psp_extend",
         Command::ExtendOsslDigest,
-        [len, slb, 0],
+        [len, base as u32, (base >> 32) as u32],
     ) else {
         return;
     };
@@ -473,15 +492,22 @@ fn extend(s: &mut Session, slb: u32) {
         return;
     }
     let status = answer.status;
-    let fields = |pcr17: &'static [u8]| -> [(&str, Value<'_>); 6] {
+    let fields = |pcr17: &'static [u8]| -> [(&str, Value<'_>); 8] {
         [
             ("base", Value::Hex(base)),
             ("size", Value::Hex(len.into())),
             ("aligned", Value::Flag(aligned)),
+            ("copy", Value::Flag(copy)),
+            ("matches_slb", Value::Flag(matches)),
             ("digest", Value::Bytes(&digest)),
             ("status", Value::Hex(status.into())),
             ("pcr17", Value::Bytes(pcr17)),
         ]
+    };
+    let what = match (copy, matches) {
+        (false, _) => "",
+        (true, true) => " (a copy of the SLB)",
+        (true, false) => " (a copy that differs from the SLB)",
     };
     let unaligned = if aligned {
         ""
@@ -494,7 +520,7 @@ fn extend(s: &mut Session, slb: u32) {
             "launch.psp_extend",
             &fields(&[]),
             format_args!(
-                "EXTEND_OSSL_DIGEST of {len:#x} bytes at {base:#x} answers {}{unaligned}",
+                "EXTEND_OSSL_DIGEST of {len:#x} bytes at {base:#x}{what} answers {}{unaligned}",
                 psp::status_name(answer.status)
             ),
         );
@@ -517,14 +543,14 @@ fn extend(s: &mut Session, slb: u32) {
     let ok = after[0].as_bytes() == expect(before[0].as_bytes())
         && after[1].as_bytes() == expect(before[1].as_bytes());
     let mut fields = fields(&[]);
-    fields[5].1 = Value::Bytes(after[0].as_bytes());
+    fields[7].1 = Value::Bytes(after[0].as_bytes());
     s.out.check(
         if ok { Tag::Pass } else { Tag::Fail },
         "launch.psp_extend",
         &fields,
         format_args!(
-            "EXTEND_OSSL_DIGEST of {len:#x} bytes at {base:#x} {} PCR 17 and 18 \
-             with the range, then AMDSL{unaligned}",
+            "EXTEND_OSSL_DIGEST of {len:#x} bytes at {base:#x}{what} {} PCR 17 \
+             and 18 with the range, then AMDSL{unaligned}",
             if ok { "extended" } else { "did not extend" }
         ),
     );

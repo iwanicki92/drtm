@@ -20,7 +20,7 @@ use crate::transport::Interface;
 use crate::uart::{Space, Uart};
 
 pub const MAGIC: [u8; 8] = *b"DRTMSLPP";
-pub const VERSION: u32 = 2;
+pub const VERSION: u32 = 3;
 pub const MAX_SINKS: usize = 4;
 
 const SINK_SIZE: usize = 16;
@@ -41,9 +41,14 @@ const IOAPIC: usize = TMR_SIZE + 8;
 const IVRS_SHA256: usize = IOAPIC + 8;
 const PSP_PCR17: usize = IVRS_SHA256 + 32;
 const PSP_PCR18: usize = PSP_PCR17 + 32;
+// Version 3.
+const EXTEND_COPY: usize = PSP_PCR18 + 32;
 
 /// Bytes the page takes.
-pub const SIZE: usize = PSP_PCR18 + 32;
+pub const SIZE: usize = EXTEND_COPY + 8;
+
+/// The copy `EXTEND_COPY` names is at most this long.
+pub const EXTEND_COPY_MAX: u64 = 0x10000;
 
 /// `PIT_FLAGS`: an entry is there, and how the pin is wired.
 const PIT_PRESENT: u8 = 1 << 0;
@@ -111,6 +116,9 @@ pub struct Psp {
     pub pcr17: [u8; 32],
     /// PCR 18 in SHA-256 after `LAUNCH`.
     pub pcr18: [u8; 32],
+    /// Where the preamble copied the SLB up to the end of this page, for
+    /// `EXTEND_OSSL_DIGEST` to measure in its place, or 0 for no copy.
+    pub extend_copy: u64,
 }
 
 /// Where the PIT's interrupt reaches the IO-APIC, from the MADT.
@@ -230,7 +238,8 @@ impl Params {
             page[TMR_BASE..TMR_BASE + 8].copy_from_slice(&psp.tmr_base.to_le_bytes());
             page[TMR_SIZE..TMR_SIZE + 8].copy_from_slice(&psp.tmr_size.to_le_bytes());
             page[PSP_PCR17..PSP_PCR18].copy_from_slice(&psp.pcr17);
-            page[PSP_PCR18..SIZE].copy_from_slice(&psp.pcr18);
+            page[PSP_PCR18..EXTEND_COPY].copy_from_slice(&psp.pcr18);
+            page[EXTEND_COPY..SIZE].copy_from_slice(&psp.extend_copy.to_le_bytes());
         }
         if let Some(pit) = &self.pit {
             page[PIT_PIN] = pit.pin;
@@ -338,6 +347,10 @@ impl Params {
                 if mailbox == 0 || mailbox + 0x60 > 1 << 32 {
                     return Err(Invalid::Field("mailbox"));
                 }
+                let extend_copy = u64_at(EXTEND_COPY);
+                if extend_copy.saturating_add(EXTEND_COPY_MAX) > 1 << 32 {
+                    return Err(Invalid::Field("extend copy"));
+                }
                 Some(Psp {
                     mailbox,
                     source,
@@ -350,6 +363,7 @@ impl Params {
                     tmr_size: u64_at(TMR_SIZE),
                     pcr17: digest(PSP_PCR17),
                     pcr18: digest(PSP_PCR18),
+                    extend_copy,
                 })
             }
         };
@@ -420,6 +434,7 @@ mod tests {
                 tmr_size: 1 << 32,
                 pcr17: [3; 32],
                 pcr18: [4; 32],
+                extend_copy: 0x0800_0000,
             }),
             pit: Some(Pit {
                 ioapic: 0xFEC0_0000,
@@ -456,8 +471,8 @@ mod tests {
             Params::decode(&page)
         };
         assert_eq!(damaged(0, b'X'), Err(Invalid::Magic));
-        // A version 1 page, which carries no path.
-        assert_eq!(damaged(8, 1), Err(Invalid::Version(1)));
+        // A version 2 page, which carries no extend copy.
+        assert_eq!(damaged(8, 2), Err(Invalid::Version(2)));
         assert_eq!(damaged(12, 0), Err(Invalid::Size(SIZE as u32 & !0xFF)));
         assert_eq!(damaged(16, 7), Err(Invalid::Field("format")));
         assert_eq!(damaged(17, 6), Err(Invalid::Field("level")));
@@ -476,6 +491,11 @@ mod tests {
         );
         // The mailbox moved above 4 GiB.
         assert_eq!(damaged(MAILBOX + 4, 1), Err(Invalid::Field("mailbox")));
+        // The copy moved above 4 GiB.
+        assert_eq!(
+            damaged(EXTEND_COPY + 4, 1),
+            Err(Invalid::Field("extend copy"))
+        );
         let mut page = good;
         page[IOAPIC..IOAPIC + 4].fill(0);
         assert_eq!(Params::decode(&page), Err(Invalid::Field("ioapic")));
