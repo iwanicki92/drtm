@@ -23,91 +23,168 @@ global_asm!(
     .global sl_entry32
     .set GDT_OFFSET, sl_gdt - sl_entry32
     .set LONG_OFFSET, sl_long - sl_entry32
+
+    /* The control register and MSR bits changed here. */
+    .set CR0_PG, 1 << 31            /* paging */
+    .set CR4_PAE, 1 << 5            /* page table entries of 64 bits */
+    .set MSR_EFER, 0xC0000080       /* extended feature enable register */
+    .set EFER_LME, 1 << 8           /* long mode enable */
+    .set MSR_VM_CR, 0xC0010114      /* SVM control */
+    .set VM_CR_DIS_A20M, 1 << 2     /* ignore the legacy A20 mask */
+
+    /* Segment selectors: byte offsets into sl_gdt. */
+    .set CODE64, 0x08
+    .set DATA, 0x10
+
+    /*
+     * The three page tables, as offsets from __page_tables, and the bits
+     * of their entries: present, writable, and for LARGE a page mapped
+     * directly (1 GiB in a PDPT, 2 MiB in a PD) rather than a table.
+     */
+    .set PML4, 0
+    .set PDPT, 0x1000
+    .set PD, 0x2000
+    .set TABLE, (1 << 0) | (1 << 1)
+    .set LARGE, TABLE | (1 << 7)
+    .set GIB, 1 << 30
+
 sl_entry32:
+    /*
+     * SKINIT enters here in 32-bit protected mode with paging off, EAX
+     * the SLB's physical address and ESP its end, 64 KiB up. EBP keeps
+     * the base for the whole entry. The SLB can be anywhere, so every
+     * address before paging is computed from it.
+     */
     mov ebp, eax
 
-    /* An IDT of limit 0, so any exception shuts down. */
+    /*
+     * Load an IDT, the table of exception and interrupt handlers, of
+     * limit 0. Any exception then finds no handler, which escalates to
+     * a shutdown instead of running code from the firmware's IDT. LIDT
+     * reads a 2-byte limit and a 4-byte address from memory, here two
+     * zero dwords pushed on the stack. The segment override "ss:" is
+     * there because SS is the only data segment SKINIT made flat.
+     */
     push 0
     push 0
     lidt ss:[esp]
     add esp, 8
 
-    /* SKINIT disabled A20 masking; R_INIT stays set, nothing wakes APs. */
-    mov ecx, 0xC0010114
+    /*
+     * SKINIT set VM_CR.DIS_A20M, which makes the CPU ignore the legacy
+     * A20 mask. Clear it again, as TrenchBoot's SKL does. R_INIT, which
+     * SKINIT also set, stays set: an INIT signal to this CPU raises an
+     * exception rather than resetting it. Nothing sends one, since no other
+     * CPU is woken.
+     */
+    mov ecx, MSR_VM_CR
     rdmsr
-    and eax, 0xFFFFFFFB
+    and eax, ~VM_CR_DIS_A20M
     wrmsr
 
-    /* ESI: where this code is. Its offset is the header's first word. */
+    /*
+     * ESI: where this code is. The SL header's first word is the entry
+     * point's offset into the SLB.
+     */
     movzx esi, word ptr ss:[ebp]
     add esi, ebp
 
-    /* Our GDT, through SS while DS is still a real-mode segment. */
+    /*
+     * Load sl_gdt, again through a descriptor built on the stack, then
+     * the flat data segment into every data segment register. From here
+     * on memory can be addressed without "ss:".
+     */
     lea eax, [esi + GDT_OFFSET]
     sub esp, 8
-    mov word ptr ss:[esp], 3 * 8 - 1
-    mov dword ptr ss:[esp + 2], eax
+    mov word ptr ss:[esp], 3 * 8 - 1        /* limit: 3 descriptors */
+    mov dword ptr ss:[esp + 2], eax         /* address */
     lgdt ss:[esp]
     add esp, 8
-    mov ax, 0x10
+    mov ax, DATA
     mov ds, ax
     mov es, ax
     mov fs, ax
     mov gs, ax
     mov ss, ax
 
-    /* Zero .bss, the page tables and the stack. */
+    /*
+     * Zero .bss, the stack and the page tables. REP STOSD writes EAX
+     * to ECX dwords starting at EDI, upwards since CLD clears the
+     * direction flag.
+     */
     lea edi, [ebp + __bss_offset]
     mov ecx, offset __bss_dwords
     xor eax, eax
     cld
     rep stosd
 
-    /* The 2 MiB page below maps the SLB only from such a boundary. */
+    /*
+     * The 2 MiB page below starts at the SLB, which works only if the
+     * SLB sits on a 2 MiB boundary. Halt at 7 if it does not.
+     */
     test ebp, 0x1FFFFF
     jnz 7f
 
     /*
-     * EBX: the PML4, whose first and last entries share one PDPT, then
-     * that PDPT and a PD. The PDPT's first four entries are the low
-     * 4 GiB in 1 GiB pages, entry 510 the PD, whose first entry is the
-     * 2 MiB page at the SLB.
+     * Build the page tables at EBX. Long mode translates an address in
+     * up to four steps (PML4, PDPT, PD, PT), each entry pointing to the
+     * next table or, with LARGE, mapping a page itself. The high dwords
+     * of the entries stay zero from the clearing above.
+     *
+     * PML4 entry 0 covers virtual addresses from 0 and entry 511 the
+     * top 512 GiB, where SL_VBASE is. Both point to the one PDPT. Its
+     * entries 0 to 3 map the low 4 GiB at their own addresses in 1 GiB
+     * pages, for the TPM and the UART. Its entry 510 points to the PD,
+     * whose entry 0 maps the 2 MiB at the SLB at SL_VBASE.
      */
     lea ebx, [ebp + __page_tables_offset]
-    lea eax, [ebx + 0x1003]
-    mov [ebx], eax
-    mov [ebx + 511 * 8], eax
-    mov dword ptr [ebx + 0x1000], 0x00000083
-    mov dword ptr [ebx + 0x1008], 0x40000083
-    mov dword ptr [ebx + 0x1010], 0x80000083
-    mov dword ptr [ebx + 0x1018], 0xC0000083
-    lea eax, [ebx + 0x2003]
-    mov [ebx + 0x1000 + 510 * 8], eax
-    lea eax, [ebp + 0x83]
-    mov [ebx + 0x2000], eax
+    lea eax, [ebx + PDPT + TABLE]
+    mov [ebx + PML4], eax
+    mov [ebx + PML4 + 511 * 8], eax
+    mov dword ptr [ebx + PDPT + 0 * 8], 0 * GIB + LARGE
+    mov dword ptr [ebx + PDPT + 1 * 8], 1 * GIB + LARGE
+    mov dword ptr [ebx + PDPT + 2 * 8], 2 * GIB + LARGE
+    mov dword ptr [ebx + PDPT + 3 * 8], 3 * GIB + LARGE
+    lea eax, [ebx + PD + TABLE]
+    mov [ebx + PDPT + 510 * 8], eax
+    lea eax, [ebp + LARGE]
+    mov [ebx + PD], eax
 
-    /* Long mode: PAE, CR3, EFER.LME, then paging. */
+    /*
+     * Enter long mode, in the order the CPU requires: PAE on, CR3 at
+     * the PML4, EFER.LME set, then paging on. The CPU is now in
+     * compatibility mode, since CS is still a 32-bit segment. This code
+     * keeps running because its physical addresses are mapped to
+     * themselves.
+     */
     mov eax, cr4
-    or eax, 0x20
+    or eax, CR4_PAE
     mov cr4, eax
     mov cr3, ebx
-    mov ecx, 0xC0000080
+    mov ecx, MSR_EFER
     rdmsr
-    or eax, 0x100
+    or eax, EFER_LME
     wrmsr
     mov eax, cr0
-    or eax, 0x80000000
+    or eax, CR0_PG
     mov cr0, eax
 
-    /* Into the 64-bit code segment, still at the physical address. */
+    /*
+     * Load the 64-bit code segment with a far return, which pops an
+     * address and then a selector, and go on at sl_long's physical
+     * address. ESP is back at the SLB's end, so the two pushes land in
+     * the PD's last entry, which nothing uses. sl_long is 8-byte
+     * aligned, so that entry's present bit stays clear.
+     */
     lea eax, [esi + LONG_OFFSET]
-    push 0x08
+    push CODE64
     push eax
     retf
 
     /*
-     * The accessed bits are preset, or loading a segment would set them
-     * and change the signed image before the service checks it.
+     * A null descriptor, the 64-bit code segment and flat data. The
+     * accessed bits are preset, or loading a segment would set them and
+     * change the signed image before the service checks it.
      */
     .balign 8
 sl_gdt:
@@ -117,9 +194,17 @@ sl_gdt:
 
     .code64
 sl_long:
+    /*
+     * Jump from the physical address to the one the SL is linked at,
+     * under SL_VBASE. The address has 64 bits, so it goes through RAX.
+     */
     movabs rax, offset sl_high
     jmp rax
 sl_high:
+    /*
+     * Point the stack at the top of the SL's stack area (it grows down)
+     * and call sl_main(slb), whose first argument goes in EDI.
+     */
     lea rsp, [rip + __stack_top]
     mov edi, ebp
     call sl_main
@@ -130,6 +215,7 @@ sl_high:
 
     .code32
 7:
+    /* Stops the CPU: no interrupts, and halt again if woken anyway. */
     cli
     hlt
     jmp 7b
