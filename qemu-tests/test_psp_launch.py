@@ -12,7 +12,7 @@ build predicted, so a wrong prediction in either shows.
 import hashlib
 import re
 
-from conftest import SL_IMAGE, launch_state, messages, qemu_log, records
+from conftest import SL_IMAGE, launch_state, messages, qemu_log, qemu_traces, records
 from test_launch import after_launch, checks, measured_image
 
 # The signature block behind the measured image: the `$AS1` header, then
@@ -145,6 +145,13 @@ def test_the_tmr_blocks_the_probe_until_released(psp_launch_boot: str):
     assert state["psp"]["signature"] == "verified"
     assert not [b for b in state["dma-blocks"] if b["name"].startswith("tmr")]
     assert qemu_log("psp_launch_boot") == ""
+
+
+def test_qemu_traces_the_launch(psp_launch_boot: str):
+    events = [line.split(" ", 1)[0] for line in qemu_traces("psp_launch_boot")]
+    for event in ("x86_skinit", "amd_psp_drtm_launch_ok", "amd_psp_drtm_tmr_release"):
+        assert event in events, event
+    assert events.index("x86_skinit") < events.index("amd_psp_drtm_launch_ok")
 
 
 def test_the_sl_stack_has_headroom(psp_launch_boot: str):

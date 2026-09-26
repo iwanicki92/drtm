@@ -10,12 +10,17 @@ import shutil
 from pathlib import Path
 
 from drtmtest import qemu_vm
+from drtmtest.machine import LAUNCH_TRACES
 
 # QEMU CPU model used unless a caller asks for another. AMD, so the guest
 # reads AuthenticAMD and runs the AMD checks rather than skipping them. No
 # QEMU model carries the SKINIT feature bit, so it has to be asked for.
 DEFAULT_CPU = "EPYC"
 SKINIT_CPU = f"{DEFAULT_CPU},+skinit"
+
+# Every trace a launch boot writes to `qemu.log`, the boot matrix's launch
+# traces and the TIS burst wait.
+TRACES = (*LAUNCH_TRACES, "tpm_tis_burst_wait")
 
 # IA32_MCi_STATUS with VAL and EN set and UC clear: a corrected error, which
 # QEMU logs in the bank without raising #MC.
@@ -178,7 +183,7 @@ def options(
     Not with `iommu`, since QEMU takes one IOMMU per machine. The platform
     device runs strict, so a broken launch rule stops the VM as a panic
     rather than a logged line, and guest errors go to `qemu.log`: a checker
-    that only observes must trip neither. Two processors, so the machine
+    that only observes must trip neither. The launch traces go there too. Two processors, so the machine
     has an AP the way a launch machine does, and no reboot, so a launch
     that triple-faults stops QEMU rather than booting drtm again.
     `strict=False` logs a broken rule and carries on, for a launch expected
@@ -242,6 +247,8 @@ def options(
             "2",
             "-no-reboot",
         ]
+        for trace in LAUNCH_TRACES:
+            args += ["-trace", trace]
         if not ivrs:
             args += ["-global", "amd-iommu.ivrs=off"]
     if iommu:

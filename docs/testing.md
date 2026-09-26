@@ -263,6 +263,11 @@ Each pytest invocation gets its own numbered, gitignored folder under
     `swtpm.log`, and the run that warms a firmware image gets
     `boot-warm-firmware/`.
 
+On the launch machine `qemu.log` holds the guest errors and the launch
+traces, the same `amd_drtm_*`, `amd_psp_*` and `x86_*` set the boot matrix
+turns on. `qemu_log()` hands tests the guest errors alone, so a healthy
+launch still reads empty, and `qemu_traces()` the trace lines.
+
 `swtpm.log` is empty after a healthy run: swtpm writes errors to stderr,
 which that file captures, and emits nothing otherwise. Debug tracing is
 separate, via `DRTM_SWTPM_LOG_LEVEL`, where level 5 and above activates

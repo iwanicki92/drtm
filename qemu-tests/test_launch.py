@@ -11,7 +11,7 @@ of its own, so the helpers in `conftest` read both parts of a launch boot.
 import hashlib
 import re
 
-from conftest import SL_IMAGE, launch_state, qemu_log, records, results
+from conftest import SL_IMAGE, launch_state, qemu_log, qemu_traces, records, results
 
 
 def checks(capture: str, identifier: str) -> list[dict]:
@@ -160,15 +160,12 @@ def test_the_sl_reads_through_crb(launch_crb_boot: str):
 def burst_waits(name: str) -> tuple[set[int], list[str]]:
     """The localities that moved a TIS FIFO byte past the burst count in
     boot `name`, and every other line of its `qemu.log`."""
-    localities = set()
-    others = []
-    for line in qemu_log(name).splitlines():
-        found = re.search(r"tpm_tis_burst_wait locality (\d)", line)
-        if found:
-            localities.add(int(found.group(1)))
-        else:
-            others.append(line)
-    return localities, others
+    localities = {
+        int(found.group(1))
+        for line in qemu_traces(name)
+        if (found := re.match(r"tpm_tis_burst_wait locality (\d)", line))
+    }
+    return localities, qemu_log(name).splitlines()
 
 
 def test_a_small_tis_burst_still_measures(launch_burst_boot: str):

@@ -15,6 +15,7 @@ a time, so the fixture is usually just waiting on one that is already going.
 """
 
 import dataclasses
+import fnmatch
 import functools
 import json
 import re
@@ -32,6 +33,7 @@ from machine import (
     MMCONFIG_ABOVE_4GIB,
     MMCONFIG_AS_MAPPED,
     MMCONFIG_BELOW_4GIB,
+    TRACES,
     VM_CR_AFTER_LAUNCH,
     inject_corrected_error,
     make_esp,
@@ -728,9 +730,27 @@ def launch_state(name: str) -> dict:
     return _LAUNCH_STATE[SESSION.boot_log_dir(name)]
 
 
+def _is_trace(line: str) -> bool:
+    """Whether a `qemu.log` line is a trace, which starts with its event's
+    name, rather than a guest error."""
+    event = line.split(" ", 1)[0]
+    return any(fnmatch.fnmatchcase(event, pattern) for pattern in TRACES)
+
+
+def _qemu_lines(name: str) -> list[str]:
+    log = SESSION.boot_log_dir(name) / "qemu.log"
+    return log.read_text(errors="replace").splitlines(keepends=True)
+
+
 def qemu_log(name: str) -> str:
-    """QEMU's own log of boot `name`, where guest errors and traces land."""
-    return (SESSION.boot_log_dir(name) / "qemu.log").read_text(errors="replace")
+    """QEMU's own log of boot `name` without its traces: the guest errors
+    and anything else QEMU complained of."""
+    return "".join(line for line in _qemu_lines(name) if not _is_trace(line))
+
+
+def qemu_traces(name: str) -> list[str]:
+    """The trace lines of boot `name`, in order."""
+    return [line.rstrip("\n") for line in _qemu_lines(name) if _is_trace(line)]
 
 
 def completed(capture: str) -> bool:
