@@ -134,7 +134,12 @@ def test_the_psp_steps_run_in_order(psp_launch_boot: str):
         if record.get("id", "").startswith("launch.psp_")
         and record["id"] not in ("launch.psp_seize", "launch.psp_service")
     ]
-    assert ids == ["launch.psp_launch", *AFTER_LAUNCH, "launch.psp_probe"]
+    assert ids == [
+        "launch.psp_tmr_setup",
+        "launch.psp_launch",
+        *AFTER_LAUNCH,
+        "launch.psp_probe",
+    ]
 
 
 def test_the_tmr_blocks_the_probe_until_released(psp_launch_boot: str):
@@ -149,9 +154,35 @@ def test_the_tmr_blocks_the_probe_until_released(psp_launch_boot: str):
 
 def test_qemu_traces_the_launch(psp_launch_boot: str):
     events = [line.split(" ", 1)[0] for line in qemu_traces("psp_launch_boot")]
-    for event in ("x86_skinit", "amd_psp_drtm_launch_ok", "amd_psp_drtm_tmr_release"):
+    for event in (
+        "amd_psp_drtm_tmr_setup",
+        "x86_skinit",
+        "amd_psp_drtm_launch_ok",
+        "amd_psp_drtm_tmr_release",
+    ):
         assert event in events, event
+    assert events.index("amd_psp_drtm_tmr_setup") < events.index("x86_skinit")
     assert events.index("x86_skinit") < events.index("amd_psp_drtm_launch_ok")
+
+
+def test_the_tmr_follows_exit_boot_services(psp_launch_boot: str):
+    # Under the TMR devices cannot reach the low 4 GiB, and firmware
+    # drivers stopping theirs in ExitBootServices() would hang.
+    found = after_launch(psp_launch_boot)
+    details = [record.get("detail") for record in found]
+    exited = details.index("boot services exited")
+    (setup,) = [i for i, r in enumerate(found) if r.get("id") == "launch.psp_tmr_setup"]
+    assert exited < setup
+    assert found[setup]["result"] == "pass"
+    assert found[setup]["fields"]["status"] == "DRTM_NO_ERROR"
+
+
+def test_a_failed_tmr_setup_still_launches(psp_tmr_timeout_boot: str):
+    (setup,) = checks(psp_tmr_timeout_boot, "launch.psp_tmr_setup")
+    assert setup["result"] == "fail"
+    assert setup["fields"]["status"] == "no answer"
+    assert checks(psp_tmr_timeout_boot, "launch.psp_launch")
+    assert records(psp_tmr_timeout_boot)[-1]["id"] == "launch.halted"
 
 
 def test_the_sl_stack_has_headroom(psp_launch_boot: str):

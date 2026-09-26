@@ -305,24 +305,23 @@ exercises the emulator and not this binary.
 
 Every boot here runs with `launch=off` unless it asks for a launch, which
 `make_esp` writes into its `drtm.conf`, so the checks run on a platform that
-could launch and is not asked to. The launch boots in `test_launch.py` read
-on past the checks' summary to the Secure Loader's `launch.halted`: one
-through a TIS TPM that must measure the image in SHA-1 and SHA-256, one with
-the PSP DRTM service holding localities 1 to 4, one on the defaults with a
-SHA-384 bank, one through a TPM 1.2, one through a CRB TPM that fails
-`tpm.locality` and launches anyway, and one the gate blocks. Those in
-`test_psp_launch.py` take the PSP path: one where every step passes and the
-probe sees the TMR block the PIT's interrupt, one with another SPLT
-version, one whose service is not ready so `auto` falls back, two that
-`launch=psp` blocks, one whose `LAUNCH` times out, one without an IVRS, and
-five whose `LAUNCH` the service refuses. Four of those patch a field of the
-signed image inside the ESP's copy of `drtm.efi`, through
-`machine.patch_sl`, and one raises the platform's patch level. The tests
-recompute PCR 17 and 18 from the measured part of `target/sl.bin` and its
-key token rather than trusting what drtm printed. What each check can
-prove, and what the build still models loosely, is in
-`qemu-drtm-support.md`. Dasharo's own TrenchBoot QEMU tests
-run on upstream and never get further than GRUB's precondition checks.
+could launch and is not asked to. The launch boots in `test_launch.py` read on
+past the checks' summary to the Secure Loader's `launch.halted`: one through a
+TIS TPM that must measure the image in SHA-1 and SHA-256, one with the PSP DRTM
+service holding localities 1 to 4, one on the defaults with a SHA-384 bank, one
+through a TPM 1.2, one through a CRB TPM that fails `tpm.locality` and launches
+anyway, and one the gate blocks. Those in `test_psp_launch.py` take the PSP
+path: one where every step passes and the probe sees the TMR block the PIT's
+interrupt, one with another SPLT version, one whose service is not ready so
+`auto` falls back, two that `launch=psp` blocks, one whose `TMR_SETUP` and one
+whose `LAUNCH` times out, one without an IVRS, and five whose `LAUNCH` the
+service refuses. Four of those patch a field of the signed image inside the
+ESP's copy of `drtm.efi`, through `machine.patch_sl`, and one raises the
+platform's patch level. The tests recompute PCR 17 and 18 from the measured part
+of `target/sl.bin` and its key token rather than trusting what drtm printed.
+What each check can prove, and what the build still models loosely, is in
+`qemu-drtm-support.md`. Dasharo's own TrenchBoot QEMU tests run on upstream and
+never get further than GRUB's precondition checks.
 
 Dasharo's `trenchboot/*.robot` tests are a useful model for DRTM-aware test
 structure later. They run against a fully booted Linux and read PCRs from

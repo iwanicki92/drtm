@@ -83,12 +83,14 @@ classically. `launch=psp` makes that failure a `launch.gate` blocker, and
 1. The service's ready bit is set.
 1. After the zero write the service needs first, `GET_CAPABILITY` reports
     DRTM enabled.
-1. `TMR_SETUP` of index 0 over `[0, 4 GiB)` succeeds.
 
-The last two change the service's state, so they run after the checks'
-summary, while UEFI output still works. Where the preamble then fails
-before `SKINIT`, it issues `TMR_RELEASE` itself, so the next boot option's
-devices can reach memory again.
+The last one changes the service's state, so it runs after the checks'
+summary, while UEFI output still works. The TMR waits for the preamble,
+after `ExitBootServices()`, as in GRUB. Under it devices cannot reach the
+low 4 GiB, and a firmware driver stopping its device in
+`ExitBootServices()` can then hang, as Turin firmware did. A `TMR_SETUP`
+that fails there is reported and the launch goes on, so the Secure Loader
+reports how `LAUNCH` answers.
 
 ### The gate
 
@@ -122,6 +124,8 @@ PCR predictions and the SHA-256 of the IVRS the checks read. Then, after
 1. `ExitBootServices()`. From here nothing reaches the UEFI logger, and
     progress goes out as `launch.preamble` records at `debug` through the
     sink list.
+1. On the PSP path, `TMR_SETUP` of index 0 over `[0, 4 GiB)`, reported as
+    `launch.psp_tmr_setup`.
 1. Locality 0 is relinquished, after the exit, since the TCG2 driver
     measures that event.
 1. `CR0.CD` and `CR0.NW` cleared, `CR0.NE` set, interrupts off, as

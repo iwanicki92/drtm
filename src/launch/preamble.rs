@@ -10,7 +10,6 @@
 //! sink list at debug level.
 
 use alloc::format;
-use alloc::string::String;
 
 use core::arch::asm;
 use core::arch::x86_64::__cpuid;
@@ -183,21 +182,47 @@ fn prepare_cpu() {
     }
 }
 
+/// Sets the PSP path's TMR up and reports the answer. A failure still
+/// launches: `LAUNCH` should then refuse an SL outside every TMR, and the
+/// SL reports the refusal.
+fn setup_tmr(out: &mut Out, service: &Service) {
+    let (tag, status, answers) = match service.setup_tmr() {
+        Ok(answer) => {
+            let tag = if answer.ok() { Tag::Pass } else { Tag::Fail };
+            (tag, common::psp::status_name(answer.status), "answers ")
+        }
+        Err(_) => (Tag::Fail, "no answer", "got "),
+    };
+    out.unchecked(
+        tag,
+        "launch.psp_tmr_setup",
+        &[
+            ("tmr_base", Value::Hex(psp::TMR_BASE)),
+            ("tmr_size", Value::Hex(psp::TMR_SIZE)),
+            ("status", Value::Text(format_args!("{status}"))),
+        ],
+        format_args!(
+            "TMR_SETUP of TMR 0 over [{:#x}, {:#x}) {answers}{status}{}",
+            psp::TMR_BASE,
+            psp::TMR_BASE + psp::TMR_SIZE,
+            if tag == Tag::Pass {
+                ""
+            } else {
+                ", launching anyway so the SL reports how LAUNCH answers"
+            }
+        ),
+    );
+}
+
 /// Prepares and issues `SKINIT`. Returns only where something before
 /// `ExitBootServices()` failed, which it reports.
 pub fn launch(config: &Config, sinks: Sinks, service: Option<Service>, tsc_per_ms: u64) {
-    // The PSP path set its TMR up already, and nothing releases it after
-    // a failure here but this.
     let fail = |detail: &str| {
-        let released = match &service {
-            Some(service) => format!(", {}", service.release_tmr()),
-            None => String::new(),
-        };
         check::after_summary(
             Tag::Fail,
             "launch.preamble",
             &[],
-            format_args!("{detail}{released}, not launching"),
+            format_args!("{detail}, not launching"),
         );
     };
     let Probe::Present { family, interface } = tpm::probe() else {
@@ -319,8 +344,9 @@ pub fn launch(config: &Config, sinks: Sinks, service: Option<Service>, tsc_per_m
                 ("expected_pcr18", Value::Bytes(&psp.pcr18)),
             ],
             format_args!(
-                "the service at {:#x} from the {} is kicked, TMR 0 covers \
-                 [{:#x}, {:#x}), the SLB is {}on a 64 MiB boundary",
+                "the service at {:#x} from the {} is kicked, TMR 0 is to cover \
+                 [{:#x}, {:#x}) once boot services are gone, the SLB is {}on \
+                 a 64 MiB boundary",
                 psp.mailbox,
                 psp.source.name(),
                 psp.tmr_base,
@@ -347,6 +373,10 @@ pub fn launch(config: &Config, sinks: Sinks, service: Option<Service>, tsc_per_m
         out.progress("launch.preamble", &[], format_args!("{detail}"));
     };
     step(&mut out, "boot services exited");
+
+    if let Some(service) = &service {
+        setup_tmr(&mut out, service);
+    }
 
     // The firmware's TCG2 driver measured the exit into PCR 5 and may
     // still hold locality 0. The launch starts with none active.

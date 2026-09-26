@@ -4,8 +4,8 @@
 
 //! What the PSP path needs before `SKINIT`, as the guide's pre-`SKINIT`
 //! module does it (AMD publication 58453, section 2): the service found,
-//! kicked, asked what it offers, and a TMR set up around everything the
-//! launch and the probe touch.
+//! kicked and asked what it offers. The TMR around everything the launch
+//! and the probe touch waits for the preamble, after `ExitBootServices()`.
 
 use alloc::format;
 use alloc::string::String;
@@ -32,7 +32,7 @@ const PSP_BASE_MASK: u32 = 0xFFF0_0000;
 pub const TMR_BASE: u64 = 0;
 pub const TMR_SIZE: u64 = 1 << 32;
 
-/// The service, ready for `SKINIT`.
+/// The service, kicked and offering DRTM.
 pub struct Service {
     pub mailbox: Mailbox,
     pub source: MailboxSource,
@@ -40,16 +40,14 @@ pub struct Service {
 }
 
 impl Service {
-    /// Drops the TMR again where the launch stops before `SKINIT`, so the
-    /// next boot option's devices can reach memory. Says how it went.
-    pub fn release_tmr(&self) -> String {
-        match self
-            .mailbox
-            .command(Command::TmrRelease, 0, [0; 3], psp::TIMEOUT_MS)
-        {
-            Ok(answer) => format!("TMR_RELEASE answers {}", psp::status_name(answer.status)),
-            Err(error) => format!("TMR_RELEASE got no answer ({error:?})"),
-        }
+    /// Sets TMR 0 up over the low 4 GiB. Only after `ExitBootServices()`:
+    /// devices cannot reach that memory from here, and firmware drivers
+    /// stopping theirs would hang.
+    pub fn setup_tmr(&self) -> Result<psp::Answer, psp::Error> {
+        let units = (TMR_SIZE / psp::TMR_UNIT) as u32;
+        let base = [units, TMR_BASE as u32, (TMR_BASE >> 32) as u32];
+        self.mailbox
+            .command(Command::TmrSetup, 0, base, psp::TIMEOUT_MS)
     }
 }
 
@@ -104,8 +102,9 @@ fn smn_mailbox() -> Option<u64> {
     (base != 0 && low != PSP_BASE_MASK).then_some(base + psp::C2PMSG_72_OFFSET)
 }
 
-/// Kicks the service and sets the TMR up, or says why the PSP path is not
-/// open. Changes PSP state from the kick on, so it runs after the checks.
+/// Kicks the service and asks what it offers, or says why the PSP path is
+/// not open. Changes PSP state from the kick on, so it runs after the
+/// checks.
 pub fn prepare(devices: &Devices, tsc_per_ms: u64) -> Result<Service, String> {
     match tpm::probe() {
         Probe::Present {
@@ -143,31 +142,17 @@ pub fn prepare(devices: &Devices, tsc_per_ms: u64) -> Result<Service, String> {
         ));
     }
 
-    let failed = |command: Command, error: psp::Error| {
-        format!("{} got no answer ({error:?})", command.name())
-    };
     mailbox
         .kick()
         .map_err(|error| format!("the kick got no answer ({error:?})"))?;
     let capability = mailbox
         .command(Command::GetCapability, 0, [0; 3], psp::TIMEOUT_MS)
-        .map_err(|error| failed(Command::GetCapability, error))?;
+        .map_err(|error| format!("GET_CAPABILITY got no answer ({error:?})"))?;
     if !capability.ok() || capability.results[0] & psp::CAP_ENABLED == 0 {
         return Err(format!(
             "GET_CAPABILITY answers {} with {:#x}, DRTM not enabled",
             psp::status_name(capability.status),
             capability.results[0]
-        ));
-    }
-    let units = (TMR_SIZE / psp::TMR_UNIT) as u32;
-    let base = [units, TMR_BASE as u32, (TMR_BASE >> 32) as u32];
-    let tmr = mailbox
-        .command(Command::TmrSetup, 0, base, psp::TIMEOUT_MS)
-        .map_err(|error| failed(Command::TmrSetup, error))?;
-    if !tmr.ok() {
-        return Err(format!(
-            "TMR_SETUP over [0, 4 GiB) answers {}",
-            psp::status_name(tmr.status)
         ));
     }
     Ok(Service {

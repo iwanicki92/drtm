@@ -474,6 +474,17 @@ def psp_timeout_boot() -> dict:
     }
 
 
+@boot_configuration
+def psp_tmr_timeout_boot() -> dict:
+    """Serial output of one PSP launch whose `TMR_SETUP` answers after 6 s,
+    past the preamble's 5 s, which still launches. The late command sets
+    the TMR before the SL's `LAUNCH` gets the mailbox, so `LAUNCH` passes."""
+    return {
+        **_psp_machine(**{"command-delay": 6000, "delayed-command": 2}),
+        "launch": LAUNCH_HALTED,
+    }
+
+
 def _psp_rejected(**properties) -> dict:
     """A PSP launch the service's `LAUNCH` refuses, which breaks a platform
     rule on purpose, so the platform runs lenient."""
