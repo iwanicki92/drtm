@@ -8,6 +8,7 @@
 //! discrete TPM, and the register layout here is the TCG PC Client Platform
 //! TPM Profile, not an AMD interface.
 
+use common::tpm::{self, Bank, DRTM_PCR_COUNT, DrtmPcrs, FIRST_DRTM_PCR, ReadError};
 use log::trace;
 use uefi::boot::{self, OpenProtocolAttributes, OpenProtocolParams};
 use uefi::proto::tcg::v2::Tcg;
@@ -66,26 +67,6 @@ pub const fn locality_base(locality: usize) -> usize {
     TPM_LOCALITY_0_BASE + (locality << 12)
 }
 
-/// The DRTM PCRs. A TPM 2.0 starts them at all ones and only a locality 4
-/// start, which is what a dynamic launch does, resets them to zero (TCG PC
-/// Client Platform Firmware Profile, section 2.3.4).
-const FIRST_DRTM_PCR: usize = 17;
-const DRTM_PCR_COUNT: usize = 6;
-
-/// `TPM2_PCR_Read` for the SHA-256 bank of PCR 17 to 22, as one command
-/// with no sessions (TPM 2.0 Library Part 3, section 22.4). The PCR
-/// selection is a bitmap of three bytes, PCR `n` at byte `n / 8` bit
-/// `n % 8`, so 17 to 22 is `0x7E` in the third byte.
-const TPM2_PCR_READ_DRTM: [u8; 20] = [
-    0x80, 0x01, // TPM_ST_NO_SESSIONS
-    0x00, 0x00, 0x00, 0x14, // commandSize
-    0x00, 0x00, 0x01, 0x7E, // TPM_CC_PCR_Read
-    0x00, 0x00, 0x00, 0x01, // pcrSelectionIn.count
-    0x00, 0x0B, // TPM_ALG_SHA256
-    0x03, // sizeofSelect
-    0x00, 0x00, 0x7E, // pcrSelect
-];
-const TPM_RC_SUCCESS: u32 = 0;
 const SHA256_LEN: usize = 32;
 
 /// What the PSP DRTM service leaves in PCR 18 to 20 when a launch fails
@@ -283,33 +264,6 @@ fn report_localities(found: Localities) {
     }
 }
 
-/// Big-endian reads over a TPM response, each `None` once past its end.
-struct Reader<'a> {
-    data: &'a [u8],
-    at: usize,
-}
-
-impl<'a> Reader<'a> {
-    fn bytes(&mut self, len: usize) -> Option<&'a [u8]> {
-        let bytes = self.data.get(self.at..self.at.checked_add(len)?)?;
-        self.at += len;
-        Some(bytes)
-    }
-
-    fn u8(&mut self) -> Option<u8> {
-        self.bytes(1).map(|b| b[0])
-    }
-
-    fn u16(&mut self) -> Option<u16> {
-        self.bytes(2).map(|b| u16::from_be_bytes([b[0], b[1]]))
-    }
-
-    fn u32(&mut self) -> Option<u32> {
-        self.bytes(4)
-            .map(|b| u32::from_be_bytes([b[0], b[1], b[2], b[3]]))
-    }
-}
-
 /// Why the DRTM PCRs could not be read.
 enum PcrReadError {
     /// The firmware publishes no TCG2 protocol, so there is no driver to
@@ -323,69 +277,9 @@ enum PcrReadError {
     Malformed,
 }
 
-/// Parses a `TPM2_PCR_Read` response into the six digests, in PCR order.
-///
-/// The TPM reports which PCRs it returned in `pcrSelectionOut`, then the
-/// digests in that order, so the selection is walked bit by bit and each
-/// digest taken as its PCR comes up. A TPM may return fewer than asked
-/// for, which counts as malformed here since all six were requested.
-fn parse_pcr_read(response: &[u8]) -> Result<[[u8; SHA256_LEN]; DRTM_PCR_COUNT], PcrReadError> {
-    let mut reader = Reader {
-        data: response,
-        at: 0,
-    };
-    let (Some(_tag), Some(_size), Some(rc)) = (reader.u16(), reader.u32(), reader.u32()) else {
-        return Err(PcrReadError::Malformed);
-    };
-    if rc != TPM_RC_SUCCESS {
-        return Err(PcrReadError::Response(rc));
-    }
-    let _update_counter = reader.u32().ok_or(PcrReadError::Malformed)?;
-
-    // pcrSelectionOut: the one SHA-256 selection asked for, echoed back
-    // with the PCRs the TPM is about to return.
-    let selections = reader.u32().ok_or(PcrReadError::Malformed)?;
-    if selections != 1 {
-        return Err(PcrReadError::Malformed);
-    }
-    let _alg = reader.u16().ok_or(PcrReadError::Malformed)?;
-    let select_len = usize::from(reader.u8().ok_or(PcrReadError::Malformed)?);
-    let select = reader.bytes(select_len).ok_or(PcrReadError::Malformed)?;
-
-    // pcrValues: one TPM2B_DIGEST per selected PCR, in ascending order.
-    let digests = reader.u32().ok_or(PcrReadError::Malformed)?;
-    let mut pcrs = [[0u8; SHA256_LEN]; DRTM_PCR_COUNT];
-    let mut filled = 0;
-    let mut taken = 0;
-    for (byte, bits) in select.iter().enumerate() {
-        for bit in 0..8 {
-            if bits & (1 << bit) == 0 {
-                continue;
-            }
-            if taken == digests {
-                return Err(PcrReadError::Malformed);
-            }
-            taken += 1;
-            let len = usize::from(reader.u16().ok_or(PcrReadError::Malformed)?);
-            let digest = reader.bytes(len).ok_or(PcrReadError::Malformed)?;
-            let pcr = byte * 8 + bit;
-            let slot = pcr.wrapping_sub(FIRST_DRTM_PCR);
-            if slot < DRTM_PCR_COUNT && len == SHA256_LEN {
-                pcrs[slot].copy_from_slice(digest);
-                filled += 1;
-            }
-        }
-    }
-    if filled == DRTM_PCR_COUNT {
-        Ok(pcrs)
-    } else {
-        Err(PcrReadError::Malformed)
-    }
-}
-
 /// Reads the SHA-256 bank of PCR 17 to 22 through the firmware's TCG2
 /// protocol. A read changes nothing in the TPM.
-fn read_drtm_pcrs() -> Result<[[u8; SHA256_LEN]; DRTM_PCR_COUNT], PcrReadError> {
+fn read_drtm_pcrs() -> Result<DrtmPcrs, PcrReadError> {
     let handle = boot::get_handle_for_protocol::<Tcg>().map_err(|_| PcrReadError::NoProtocol)?;
     // Safety: the handle came from `get_handle_for_protocol` for this
     // protocol, and `GetProtocol` leaves its driver alone.
@@ -403,15 +297,16 @@ fn read_drtm_pcrs() -> Result<[[u8; SHA256_LEN]; DRTM_PCR_COUNT], PcrReadError> 
     // Header, update counter, the echoed selection and six 32-byte digests
     // come to 232 bytes. Twice that leaves room for a TPM that pads.
     let mut response = [0u8; 512];
-    tcg.submit_command(&TPM2_PCR_READ_DRTM, &mut response)
+    tcg.submit_command(&tpm::pcr_read_command(Bank::Sha256), &mut response)
         .map_err(|e| PcrReadError::Submit(e.status()))?;
-    let size = response
-        .get(2..6)
-        .map(|b| u32::from_be_bytes([b[0], b[1], b[2], b[3]]) as usize)
+    let size = tpm::response_size(&response)
         .unwrap_or(0)
         .min(response.len());
     trace!("[SCAN] TPM2_PCR_Read response: {:02x?}", &response[..size]);
-    parse_pcr_read(&response[..size])
+    tpm::parse_pcr_read(&response[..size], Bank::Sha256).map_err(|error| match error {
+        ReadError::Response(rc) => PcrReadError::Response(rc),
+        ReadError::Malformed => PcrReadError::Malformed,
+    })
 }
 
 /// Reports what the DRTM PCRs hold before any launch this boot could make.
@@ -465,29 +360,29 @@ fn report_drtm_pcrs(family: Family) {
         }
     };
 
-    let at_reset = pcrs.map(|pcr| pcr == [0xFF; SHA256_LEN]);
+    let at_reset = pcrs.map(|pcr| pcr.all(0xFF));
     let last = FIRST_DRTM_PCR + DRTM_PCR_COUNT - 1;
     if at_reset.iter().all(|&reset| reset) {
         check::pass!(
             "tpm.drtm_pcrs",
-            pcr17 = check::bytes(&pcrs[0]),
-            pcr18 = check::bytes(&pcrs[1]),
-            pcr19 = check::bytes(&pcrs[2]),
-            pcr20 = check::bytes(&pcrs[3]),
-            pcr21 = check::bytes(&pcrs[4]),
-            pcr22 = check::bytes(&pcrs[5]);
+            pcr17 = check::bytes(pcrs[0].as_bytes()),
+            pcr18 = check::bytes(pcrs[1].as_bytes()),
+            pcr19 = check::bytes(pcrs[2].as_bytes()),
+            pcr20 = check::bytes(pcrs[3].as_bytes()),
+            pcr21 = check::bytes(pcrs[4].as_bytes()),
+            pcr22 = check::bytes(pcrs[5].as_bytes());
             "PCR {FIRST_DRTM_PCR} to {last} at the reset value, no dynamic \
              launch since the TPM started"
         );
-    } else if pcrs[1] == PSP_CAPPED_PCR {
+    } else if pcrs[1].as_bytes() == PSP_CAPPED_PCR {
         check::info!(
             "tpm.drtm_pcrs",
-            pcr17 = check::bytes(&pcrs[0]),
-            pcr18 = check::bytes(&pcrs[1]),
-            pcr19 = check::bytes(&pcrs[2]),
-            pcr20 = check::bytes(&pcrs[3]),
-            pcr21 = check::bytes(&pcrs[4]),
-            pcr22 = check::bytes(&pcrs[5]);
+            pcr17 = check::bytes(pcrs[0].as_bytes()),
+            pcr18 = check::bytes(pcrs[1].as_bytes()),
+            pcr19 = check::bytes(pcrs[2].as_bytes()),
+            pcr20 = check::bytes(pcrs[3].as_bytes()),
+            pcr21 = check::bytes(pcrs[4].as_bytes()),
+            pcr22 = check::bytes(pcrs[5].as_bytes());
             "PCR 18 holds the value the PSP leaves after a launch that failed \
              after SKINIT, so one ran since the TPM started"
         );
@@ -495,12 +390,12 @@ fn report_drtm_pcrs(family: Family) {
         let changed = at_reset.iter().filter(|&&reset| !reset).count();
         check::info!(
             "tpm.drtm_pcrs",
-            pcr17 = check::bytes(&pcrs[0]),
-            pcr18 = check::bytes(&pcrs[1]),
-            pcr19 = check::bytes(&pcrs[2]),
-            pcr20 = check::bytes(&pcrs[3]),
-            pcr21 = check::bytes(&pcrs[4]),
-            pcr22 = check::bytes(&pcrs[5]);
+            pcr17 = check::bytes(pcrs[0].as_bytes()),
+            pcr18 = check::bytes(pcrs[1].as_bytes()),
+            pcr19 = check::bytes(pcrs[2].as_bytes()),
+            pcr20 = check::bytes(pcrs[3].as_bytes()),
+            pcr21 = check::bytes(pcrs[4].as_bytes()),
+            pcr22 = check::bytes(pcrs[5].as_bytes());
             "{changed} of PCR {FIRST_DRTM_PCR} to {last} not at the reset \
              value, so a dynamic launch already ran since the TPM started, \
              or the TPM does not start them at all ones"

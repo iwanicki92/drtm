@@ -10,4 +10,11 @@
 #[cfg(test)]
 extern crate std;
 
+pub mod clock;
+pub mod params;
 pub mod record;
+pub mod spcr;
+pub mod tpm;
+pub mod transport;
+pub mod uart;
+pub mod verdict;
