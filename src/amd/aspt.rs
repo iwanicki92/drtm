@@ -9,7 +9,7 @@
 //! this platform needs goes through it.
 
 use alloc::vec::Vec;
-use core::sync::atomic::{AtomicU8, Ordering};
+use core::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 
 use common::params::PspDrtm;
 
@@ -26,6 +26,14 @@ pub const SIGNATURE: &[u8; 4] = b"ASPT";
 /// What the report below read of the service, for the launch to pass on:
 /// 0 nothing, 1 not ready, 2 ready.
 static STATE: AtomicU8 = AtomicU8::new(0);
+
+/// Where the report found `C2PMSG_72`, 0 where it found nothing.
+static MAILBOX: AtomicUsize = AtomicUsize::new(0);
+
+/// `C2PMSG_72`'s address, where the ASPT gave one this run.
+pub fn drtm_mailbox() -> Option<usize> {
+    Some(MAILBOX.load(Ordering::Relaxed)).filter(|&address| address != 0)
+}
 
 /// What `amd.psp_drtm` read of the DRTM service this run.
 pub fn drtm_state() -> PspDrtm {
@@ -71,14 +79,21 @@ const READY: u32 = 1 << 31;
 /// the register block sits behind an SMN access otherwise, and an SMN read
 /// is a write to the host bridge's index register.
 pub fn report(devices: &Devices) {
-    if !psp::has_mailbox(devices) {
+    let Some(found) = psp::has_mailbox(devices) else {
         check::skip!(
             "amd.psp_drtm",
             "no Secure Processor offering the mailbox interface, so no DRTM \
              service to ask"
         );
         return;
-    }
+    };
+    let unlisted = match found {
+        psp::Mailbox::Listed => "",
+        psp::Mailbox::Unlisted => {
+            ", behind a Secure Processor no loader's device table lists, \
+             found by its class"
+        }
+    };
 
     let table = match acpi::find_or(SIGNATURE, "no ASPT") {
         Ok(table) => table,
@@ -118,12 +133,14 @@ pub fn report(devices: &Devices) {
     let value = unsafe { (mailbox as *const u32).read_volatile() };
     let ready = value & READY != 0;
     STATE.store(if ready { 2 } else { 1 }, Ordering::Relaxed);
+    MAILBOX.store(mailbox, Ordering::Relaxed);
     check::info!(
         "amd.psp_drtm",
         mailbox = check::hex(mailbox as u64),
         value = check::hex(value),
-        ready = check::flag(ready);
-        "DRTM service {}, C2PMSG_72 at {mailbox:#x} reads {value:#010x}",
+        ready = check::flag(ready),
+        listed = check::flag(found == psp::Mailbox::Listed);
+        "DRTM service {}, C2PMSG_72 at {mailbox:#x} reads {value:#010x}{unlisted}",
         if ready { "ready" } else { "not ready" }
     );
 }

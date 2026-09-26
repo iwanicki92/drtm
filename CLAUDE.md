@@ -31,10 +31,10 @@ A `no_std`/`no_main` UEFI binary, exercised by booting it under QEMU. Which
 checks it currently performs is whatever `src/main.rs` reports and
 `qemu-tests/` asserts on, so read those rather than a summary here.
 
-The classic AMD `SKINIT` launch is being built to an agreed design: the
-preamble in `drtm`, the Secure Loader in `sl`, and what both share in
-`common`. The PSP launch path, Intel TXT and ARM stay out of scope until
-the user asks for them.
+The AMD launch, classic `SKINIT` and through the PSP DRTM service, is
+built to agreed designs: the preamble in `drtm`, the Secure Loader in `sl`,
+what both share in `common`, and the SL's signer in `sign`. Intel TXT and
+ARM stay out of scope until the user asks for them.
 
 Committed files cite upstream sources only: APM section numbers, or paths
 into EDK2/QEMU/Linux. Never the private notes repo the reference material
@@ -68,6 +68,6 @@ note before assuming defaults.
     crate's panic handler. `sl` and `common` have hooks of their own, for
     their own targets, in the same config.
 - Run the host unit tests: `cargo test-host`, an alias for `cargo test`
-    on the host target of the crates that can run there (`common`).
+    on the host target of the crates that can run there (`common`, `sign`).
 - `task build`/`task lint`/`task test`/`task test-host` (Taskfile.yml) wrap
     the commands above.

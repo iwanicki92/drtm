@@ -36,11 +36,14 @@ from machine import (
     inject_corrected_error,
     make_esp,
     options,
+    patch_sl,
     unsupported_binary,
 )
 
 REPO_ROOT = Path(__file__).parent.parent
 EFI_BINARY = REPO_ROOT / "target" / "x86_64-unknown-uefi" / "debug" / "drtm.efi"
+# The signed SL the build embeds in the binary.
+SL_IMAGE = REPO_ROOT / "target" / "sl.bin"
 
 LOGS_DIR = Path(__file__).parent / "logs"
 CACHE_DIR = Path(__file__).parent / "dl-cache"
@@ -125,6 +128,7 @@ def boot_and_capture(
     query_launch: bool = False,
     launch: str | None = None,
     pcr_banks: tuple[str, ...] | None = None,
+    sl_patch: str | None = None,
     **machine,
 ) -> str:
     """Boots `drtm.efi` once and returns everything it printed.
@@ -145,11 +149,19 @@ def boot_and_capture(
     `launch` leaves the launch on and reads on past the summary to the
     line it names: `LAUNCH_HALTED`, the Secure Loader's last, or
     `LAUNCH_GATE` for a launch the gate blocks. `pcr_banks` gives the TPM
-    other banks than the session's.
+    other banks than the session's. `sl_patch` names a field of the signed
+    SL that `machine.patch_sl` changes in the ESP's copy of the binary.
     """
     marker = SUMMARY_RECORD if config and "format=json" in config else CHECKS_COMPLETE
     with tempfile.TemporaryDirectory(prefix="drtm-esp-") as scratch:
-        esp = make_esp(Path(scratch), built_efi_binary(), config, launch is not None)
+        binary = built_efi_binary()
+        if sl_patch is not None:
+            patched = Path(scratch) / "patched.efi"
+            patched.write_bytes(
+                patch_sl(binary.read_bytes(), SL_IMAGE.read_bytes(), sl_patch)
+            )
+            binary = patched
+        esp = make_esp(Path(scratch), binary, config, launch is not None)
         settings = Settings.from_environment()
         if pcr_banks is not None:
             settings = dataclasses.replace(settings, banks=pcr_banks)
@@ -380,17 +392,131 @@ def launch_boot() -> dict:
 
 @boot_configuration
 def launch_psp_boot() -> dict:
-    """Serial output of one launch with the PSP DRTM service ready, which
-    keeps TPM localities 1 to 4 locked, as Turin firmware does until a PSP
-    launch the classic path never issues. The SL can only read at 0.
+    """Serial output of one classic launch, asked for with `launch=skinit`,
+    with the PSP DRTM service ready. The service keeps TPM localities 1 to 4
+    locked, as Turin firmware does until a PSP launch the classic path never
+    issues, so the SL can only read at 0.
     """
+    return {
+        **_psp_machine(),
+        "config": FULL_OUTPUT + "launch=skinit\n",
+        "launch": LAUNCH_HALTED,
+    }
+
+
+def _psp_machine(**properties) -> dict:
+    """The launch machine with a TIS TPM and the PSP DRTM service ready,
+    `properties` set on its `amd-psp` by name."""
     return {
         "amd_drtm": True,
         "tpm": "tis",
         "psp": 0x156E,
         "psp_drtm_service": True,
+        "psp_properties": properties,
+    }
+
+
+@boot_configuration
+def psp_launch_boot() -> dict:
+    """Serial output of one launch on the PSP path, which `auto` takes when
+    the service is ready: `SKINIT`, then the SL's `LAUNCH` and the commands
+    after it, ending with the TMR's release."""
+    return {**_psp_machine(), "launch": LAUNCH_HALTED, "query_launch": True}
+
+
+@boot_configuration
+def psp_splt_boot() -> dict:
+    """Serial output of one PSP launch where the service reports SPLT
+    version 1, which the build's PCR 17 prediction does not assume."""
+    return {**_psp_machine(**{"splt-version": 1}), "launch": LAUNCH_HALTED}
+
+
+@boot_configuration
+def psp_not_ready_boot() -> dict:
+    """Serial output of one boot whose service never sets the ready bit, so
+    `auto` falls back to the classic launch."""
+    return {**_psp_machine(), "psp_ready": False, "launch": LAUNCH_HALTED}
+
+
+@boot_configuration
+def psp_forced_no_service_boot() -> dict:
+    """Serial output of one boot asking for `launch=psp` on the launch
+    machine with no Secure Processor, which the gate refuses."""
+    return {
+        "amd_drtm": True,
+        "tpm": "tis",
+        "config": FULL_OUTPUT + "launch=psp\n",
+        "launch": LAUNCH_GATE,
+    }
+
+
+@boot_configuration
+def psp_forced_tpm_1_2_boot() -> dict:
+    """Serial output of one boot asking for `launch=psp` with a TPM 1.2,
+    which the service cannot extend, so the gate refuses."""
+    return {
+        **_psp_machine(),
+        "tpm": "tis-1.2",
+        "config": FULL_OUTPUT + "launch=psp\n",
+        "launch": LAUNCH_GATE,
+    }
+
+
+@boot_configuration
+def psp_timeout_boot() -> dict:
+    """Serial output of one PSP launch whose `LAUNCH` answers after 6 s, past
+    the SL's 5 s, while every other command answers at once."""
+    return {
+        **_psp_machine(**{"command-delay": 6000, "delayed-command": 4}),
         "launch": LAUNCH_HALTED,
     }
+
+
+def _psp_rejected(**properties) -> dict:
+    """A PSP launch the service's `LAUNCH` refuses, which breaks a platform
+    rule on purpose, so the platform runs lenient."""
+    return {**_psp_machine(**properties), "strict": False, "launch": LAUNCH_HALTED}
+
+
+@boot_configuration
+def psp_bad_signature_boot() -> dict:
+    """Serial output of one PSP launch with a signature byte flipped."""
+    return {**_psp_rejected(), "sl_patch": "signature", "query_launch": True}
+
+
+@boot_configuration
+def psp_bad_modulus_boot() -> dict:
+    """Serial output of one PSP launch with a byte of the key token's
+    modulus flipped."""
+    return {**_psp_rejected(), "sl_patch": "modulus"}
+
+
+@boot_configuration
+def psp_bad_size_boot() -> dict:
+    """Serial output of one PSP launch whose `SizeFWSigned` runs past the
+    SLB."""
+    return {**_psp_rejected(), "sl_patch": "size_fw_signed"}
+
+
+@boot_configuration
+def psp_bad_length_boot() -> dict:
+    """Serial output of one PSP launch whose header gives a measured length
+    16 bytes short, so the signature header is not at the padded length."""
+    return {**_psp_rejected(), "sl_patch": "length"}
+
+
+@boot_configuration
+def psp_min_spl_boot() -> dict:
+    """Serial output of one PSP launch on a platform whose SecPatchLevel is
+    1, above the image's 0."""
+    return _psp_rejected(**{"min-spl": 1})
+
+
+@boot_configuration
+def psp_no_ivrs_boot() -> dict:
+    """Serial output of one PSP launch on a machine without an IVRS, so the
+    service has no table to hand out."""
+    return {**_psp_machine(), "ivrs": False, "launch": LAUNCH_HALTED}
 
 
 @boot_configuration

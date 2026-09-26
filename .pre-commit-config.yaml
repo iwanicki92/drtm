@@ -15,6 +15,8 @@ repos:
       - id: check-yaml
       - id: check-toml
       - id: detect-private-key
+        # The SL's test signing key, public on purpose (keys/test/README.md).
+        exclude: ^keys/test/
       - id: end-of-file-fixer
       - id: trailing-whitespace
       - id: mixed-line-ending
@@ -84,9 +86,9 @@ repos:
         pass_filenames: false
 
       - id: cargo-clippy-common
-        name: cargo clippy (common)
-        description: Lint the shared crate and its tests on the host
-        entry: cargo clippy -p common --target x86_64-unknown-linux-gnu --all-targets -- -D warnings
+        name: cargo clippy (common, sign)
+        description: Lint the shared crate, the signer and their tests on the host
+        entry: cargo clippy -p common -p sign --target x86_64-unknown-linux-gnu --all-targets -- -D warnings
         language: system
         files: \.rs$
         pass_filenames: false

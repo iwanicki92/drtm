@@ -329,14 +329,16 @@ def test_a_secure_processor_the_loaders_do_not_list_is_still_found(
     assert "no loader's device table lists" in detail
 
 
-def test_an_unlisted_secure_processor_still_offers_no_known_mailbox(
+def test_an_unlisted_secure_processor_has_its_mailbox_read(
     unlisted_psp_boot: str,
 ):
-    # The two findings stay apart: the platform has one, and no loader would
-    # drive its mailbox, so the check that reads that mailbox still skips.
+    # drtm's own PSP launch finds the device by its class, so the check
+    # reads its mailbox too and says the loaders' tables miss it.
     ((tag, detail),) = results(unlisted_psp_boot, "amd.psp_drtm")
-    assert tag == "SKIP"
-    assert "no Secure Processor offering the mailbox interface" in detail
+    assert tag == "INFO"
+    assert "no loader's device table lists" in detail
+    (found,) = fields(unlisted_psp_boot, "amd.psp_drtm")
+    assert (found["ready"], found["listed"]) == (True, False)
 
 
 def test_psp_check_never_judges_the_platform(

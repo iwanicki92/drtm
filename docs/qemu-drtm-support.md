@@ -184,9 +184,23 @@ other. Its class stays `1080`, an encryption controller, whatever the ID,
 which is what a board newer than the loaders' table looks like. Its
 `C2PMSG` mailboxes answer on BAR 2 and again through the window an ASPT
 declares, `drtm-ready=` sets the bit the DRTM service sets when it will
-take a command, and `aspt=off` leaves the table out. Writes are
-dropped: issuing a command means implementing the service behind it, which
-is the launch.
+take a command, and `aspt=off` leaves the table out.
+
+**The PSP DRTM service.** `-device amd-psp,drtm-service=on` answers every
+command AMD's integration guide (publication 58453) lists. `TMR_SETUP`
+blocks device DMA to a range in the IOMMU's view, the interrupt window
+included, so the IO-APIC's messages are dropped under a TMR over it until
+`TMR_RELEASE`. `LAUNCH` checks the Secure Loader's signature against the
+key token it carries, extends PCR 17 and 18 as Turin firmware does, and
+unlocks localities 1 and 2, which the service keeps locked from reset.
+`EXTEND_OSSL_DIGEST` extends a range and logs it in the TCG log that
+`GET_TCG_LOGS` hands out, and `TPM_LOCALITY_ACCESS` locks locality 2 again.
+`GET_TMR_DESCRIPTORS`, `ALLOCATE_SHARED_MEMORY` and `GET_IVRS_TABLE_INFO`
+answer from regions of the service's own, the last with a copy of the IVRS
+ACPI holds. Before a successful launch the commands answer as the guide's
+appendix A says. `min-spl=`, `splt-version=`, `command-delay=` and
+`delayed-command=` give the tests a platform patch level, another SPLT
+version and a service slow to answer.
 
 **A DRTM ACPI device.** `-device amd-psp,drtm-device=on` adds an SSDT
 holding `\_SB.DRTM` with `_HID "DRTM0002"`, which is what AMD firmware
@@ -215,8 +229,9 @@ functional test in the QEMU tree checks, since it exercises the emulator
 rather than this binary. What the build still models loosely, in the order
 a stricter guest would notice:
 
-1. **The Secure Processor's DRTM service.** Mailbox writes are dropped, so
-    the loader's PSP-driven variant stops where it would issue a command.
+1. **The Secure Processor's DRTM service is the guide's.** Which commands
+    seize a locality, where the regions lie and what the three commands no
+    loader issues return are our reading of it, and hardware may differ.
 2. **A writable IOMMU enable bit.** The property sets it at realize and
     leaves it read-only. The Secure Kernel Loader programs the IOMMU's MMIO
     registers, which upstream models, but a loader that expects the
@@ -230,9 +245,10 @@ a stricter guest would notice:
 
 Both TrenchBoot's loader and `drtm`'s own launch exercise the emulation:
 `drtm`'s launch boots in `test_launch.py` go through `SKINIT` on the strict
-platform, with the PSP DRTM service's locality locks in one of them. A CRB
-TPM still has no locality 4 path, so its launch boot runs lenient and the
-hash never reaches it.
+platform, and those in `test_psp_launch.py` through the PSP DRTM service as
+well. A CRB TPM still has no locality 4 path, so its launch boot runs
+lenient and the hash never reaches it, as do the PSP boots whose `LAUNCH`
+is refused on purpose.
 
 ## Findings
 
@@ -242,6 +258,8 @@ and some of them no longer hold.
 
 | Date       | QEMU   | Observation                                                                                                               |
 |------------|--------|---------------------------------------------------------------------------------------------------------------------------|
+| 2026-09-26 | ours   | A Secure Loader's GDT loaded with the accessed bits clear changes its signed bytes, so `LAUNCH` fails the signature       |
+| 2026-09-26 | ours   | The PIT's interrupt through the IO-APIC stays out of the IRR under a TMR over `[0, 4 GiB)`, arriving after `TMR_RELEASE`  |
 | 2026-09-20 | ours   | `vm-cr=0x8` reads back as family 1Ah firmware leaves it, and `vm-cr=0x7` reaches the `R_INIT` warning of `amd.vm_cr`      |
 | 2026-09-20 | ours   | A `drtm` boot of the launch machine under strict mode with `-d guest_errors` leaves the log empty and no launch recorded  |
 | 2026-09-20 | ours   | `amd-nb` answers offset `0x384` through the root bridge protocol, reading zero, as function 0 of a family 1Ah node does   |

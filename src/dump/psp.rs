@@ -48,7 +48,7 @@ const REGISTERS: [(u16, &[(usize, &str)]); 4] = [
 /// Both the Secure Processor and the table are needed: the table alone
 /// would have this reading an address with nothing behind it.
 pub fn dump(devices: &Devices) {
-    if !psp::has_mailbox(devices) {
+    if psp::has_mailbox(devices).is_none() {
         record("psp", &[("found", check::flag(false))]);
         return;
     }

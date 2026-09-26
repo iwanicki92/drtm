@@ -80,6 +80,46 @@ def unsupported_binary() -> str | None:
 NO_LAUNCH = "launch=off\n"
 
 
+# Where each field `patch_sl` changes lies in the signed SL: the length
+# field in the header SKINIT reads, then fields of the signature block
+# behind the measured image (the `$AS1` header, the signature, the token).
+_SIG_HEADER = 0x100
+_SIGNATURE = 0x200
+_TOKEN_MODULUS = 576
+
+
+def _sl_field(sl: bytes, field: str) -> tuple[int, bytes]:
+    """The offset of `field` in `sl` and the bytes that replace it."""
+    measured = int.from_bytes(sl[2:4], "little")
+    header = -(-measured // 16) * 16
+    signed = int.from_bytes(sl[header + 0x14 : header + 0x18], "little")
+    match field:
+        case "length":
+            # 16 bytes short, so no `$AS1` header at the padded length.
+            return 2, (measured - 16).to_bytes(2, "little")
+        case "size_fw_signed":
+            # Past the 64 KiB the signature and token must fit in.
+            return header + 0x14, (0x10000).to_bytes(4, "little")
+        case "signature":
+            at = signed + 0x10
+            return at, bytes([sl[at] ^ 1])
+        case "modulus":
+            at = signed + _SIGNATURE + _TOKEN_MODULUS + 0x10
+            return at, bytes([sl[at] ^ 1])
+    raise ValueError(f"no SL field {field!r}")
+
+
+def patch_sl(efi: bytes, sl: bytes, field: str) -> bytes:
+    """`efi` with one field of the SL it embeds changed. The SL must occur
+    exactly once, or a patch could land somewhere else."""
+    count = efi.count(sl)
+    if count != 1:
+        raise ValueError(f"the SL occurs {count} times in the binary, not once")
+    offset, value = _sl_field(sl, field)
+    at = efi.index(sl) + offset
+    return efi[:at] + value + efi[at + len(value) :]
+
+
 def make_esp(
     scratch: Path, efi_binary: Path, config: str | None, launch: bool = False
 ) -> Path:
@@ -115,6 +155,7 @@ def options(
     psp_aspt: bool = True,
     psp_drtm_device: bool = False,
     psp_drtm_service: bool = False,
+    psp_properties: dict[str, str | int] | None = None,
     vga_and_nic: bool = False,
     tpm_burst_limit: int | None = None,
 ) -> list[str]:
@@ -153,6 +194,10 @@ def options(
     publishes the SSDT describing the DRTM ACPI device. `psp_drtm_service`
     runs the DRTM service behind the mailbox, which locks TPM localities 1
     to 4 from reset until a PSP launch, as Turin firmware leaves them.
+    `psp_properties` sets any other `amd-psp` property by name, such as
+    `command-delay` or `min-spl`.
+
+    `ivrs=False` also applies to the `amd_drtm` machine's own IOMMU.
 
     `tpm_burst_limit` has our QEMU's TIS FIFO move that many bytes at most
     before its burst count reads 0 once, as a FIFO TPM refilling does. A
@@ -197,6 +242,8 @@ def options(
             "2",
             "-no-reboot",
         ]
+        if not ivrs:
+            args += ["-global", "amd-iommu.ivrs=off"]
     if iommu:
         args += ["-device", _amd_iommu(iommu == "enabled", ivrs)]
     if extra_root_bridge:
@@ -212,6 +259,8 @@ def options(
         device += f",aspt={'on' if psp_aspt else 'off'}"
         device += f",drtm-device={'on' if psp_drtm_device else 'off'}"
         device += f",drtm-service={'on' if psp_drtm_service else 'off'}"
+        for name, value in (psp_properties or {}).items():
+            device += f",{name}={value}"
         args += ["-device", device]
     if tpm_burst_limit is not None:
         args += [

@@ -18,8 +18,9 @@ use core::time::Duration;
 
 use common::clock;
 use common::out::Out;
-use common::params::{self, Family, Params};
+use common::params::{self, Family, Params, Path, Psp};
 use common::record::{Tag, Value};
+use common::sha256;
 use common::tpm::Bank;
 use common::transport::{Interface, Tpm};
 use log::LevelFilter;
@@ -28,11 +29,12 @@ use uefi::mem::memory_map::MemoryAttribute;
 use uefi::proto::security::MemoryProtection;
 
 use super::gate::Sinks;
-use super::{image, trampoline};
+use super::psp::{self, Service};
+use super::{image, pit, trampoline};
 use crate::amd::aspt;
-use crate::check;
 use crate::config::Config;
 use crate::tpm::{self, Probe};
+use crate::{acpi, check};
 
 const SLB_SIZE: usize = 0x10000;
 const PAGE: usize = 0x1000;
@@ -42,9 +44,14 @@ const BELOW_4GIB: u64 = u32::MAX as u64;
 // build.rs read back from its ELF.
 const _: () = assert!(image::PARAMS_SIZE == params::SIZE);
 
-/// Pages holding a 64 KiB-aligned 64 KiB block wherever the firmware puts
-/// them, as `amd.slb` probes.
-const SLB_PAGES: usize = (2 * SLB_SIZE - PAGE) / PAGE;
+/// Pages holding a 64 KiB block on a 2 MiB boundary wherever the firmware
+/// puts them. The SL maps its SLB with one 2 MiB page from that boundary.
+const SLB_ALIGN: usize = 2 << 20;
+const SLB_PAGES: usize = (SLB_ALIGN + SLB_SIZE - PAGE) / PAGE;
+
+/// The alignment the guide's appendix E.1 asks of the MLE the PSP path
+/// extends, which starts at the SLB.
+const MLE_ALIGN: u64 = 64 << 20;
 
 /// `IA32_APIC_BASE`: the xAPIC's MMIO base in bits 51:12, x2APIC mode in
 /// bit 10. The ICR is at offset 0x300 in xAPIC mode and `MSR 0x830` in
@@ -71,7 +78,7 @@ const CR0_NW: u64 = 1 << 29;
 const CR0_NE: u64 = 1 << 5;
 
 /// Ticks of the time-stamp counter per millisecond, against UEFI's timer.
-fn calibrate_tsc() -> u64 {
+pub fn calibrate_tsc() -> u64 {
     let start = clock::tsc();
     boot::stall(Duration::from_millis(10));
     ((clock::tsc() - start) / 10).max(1)
@@ -82,6 +89,19 @@ fn allocate(memory: MemoryType, pages: usize) -> Option<*mut u8> {
     boot::allocate_pages(AllocateType::MaxAddress(BELOW_4GIB), memory, pages)
         .ok()
         .map(|block| block.as_ptr())
+}
+
+/// A 64 KiB block on a 64 MiB boundary below 4 GiB, the first one free.
+fn allocate_aligned() -> Option<*mut u8> {
+    (1..(1u64 << 32) / MLE_ALIGN).find_map(|slot| {
+        boot::allocate_pages(
+            AllocateType::Address(slot * MLE_ALIGN),
+            MemoryType::LOADER_DATA,
+            SLB_SIZE / PAGE,
+        )
+        .ok()
+        .map(|block| block.as_ptr())
+    })
 }
 
 /// Makes `page` executable and writable where the firmware protects its
@@ -164,7 +184,7 @@ fn prepare_cpu() {
 
 /// Prepares and issues `SKINIT`. Returns only where something before
 /// `ExitBootServices()` failed, which it reports.
-pub fn launch(config: &Config, sinks: Sinks) {
+pub fn launch(config: &Config, sinks: Sinks, service: Option<Service>, tsc_per_ms: u64) {
     let fail = |detail: &str| {
         check::after_summary(
             Tag::Fail,
@@ -177,8 +197,11 @@ pub fn launch(config: &Config, sinks: Sinks) {
         fail("no TPM answers any more");
         return;
     };
+    // The PSP path's extend starts at the SLB, so it goes on a 64 MiB
+    // boundary where one is free.
+    let aligned = service.as_ref().and_then(|_| allocate_aligned());
     let (Some(block), Some(page)) = (
-        allocate(MemoryType::LOADER_DATA, SLB_PAGES),
+        aligned.or_else(|| allocate(MemoryType::LOADER_DATA, SLB_PAGES)),
         allocate(MemoryType::LOADER_CODE, 1),
     ) else {
         fail("no memory below 4 GiB for the SLB and the trampoline");
@@ -191,8 +214,7 @@ pub fn launch(config: &Config, sinks: Sinks) {
         ));
         return;
     }
-    let slb = (block as usize).next_multiple_of(SLB_SIZE) as *mut u8;
-    let tsc_per_ms = calibrate_tsc();
+    let slb = (block as usize).next_multiple_of(SLB_ALIGN) as *mut u8;
 
     let params = Params {
         format: config.format,
@@ -213,6 +235,25 @@ pub fn launch(config: &Config, sinks: Sinks) {
         sinks: sinks.uarts,
         expected_sha1: image::EXPECTED_SHA1,
         expected_sha256: image::EXPECTED_SHA256,
+        path: if service.is_some() {
+            Path::Psp
+        } else {
+            Path::Classic
+        },
+        psp: service.as_ref().map(|service| Psp {
+            mailbox: service.mailbox.address() as u64,
+            source: service.source,
+            capability: service.capability,
+            tmr_base: psp::TMR_BASE,
+            tmr_size: psp::TMR_SIZE,
+            pcr17: image::PSP_PCR17,
+            pcr18: image::PSP_PCR18,
+        }),
+        pit: service.as_ref().and_then(|_| pit::find()),
+        ivrs_sha256: match acpi::find(b"IVRS") {
+            Ok(Some(ivrs)) if service.is_some() => Some(sha256::digest(ivrs)),
+            _ => None,
+        },
     };
     // Safety: `slb` is 64 KiB inside the block just allocated, and `page`
     // a page of loader code below 4 GiB, neither used by anything else.
@@ -243,6 +284,48 @@ pub fn launch(config: &Config, sinks: Sinks) {
             image::MEASURED
         ),
     );
+    if let Some(psp) = &params.psp {
+        let pit = params.pit;
+        check::after_summary(
+            Tag::Info,
+            "launch.psp_service",
+            &[
+                ("mailbox", Value::Hex(psp.mailbox)),
+                ("source", Value::Text(format_args!("{}", psp.source.name()))),
+                (
+                    "capability",
+                    Value::Text(format_args!(
+                        "{:#x} {:#x} {:#x}",
+                        psp.capability[0], psp.capability[1], psp.capability[2]
+                    )),
+                ),
+                ("tmr_base", Value::Hex(psp.tmr_base)),
+                ("tmr_size", Value::Hex(psp.tmr_size)),
+                (
+                    "slb_aligned",
+                    Value::Flag((slb as u64).is_multiple_of(MLE_ALIGN)),
+                ),
+                ("ioapic", Value::Hex(pit.map_or(0, |pit| pit.ioapic.into()))),
+                ("pit_pin", Value::Count(pit.map_or(0, |pit| pit.pin.into()))),
+                ("ivrs", Value::Flag(params.ivrs_sha256.is_some())),
+                ("expected_pcr17", Value::Bytes(&psp.pcr17)),
+                ("expected_pcr18", Value::Bytes(&psp.pcr18)),
+            ],
+            format_args!(
+                "the service at {:#x} from the {} is kicked, TMR 0 covers \
+                 [{:#x}, {:#x}), the SLB is {}on a 64 MiB boundary",
+                psp.mailbox,
+                psp.source.name(),
+                psp.tmr_base,
+                psp.tmr_base + psp.tmr_size,
+                if (slb as u64).is_multiple_of(MLE_ALIGN) {
+                    ""
+                } else {
+                    "not "
+                }
+            ),
+        );
+    }
 
     // Nothing may reach the UEFI logger from here, so nothing is let
     // through to it.

@@ -1,0 +1,17 @@
+# SPDX-FileCopyrightText: 2026 iwanicki92 <iwanicki92@gmail.com>
+#
+# SPDX-License-Identifier: BSD-3-Clause
+
+[package]
+name = "sign"
+version = "0.1.0"
+edition = "2024"
+license = "BSD-3-Clause"
+
+[dependencies]
+rand_core = "0.6"
+rsa = { version = "0.9", features = ["sha2"] }
+sha2 = "0.10"
+
+[lints]
+workspace = true

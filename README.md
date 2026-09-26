@@ -19,10 +19,13 @@ it worked.
 
 A UEFI binary that checks whether an AMD platform meets the preconditions of
 a dynamic launch, dumps the platform state behind them, and then launches
-through `SKINIT` into its own Secure Loader. The Secure Loader reads the DRTM
-PCRs, reports whether the TPM measured it, and halts the machine, which then
-needs a power cycle. `launch=off` stops a run after the checks. See
-[docs/design.md](docs/design.md) for how it works and what it leaves out.
+through `SKINIT` into its own Secure Loader, through AMD's PSP DRTM service
+where the platform offers it. The Secure Loader reads the DRTM PCRs, reports
+whether the TPM and the service measured it, and halts the machine, which
+then needs a power cycle. `launch=` in `drtm.conf` picks the path: `auto`
+(the default), `psp`, `skinit`, or `off` to stop a run after the checks.
+See [docs/design.md](docs/design.md) for how it works and what it leaves
+out.
 
 ## Requirements
 

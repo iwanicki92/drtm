@@ -67,7 +67,7 @@ fn main() -> Status {
     // line, so it knows it has every check's result and not a partial boot.
     check::summary();
 
-    launch::run(&config, &cpu);
+    launch::run(&config, &cpu, &devices);
 
     Status::SUCCESS
 }

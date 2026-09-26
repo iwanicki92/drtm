@@ -95,15 +95,29 @@ pub fn is_secure_processor(device: &Device) -> bool {
     lookup(device.vendor, device.device).is_some() || by_class(device)
 }
 
-/// Whether any Secure Processor here offers the mailbox interface, which is
-/// the one a DRTM service answers on.
-pub fn has_mailbox(devices: &Devices) -> bool {
-    devices.iter().any(|entry| {
-        matches!(
-            lookup(entry.vendor, entry.device),
-            Some(Drtm::V2 | Drtm::V3 | Drtm::Asp)
-        )
-    })
+/// How a Secure Processor that may offer the mailbox was found.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Mailbox {
+    /// Its ID is one the loaders' table lists with the mailbox interface.
+    Listed,
+    /// An AMD encryption controller the table does not list at all, tried
+    /// in case it is a newer one. IDs the table lists without a DRTM service
+    /// stay out.
+    Unlisted,
+}
+
+/// Whether any Secure Processor here may offer the mailbox interface, which
+/// is the one a DRTM service answers on, a listed one first.
+pub fn has_mailbox(devices: &Devices) -> Option<Mailbox> {
+    let mut found = None;
+    for entry in devices.iter() {
+        match lookup(entry.vendor, entry.device) {
+            Some(Drtm::V2 | Drtm::V3 | Drtm::Asp) => return Some(Mailbox::Listed),
+            None if by_class(entry) => found = Some(Mailbox::Unlisted),
+            _ => {}
+        }
+    }
+    found
 }
 
 /// Reports every AMD Secure Processor configuration space offers.
@@ -150,8 +164,8 @@ fn describe(function: Function, device: u16, drtm: Drtm) {
 }
 
 /// A Secure Processor no loader's table lists. The platform has one, so a
-/// PSP launch would fail on the table rather than on the hardware, and
-/// adding the ID to `psp_devs_list` in all three is what that takes.
+/// loader's PSP launch would fail on the table rather than on the hardware,
+/// and adding the ID to `psp_devs_list` in all three is what that takes.
 fn unlisted(function: Function, device: u16) {
     check::info!(
         "amd.psp",
@@ -160,6 +174,7 @@ fn unlisted(function: Function, device: u16) {
         interface = check::text!("unlisted");
         "{VENDOR_AMD:04x}:{device:04x} at {function}, an AMD encryption \
          controller, which is what a Secure Processor is by class, but an ID \
-         no loader's device table lists, so a PSP launch would not find it"
+         no loader's device table lists, so the loaders' PSP launch would not \
+         find it"
     );
 }

@@ -12,11 +12,13 @@
 #![no_main]
 
 mod entry;
+mod probe;
+mod psp;
 
 use core::fmt::{self, Write};
 use core::panic::PanicInfo;
 
-use common::params::{self, Family, Params, PspDrtm};
+use common::params::{self, Family, Params, Path, PspDrtm};
 use common::record::{Tag, Value};
 use common::tpm::{self, Bank, DrtmPcrs, FIRST_DRTM_PCR, ReadError};
 use common::transport::{self, Tpm};
@@ -38,10 +40,26 @@ core::arch::global_asm!(
 
 unsafe extern "C" {
     static __params: [u8; params::SIZE];
+    static __stack_bottom: u8;
+    static __stack_top: u8;
+}
+
+/// How much of the stack, which the entry zeroed, the run wrote to.
+fn stack_used() -> usize {
+    let (bottom, top) = (
+        &raw const __stack_bottom as usize,
+        &raw const __stack_top as usize,
+    );
+    // Safety: the stack lies in the SLB, which the page tables map, and the
+    // bytes below the one in use are only read.
+    let untouched = (bottom..top)
+        .take_while(|&at| unsafe { core::ptr::read_volatile(at as *const u8) } == 0)
+        .count();
+    top - bottom - untouched
 }
 
 /// The locality a Secure Loader extends PCR 17 and 18 from.
-const SL_LOCALITY: u8 = 2;
+pub(crate) const SL_LOCALITY: u8 = 2;
 
 /// Header, update counter, selection and six SHA-512 digests fit in 512.
 const RESPONSE_MAX: usize = 512;
@@ -69,7 +87,7 @@ extern "C" fn sl_main(slb: u32) -> ! {
             let _ = write!(
                 com1,
                 "drtm: [FAIL] launch.params: the parameter page at SLB \
-                 {slb:#x} is not valid ({why:?}), halting\r\n"
+                 {slb:#x} is not valid ({why}), halting\r\n"
             );
             halt();
         }
@@ -77,21 +95,12 @@ extern "C" fn sl_main(slb: u32) -> ! {
     let mut out = Out::new(params.sinks, params.format, params.level);
     out.debug(format_args!("SL running, SLB at {slb:#x}"));
 
-    let (tpm, locality_granted) = take_locality(&mut out, &params);
-    match params.family {
-        Family::V2_0 => {
-            for bank in Bank::ALL {
-                if params.banks & bank.bit() != 0 {
-                    report_bank(&mut out, &params, &tpm, bank);
-                }
-            }
-        }
-        Family::V1_2 => report_bank(&mut out, &params, &tpm, Bank::Sha1),
-    }
-    if locality_granted {
-        tpm.relinquish();
+    match (params.path, &params.psp) {
+        (Path::Psp, Some(psp)) => psp::run(&mut out, &params, psp, slb),
+        _ => classic(&mut out, &params),
     }
 
+    out.debug(format_args!("stack used: {} bytes", stack_used()));
     out.summary();
     out.unchecked(
         Tag::Info,
@@ -102,8 +111,26 @@ extern "C" fn sl_main(slb: u32) -> ! {
     halt();
 }
 
+/// The classic path: the PCRs `SKINIT` left, judged against the build.
+fn classic(out: &mut Out, params: &Params) {
+    let (tpm, locality_granted) = take_locality(out, params);
+    match params.family {
+        Family::V2_0 => {
+            for bank in Bank::ALL {
+                if params.banks & bank.bit() != 0 {
+                    report_bank(out, params, &tpm, bank);
+                }
+            }
+        }
+        Family::V1_2 => report_bank(out, params, &tpm, Bank::Sha1),
+    }
+    if locality_granted {
+        tpm.relinquish();
+    }
+}
+
 /// The TPM at `locality`.
-fn tpm(params: &Params, locality: u8) -> Tpm {
+pub(crate) fn tpm(params: &Params, locality: u8) -> Tpm {
     // Safety: the SL's page tables identity map the low 4 GiB, which holds
     // the TPM windows and any CRB buffer the transport will touch.
     unsafe { Tpm::new(params.interface, locality, params.tsc_per_ms) }
@@ -113,7 +140,10 @@ fn tpm(params: &Params, locality: u8) -> Tpm {
 /// are read at locality 0, which every TPM allows.
 fn take_locality(out: &mut Out, params: &Params) -> (Tpm, bool) {
     let access: [u32; 5] = core::array::from_fn(|locality| tpm(params, locality as u8).access());
-    out.debug(format_args!("TPM access by locality: {access:02x?}"));
+    out.debug(format_args!(
+        "TPM access by locality: {:#x} {:#x} {:#x} {:#x} {:#x}",
+        access[0], access[1], access[2], access[3], access[4]
+    ));
 
     let wanted = tpm(params, SL_LOCALITY);
     if wanted.request().is_ok() {
@@ -152,7 +182,7 @@ fn take_locality(out: &mut Out, params: &Params) -> (Tpm, bool) {
 }
 
 /// Why a bank did not read.
-enum Failure {
+pub(crate) enum Failure {
     Transport(transport::Error),
     Read(ReadError),
 }
@@ -160,14 +190,14 @@ enum Failure {
 impl fmt::Display for Failure {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Transport(error) => write!(f, "the TPM did not answer: {error:?}"),
+            Self::Transport(error) => write!(f, "the TPM did not answer: {}", error.name()),
             Self::Read(ReadError::Response(rc)) => write!(f, "response code {rc:#x}"),
             Self::Read(ReadError::Malformed) => write!(f, "a malformed response"),
         }
     }
 }
 
-fn read(tpm: &Tpm, family: Family, bank: Bank) -> Result<DrtmPcrs, Failure> {
+pub(crate) fn read(tpm: &Tpm, family: Family, bank: Bank) -> Result<DrtmPcrs, Failure> {
     let mut response = [0; RESPONSE_MAX];
     match family {
         Family::V2_0 => {

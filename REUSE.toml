@@ -9,3 +9,9 @@ path = ["Cargo.lock", "qemu-tests/uv.lock", "NOTICE"]
 precedence = "closest"
 SPDX-FileCopyrightText = "2026 iwanicki92 <iwanicki92@gmail.com>"
 SPDX-License-Identifier = "BSD-3-Clause"
+
+[[annotations]]
+path = ["keys/test/sl-test-key.pem", "keys/test/sl-test-key.pub"]
+precedence = "closest"
+SPDX-FileCopyrightText = "2026 iwanicki92 <iwanicki92@gmail.com>"
+SPDX-License-Identifier = "BSD-3-Clause"

@@ -3,10 +3,13 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 //! Builds the Secure Loader, flattens it into the image `SKINIT` measures,
-//! and computes the PCR 17 values that measurement should leave.
+//! signs it for the PSP DRTM service, and computes the PCR values both
+//! launches should leave.
 //!
-//! Writes `sl.bin` and `sl.rs` into `OUT_DIR` for `src/launch` to embed,
-//! and copies `sl.bin` to `target/` for the QEMU tests.
+//! Writes `sl.bin`, the measured image and its signature block, and `sl.rs`
+//! into `OUT_DIR` for `src/launch` to embed, and copies `sl.bin` to
+//! `target/` for the QEMU tests. `DRTM_SL_KEY` names a PKCS#8 PEM key to
+//! sign with in place of the test key in `keys/test/`.
 
 use std::env;
 use std::fs;
@@ -17,6 +20,7 @@ use sha1::Sha1;
 use sha2::{Digest, Sha256};
 
 const SL_TARGET: &str = "x86_64-unknown-none";
+const TEST_KEY: &str = "keys/test/sl-test-key.pem";
 const SLB_SIZE: usize = 0x10000;
 
 /// The longest measured image the SLB layout allows, which leaves the last
@@ -35,18 +39,36 @@ const PT_INTERP: u32 = 3;
 fn main() {
     let root = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
     let out = PathBuf::from(env::var("OUT_DIR").unwrap());
-    for path in ["sl", "common", ".cargo/config.toml", "Cargo.toml"] {
+    for path in ["sl", "common", ".cargo/config.toml", "Cargo.toml", TEST_KEY] {
         println!("cargo:rerun-if-changed={path}");
     }
+    println!("cargo:rerun-if-env-changed=DRTM_SL_KEY");
+    let key_path = env::var_os("DRTM_SL_KEY").map_or_else(|| root.join(TEST_KEY), PathBuf::from);
+    println!("cargo:rerun-if-changed={}", key_path.display());
+    let key = fs::read_to_string(&key_path)
+        .map_err(|e| e.to_string())
+        .and_then(|pem| sign::Key::from_pem(&pem))
+        .unwrap_or_else(|e| panic!("the SL key {} is unusable: {e}", key_path.display()));
 
     let elf = fs::read(build(&root, &out)).expect("the SL ELF reads");
-    let image = flatten(&elf);
+    let mut image = flatten(&elf);
     let header = |at: usize| usize::from(u16::from_le_bytes([image[at], image[at + 1]]));
     let (length, params) = (header(2), header(PARAMS_FIELD));
     let params_size = params_size(&elf, params);
+    let (sl_start, _) = section(&elf, b".header");
+    let (signature_at, signature_size) = section(&elf, b".signature");
+    assert!(
+        signature_at - sl_start == length && signature_size == sign::BLOCK_LEN,
+        "the SL does not reserve the signature block right behind the image"
+    );
 
     let sha1 = extend::<Sha1>(&image);
     let sha256 = extend::<Sha256>(&image);
+    let token = key.token();
+    let psp_pcr17 = sign::launch_pcr17(sha256.as_slice().try_into().unwrap());
+    let psp_pcr18 = sign::launch_pcr18(&token);
+    let block = sign::sign(&image, &key);
+    image.extend_from_slice(&block);
     fs::write(out.join("sl.bin"), &image).unwrap();
     fs::write(
         out.join("sl.rs"),
@@ -59,7 +81,11 @@ fn main() {
              pub const PARAMS_SIZE: usize = {params_size:#x};\n\
              /// PCR 17 after the launch, per bank.\n\
              pub const EXPECTED_SHA1: [u8; 20] = {sha1:?};\n\
-             pub const EXPECTED_SHA256: [u8; 32] = {sha256:?};\n"
+             pub const EXPECTED_SHA256: [u8; 32] = {sha256:?};\n\
+             /// SHA-256 PCR 17, all but the last extend, and PCR 18 after\n\
+             /// the PSP service's `LAUNCH`.\n\
+             pub const PSP_PCR17: [u8; 32] = {psp_pcr17:?};\n\
+             pub const PSP_PCR18: [u8; 32] = {psp_pcr18:?};\n"
         ),
     )
     .unwrap();
@@ -168,8 +194,9 @@ fn flatten(elf: &[u8]) -> Vec<u8> {
         u16_at(&image, PARAMS_FIELD),
     );
     assert!(
-        length % 4 == 0,
-        "measured length {length:#x} is not a multiple of 4"
+        length.is_multiple_of(sign::ALIGN),
+        "measured length {length:#x} is not a multiple of {}",
+        sign::ALIGN
     );
     assert!(
         length <= MAX_MEASURED,
@@ -185,8 +212,8 @@ fn flatten(elf: &[u8]) -> Vec<u8> {
         image.len()
     );
     assert!(
-        params >= length,
-        "the parameter page at {params:#x} overlaps the image"
+        params >= length + sign::BLOCK_LEN,
+        "the parameter page at {params:#x} overlaps the image or its signature"
     );
     image.resize(length, 0);
     image

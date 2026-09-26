@@ -11,7 +11,8 @@
 //! the address the SL is linked at, `sl.ld`'s `SL_VBASE`.
 //!
 //! The page tables identity-map the low 4 GiB in 1 GiB pages, for the TPM
-//! and a UART, and map the SLB's 16 pages at `SL_VBASE`.
+//! and a UART, and map the 2 MiB page the SLB starts at `SL_VBASE`, which
+//! is why the preamble puts the SLB on a 2 MiB boundary.
 
 use core::arch::global_asm;
 
@@ -62,28 +63,28 @@ sl_entry32:
     cld
     rep stosd
 
-    /* EBX: PML4, then the low PDPT, the high PDPT, one PD and one PT. */
+    /* The 2 MiB page below maps the SLB only from such a boundary. */
+    test ebp, 0x1FFFFF
+    jnz 7f
+
+    /*
+     * EBX: the PML4, whose first and last entries share one PDPT, then
+     * that PDPT and a PD. The PDPT's first four entries are the low
+     * 4 GiB in 1 GiB pages, entry 510 the PD, whose first entry is the
+     * 2 MiB page at the SLB.
+     */
     lea ebx, [ebp + __page_tables_offset]
     lea eax, [ebx + 0x1003]
     mov [ebx], eax
-    lea eax, [ebx + 0x2003]
     mov [ebx + 511 * 8], eax
     mov dword ptr [ebx + 0x1000], 0x00000083
     mov dword ptr [ebx + 0x1008], 0x40000083
     mov dword ptr [ebx + 0x1010], 0x80000083
     mov dword ptr [ebx + 0x1018], 0xC0000083
-    lea eax, [ebx + 0x3003]
-    mov [ebx + 0x2000 + 510 * 8], eax
-    lea eax, [ebx + 0x4003]
-    mov [ebx + 0x3000], eax
-    lea eax, [ebp + 3]
-    lea edi, [ebx + 0x4000]
-    mov ecx, 16
-1:
-    mov [edi], eax
-    add eax, 0x1000
-    add edi, 8
-    loop 1b
+    lea eax, [ebx + 0x2003]
+    mov [ebx + 0x1000 + 510 * 8], eax
+    lea eax, [ebp + 0x83]
+    mov [ebx + 0x2000], eax
 
     /* Long mode: PAE, CR3, EFER.LME, then paging. */
     mov eax, cr4
@@ -104,11 +105,15 @@ sl_entry32:
     push eax
     retf
 
+    /*
+     * The accessed bits are preset, or loading a segment would set them
+     * and change the signed image before the service checks it.
+     */
     .balign 8
 sl_gdt:
     .quad 0
-    .quad 0x00AF9A000000FFFF    /* 0x08: 64-bit code */
-    .quad 0x00CF92000000FFFF    /* 0x10: flat data */
+    .quad 0x00AF9B000000FFFF    /* 0x08: 64-bit code */
+    .quad 0x00CF93000000FFFF    /* 0x10: flat data */
 
     .code64
 sl_long:
@@ -122,5 +127,11 @@ sl_high:
     cli
     hlt
     jmp 6b
+
+    .code32
+7:
+    cli
+    hlt
+    jmp 7b
     "#
 );

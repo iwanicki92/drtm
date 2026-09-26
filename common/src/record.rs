@@ -258,7 +258,9 @@ impl<W: Write + ?Sized> Write for Escape<'_, W> {
     fn write_str(&mut self, text: &str) -> fmt::Result {
         let mut rest = text;
         while let Some(at) = rest.find(|c: char| c == '"' || c == '\\' || c < ' ') {
-            let (before, tail) = rest.split_at(at);
+            let Some((before, tail)) = rest.split_at_checked(at) else {
+                break;
+            };
             self.0.write_str(before)?;
             let mut characters = tail.chars();
             match characters.next() {

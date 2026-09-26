@@ -12,22 +12,43 @@
 //! little-endian fields rather than a Rust struct, so both sides agree on
 //! it by construction and the host tests read the same bytes.
 
+use core::fmt;
+
 use crate::record::Format;
 use crate::tpm::Bank;
 use crate::transport::Interface;
 use crate::uart::{Space, Uart};
 
 pub const MAGIC: [u8; 8] = *b"DRTMSLPP";
-pub const VERSION: u32 = 1;
+pub const VERSION: u32 = 2;
 pub const MAX_SINKS: usize = 4;
 
 const SINK_SIZE: usize = 16;
 const SINKS: usize = 40;
 const SHA1: usize = SINKS + MAX_SINKS * SINK_SIZE;
 const SHA256: usize = SHA1 + 20;
+// Version 2, after what version 1 held.
+const PATH: usize = SHA256 + 32;
+const MAILBOX_SOURCE: usize = PATH + 1;
+const PIT_PIN: usize = PATH + 2;
+const PIT_FLAGS: usize = PATH + 3;
+const IVRS_PRESENT: usize = PATH + 4;
+const MAILBOX: usize = PATH + 8;
+const CAPABILITY: usize = MAILBOX + 8;
+const TMR_BASE: usize = CAPABILITY + 16;
+const TMR_SIZE: usize = TMR_BASE + 8;
+const IOAPIC: usize = TMR_SIZE + 8;
+const IVRS_SHA256: usize = IOAPIC + 8;
+const PSP_PCR17: usize = IVRS_SHA256 + 32;
+const PSP_PCR18: usize = PSP_PCR17 + 32;
 
 /// Bytes the page takes.
-pub const SIZE: usize = SHA256 + 32;
+pub const SIZE: usize = PSP_PCR18 + 32;
+
+/// `PIT_FLAGS`: an entry is there, and how the pin is wired.
+const PIT_PRESENT: u8 = 1 << 0;
+const PIT_ACTIVE_LOW: u8 = 1 << 1;
+const PIT_LEVEL: u8 = 1 << 2;
 
 /// The TPM family, which decides the command set.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -47,6 +68,61 @@ pub enum PspDrtm {
     Ready,
 }
 
+/// Which launch the preamble prepared.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Path {
+    /// `SKINIT` alone.
+    Classic,
+    /// `SKINIT` into the PSP DRTM service, which the SL asks to `LAUNCH`.
+    Psp,
+}
+
+/// What said where the PSP's mailbox is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MailboxSource {
+    None,
+    Aspt,
+    Smn,
+}
+
+impl MailboxSource {
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::Aspt => "ASPT",
+            Self::Smn => "SMN",
+        }
+    }
+}
+
+/// What the preamble set up with the PSP DRTM service.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Psp {
+    /// `C2PMSG_72`'s address.
+    pub mailbox: u64,
+    pub source: MailboxSource,
+    /// `GET_CAPABILITY`'s three result words.
+    pub capability: [u32; 3],
+    /// TMR 0, in bytes.
+    pub tmr_base: u64,
+    pub tmr_size: u64,
+    /// PCR 17 in SHA-256 after `LAUNCH`, all but its last extend, which
+    /// takes words only `LAUNCH` returns.
+    pub pcr17: [u8; 32],
+    /// PCR 18 in SHA-256 after `LAUNCH`.
+    pub pcr18: [u8; 32],
+}
+
+/// Where the PIT's interrupt reaches the IO-APIC, from the MADT.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Pit {
+    /// The IO-APIC's register base.
+    pub ioapic: u32,
+    pub pin: u8,
+    pub active_low: bool,
+    pub level: bool,
+}
+
 /// Everything the page carries, decoded.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Params {
@@ -64,6 +140,12 @@ pub struct Params {
     /// PCR 17 after the launch, per bank computed at build time.
     pub expected_sha1: [u8; 20],
     pub expected_sha256: [u8; 32],
+    pub path: Path,
+    /// Set up on the PSP path only.
+    pub psp: Option<Psp>,
+    pub pit: Option<Pit>,
+    /// The SHA-256 of the IVRS the checks read from ACPI.
+    pub ivrs_sha256: Option<[u8; 32]>,
 }
 
 /// Why a page was refused.
@@ -73,6 +155,17 @@ pub enum Invalid {
     Version(u32),
     Size(u32),
     Field(&'static str),
+}
+
+impl fmt::Display for Invalid {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Magic => write!(f, "no magic"),
+            Self::Version(version) => write!(f, "version {version}, not {VERSION}"),
+            Self::Size(size) => write!(f, "size {size}, not {SIZE}"),
+            Self::Field(field) => write!(f, "a bad {field}"),
+        }
+    }
 }
 
 impl Params {
@@ -118,7 +211,38 @@ impl Params {
             page[at + 8..at + 16].copy_from_slice(&uart.base().to_le_bytes());
         }
         page[SHA1..SHA256].copy_from_slice(&self.expected_sha1);
-        page[SHA256..SIZE].copy_from_slice(&self.expected_sha256);
+        page[SHA256..PATH].copy_from_slice(&self.expected_sha256);
+        page[PATH] = match self.path {
+            Path::Classic => 0,
+            Path::Psp => 1,
+        };
+        if let Some(psp) = &self.psp {
+            page[MAILBOX_SOURCE] = match psp.source {
+                MailboxSource::None => 0,
+                MailboxSource::Aspt => 1,
+                MailboxSource::Smn => 2,
+            };
+            page[MAILBOX..MAILBOX + 8].copy_from_slice(&psp.mailbox.to_le_bytes());
+            for (i, word) in psp.capability.iter().enumerate() {
+                let at = CAPABILITY + 4 * i;
+                page[at..at + 4].copy_from_slice(&word.to_le_bytes());
+            }
+            page[TMR_BASE..TMR_BASE + 8].copy_from_slice(&psp.tmr_base.to_le_bytes());
+            page[TMR_SIZE..TMR_SIZE + 8].copy_from_slice(&psp.tmr_size.to_le_bytes());
+            page[PSP_PCR17..PSP_PCR18].copy_from_slice(&psp.pcr17);
+            page[PSP_PCR18..SIZE].copy_from_slice(&psp.pcr18);
+        }
+        if let Some(pit) = &self.pit {
+            page[PIT_PIN] = pit.pin;
+            page[PIT_FLAGS] = PIT_PRESENT
+                | if pit.active_low { PIT_ACTIVE_LOW } else { 0 }
+                | if pit.level { PIT_LEVEL } else { 0 };
+            page[IOAPIC..IOAPIC + 4].copy_from_slice(&pit.ioapic.to_le_bytes());
+        }
+        if let Some(ivrs) = &self.ivrs_sha256 {
+            page[IVRS_PRESENT] = 1;
+            page[IVRS_SHA256..PSP_PCR17].copy_from_slice(ivrs);
+        }
         page
     }
 
@@ -194,8 +318,57 @@ impl Params {
         }
         let mut expected_sha1 = [0; 20];
         expected_sha1.copy_from_slice(&page[SHA1..SHA256]);
-        let mut expected_sha256 = [0; 32];
-        expected_sha256.copy_from_slice(&page[SHA256..SIZE]);
+        let digest = |at: usize| -> [u8; 32] { page[at..at + 32].try_into().unwrap() };
+        let expected_sha256 = digest(SHA256);
+        let path = match page[PATH] {
+            0 => Path::Classic,
+            1 => Path::Psp,
+            _ => return Err(Invalid::Field("path")),
+        };
+        let psp = match path {
+            Path::Classic => None,
+            Path::Psp => {
+                let source = match page[MAILBOX_SOURCE] {
+                    1 => MailboxSource::Aspt,
+                    2 => MailboxSource::Smn,
+                    _ => return Err(Invalid::Field("mailbox source")),
+                };
+                let mailbox = u64_at(MAILBOX);
+                // The SL maps the low 4 GiB, and C2PMSG_95 lies 0x5C past.
+                if mailbox == 0 || mailbox + 0x60 > 1 << 32 {
+                    return Err(Invalid::Field("mailbox"));
+                }
+                Some(Psp {
+                    mailbox,
+                    source,
+                    capability: [
+                        u32_at(CAPABILITY),
+                        u32_at(CAPABILITY + 4),
+                        u32_at(CAPABILITY + 8),
+                    ],
+                    tmr_base: u64_at(TMR_BASE),
+                    tmr_size: u64_at(TMR_SIZE),
+                    pcr17: digest(PSP_PCR17),
+                    pcr18: digest(PSP_PCR18),
+                })
+            }
+        };
+        let flags = page[PIT_FLAGS];
+        let pit = if flags & PIT_PRESENT != 0 {
+            let ioapic = u32_at(IOAPIC);
+            if ioapic == 0 || u64::from(ioapic) + 0x20 > 1 << 32 {
+                return Err(Invalid::Field("ioapic"));
+            }
+            Some(Pit {
+                ioapic,
+                pin: page[PIT_PIN],
+                active_low: flags & PIT_ACTIVE_LOW != 0,
+                level: flags & PIT_LEVEL != 0,
+            })
+        } else {
+            None
+        };
+        let ivrs_sha256 = (page[IVRS_PRESENT] != 0).then(|| digest(IVRS_SHA256));
         Ok(Self {
             format,
             level: page[17],
@@ -207,6 +380,10 @@ impl Params {
             sinks,
             expected_sha1,
             expected_sha256,
+            path,
+            psp,
+            pit,
+            ivrs_sha256,
         })
     }
 }
@@ -234,6 +411,23 @@ mod tests {
             ],
             expected_sha1: [1; 20],
             expected_sha256: [2; 32],
+            path: Path::Psp,
+            psp: Some(Psp {
+                mailbox: 0xFEDA_0A20,
+                source: MailboxSource::Aspt,
+                capability: [5, 1, 0x0100_0000 | 0x10000],
+                tmr_base: 0,
+                tmr_size: 1 << 32,
+                pcr17: [3; 32],
+                pcr18: [4; 32],
+            }),
+            pit: Some(Pit {
+                ioapic: 0xFEC0_0000,
+                pin: 2,
+                active_low: false,
+                level: false,
+            }),
+            ivrs_sha256: Some([5; 32]),
         }
     }
 
@@ -241,6 +435,14 @@ mod tests {
     fn round_trip() {
         let page = sample().encode();
         assert_eq!(Params::decode(&page), Ok(sample()));
+        let classic = Params {
+            path: Path::Classic,
+            psp: None,
+            pit: None,
+            ivrs_sha256: None,
+            ..sample()
+        };
+        assert_eq!(Params::decode(&classic.encode()), Ok(classic));
         assert_eq!(sample().expected(Bank::Sha256), Some([2; 32].as_slice()));
         assert_eq!(sample().expected(Bank::Sha384), None);
     }
@@ -254,7 +456,8 @@ mod tests {
             Params::decode(&page)
         };
         assert_eq!(damaged(0, b'X'), Err(Invalid::Magic));
-        assert_eq!(damaged(8, 2), Err(Invalid::Version(2)));
+        // A version 1 page, which carries no path.
+        assert_eq!(damaged(8, 1), Err(Invalid::Version(1)));
         assert_eq!(damaged(12, 0), Err(Invalid::Size(SIZE as u32 & !0xFF)));
         assert_eq!(damaged(16, 7), Err(Invalid::Field("format")));
         assert_eq!(damaged(17, 6), Err(Invalid::Field("level")));
@@ -266,6 +469,16 @@ mod tests {
             damaged(SINKS + SINK_SIZE + 12, 1),
             Err(Invalid::Field("sink"))
         );
+        assert_eq!(damaged(PATH, 2), Err(Invalid::Field("path")));
+        assert_eq!(
+            damaged(MAILBOX_SOURCE, 0),
+            Err(Invalid::Field("mailbox source"))
+        );
+        // The mailbox moved above 4 GiB.
+        assert_eq!(damaged(MAILBOX + 4, 1), Err(Invalid::Field("mailbox")));
+        let mut page = good;
+        page[IOAPIC..IOAPIC + 4].fill(0);
+        assert_eq!(Params::decode(&page), Err(Invalid::Field("ioapic")));
         assert_eq!(
             Params::decode(&good[..SIZE - 1]),
             Err(Invalid::Size(SIZE as u32 - 1))

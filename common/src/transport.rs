@@ -47,6 +47,19 @@ pub enum Error {
     Buffer,
 }
 
+impl Error {
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Locality => "locality not granted",
+            Self::NotReady => "not ready",
+            Self::Transfer => "transfer stopped",
+            Self::Timeout => "no response",
+            Self::Response => "bad response",
+            Self::Buffer => "CRB buffer above 4 GiB",
+        }
+    }
+}
+
 // FIFO registers and bits (PTP tables 19 and 31, and section 6.5.2.5).
 const TIS_ACCESS: usize = 0x00;
 const TIS_STS: usize = 0x18;
@@ -54,6 +67,7 @@ const TIS_BURST: usize = 0x19;
 const TIS_FIFO: usize = 0x24;
 const ACCESS_VALID: u8 = 1 << 7;
 const ACCESS_ACTIVE: u8 = 1 << 5;
+const ACCESS_SEIZED: u8 = 1 << 4;
 const ACCESS_REQUEST: u8 = 1 << 1;
 const STS_VALID: u8 = 1 << 7;
 const STS_READY: u8 = 1 << 6;
@@ -64,6 +78,7 @@ const STS_EXPECT: u8 = 1 << 3;
 // CRB registers and bits (PTP tables 20, 37 to 44).
 const CRB_LOC_STATE: usize = 0x00;
 const CRB_LOC_CTRL: usize = 0x08;
+const CRB_LOC_STS: usize = 0x0C;
 const CRB_CTRL_REQ: usize = 0x40;
 const CRB_CTRL_STS: usize = 0x44;
 const CRB_CTRL_START: usize = 0x4C;
@@ -77,6 +92,8 @@ const LOC_STATE_ASSIGNED: u32 = 1 << 1;
 const LOC_STATE_ACTIVE_SHIFT: u32 = 2;
 const LOC_CTRL_REQUEST: u32 = 1 << 0;
 const LOC_CTRL_RELINQUISH: u32 = 1 << 1;
+const LOC_CTRL_RESET_SEIZE: u32 = 1 << 3;
+const LOC_STS_SEIZED: u32 = 1 << 1;
 const CTRL_REQ_READY: u32 = 1 << 0;
 const CTRL_REQ_IDLE: u32 = 1 << 1;
 const CTRL_STS_ERROR: u32 = 1 << 0;
@@ -221,6 +238,29 @@ impl Tpm {
                     && state & LOC_STATE_ASSIGNED != 0
                     && (state >> LOC_STATE_ACTIVE_SHIFT) & 0x7 == u32::from(self.locality)
             }
+        }
+    }
+
+    /// Whether a higher locality took the TPM from this one since it last
+    /// cleared the flag.
+    pub fn seized(&self) -> bool {
+        match self.interface {
+            Interface::Tis => {
+                let access = self.reg8(TIS_ACCESS);
+                access != 0xFF && access & ACCESS_VALID != 0 && access & ACCESS_SEIZED != 0
+            }
+            Interface::Crb => {
+                let status = self.reg32(CRB_LOC_STS);
+                status != u32::MAX && status & LOC_STS_SEIZED != 0
+            }
+        }
+    }
+
+    /// Clears the seized flag, which is written 1 to clear.
+    pub fn clear_seized(&self) {
+        match self.interface {
+            Interface::Tis => self.set8(TIS_ACCESS, ACCESS_SEIZED),
+            Interface::Crb => self.set32(CRB_LOC_CTRL, LOC_CTRL_RESET_SEIZE),
         }
     }
 

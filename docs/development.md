@@ -50,7 +50,9 @@ cargo test-host
 ```
 
 `test-host` is an alias in `.cargo/config.toml`, since the configured
-default target is UEFI and a bare `cargo test` would build for it.
+default target is UEFI and a bare `cargo test` would build for it. It also
+runs the tests of `sign`, which `build.rs` uses to sign the Secure Loader
+for the PSP DRTM service, with the key `keys/test/README.md` describes.
 
 ## Build features
 
@@ -91,8 +93,8 @@ read at startup. It is optional: with no file the defaults apply.
 level=info
 # what it looks like: text or json
 format=text
-# whether the run ends in a launch: skinit or off
-launch=skinit
+# whether and how the run ends in a launch: auto, psp, skinit or off
+launch=auto
 ```
 
 `level=info` is the default and prints one line per check. `debug` adds the
@@ -134,11 +136,13 @@ otherwise, since a skipped check and a reported fact decide nothing. The
 counts hold what ran rather than what printed, so lowering the level does not
 move them.
 
-`launch=skinit` is the default: once the checks allow it, the run goes on
-through `SKINIT` into the Secure Loader, which reports and halts. With the
-defaults, a missing `drtm.conf` launches too. `launch=off` stops after the
-summary, as a run did before the launch existed. See `docs/design.md` for
-what the gate blocks on.
+`launch=auto` is the default: once the checks allow it, the run goes on
+through `SKINIT` into the Secure Loader, which reports and halts, through
+the PSP DRTM service where the platform offers it. With the defaults, a
+missing `drtm.conf` launches too. `launch=psp` insists on the PSP path and
+`launch=skinit` never takes it. `launch=off` stops after the summary, as a
+run did before the launch existed. See `docs/design.md` for what the gate
+blocks on and how the path is chosen.
 
 A line that is not `key=value`, an unknown key and an unusable value are
 each reported as a `config` warning naming the line, and the default is kept.

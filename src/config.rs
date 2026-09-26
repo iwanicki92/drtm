@@ -68,10 +68,15 @@ const fn default_format() -> Format {
     }
 }
 
-/// Whether a run ends in a launch once the checks allow one.
+/// Whether a run ends in a launch once the checks allow one, and which.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Launch {
-    /// The classic `SKINIT` launch, the default.
+    /// Through the PSP DRTM service where it is ready, else classic `SKINIT`.
+    /// The default.
+    Auto,
+    /// Through the PSP DRTM service, or not at all.
+    Psp,
+    /// The classic `SKINIT` launch.
     Skinit,
     /// The checks and the dump only.
     Off,
@@ -113,7 +118,10 @@ impl fmt::Display for Problem {
                 write!(f, "line {line}: format {value:?} is not text or json")
             }
             Self::BadLaunch { line, value } => {
-                write!(f, "line {line}: launch {value:?} is not skinit or off")
+                write!(
+                    f,
+                    "line {line}: launch {value:?} is not auto, psp, skinit or off"
+                )
             }
         }
     }
@@ -126,7 +134,7 @@ impl Config {
         let mut config = Self {
             level: DEFAULT_LEVEL,
             format: DEFAULT_FORMAT,
-            launch: Launch::Skinit,
+            launch: Launch::Auto,
             problems: Vec::new(),
         };
         let mut buffer = [0; MAX_SIZE + 1];
@@ -176,6 +184,8 @@ impl Config {
                     }),
                 },
                 "launch" => match value {
+                    "auto" => self.launch = Launch::Auto,
+                    "psp" => self.launch = Launch::Psp,
                     "skinit" => self.launch = Launch::Skinit,
                     "off" => self.launch = Launch::Off,
                     _ => self.problems.push(Problem::BadLaunch {

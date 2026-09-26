@@ -32,6 +32,13 @@ pub struct Sinks {
     source: Source,
 }
 
+impl Sinks {
+    /// What decided them, as prose.
+    pub fn source(&self) -> &impl fmt::Display {
+        &self.source
+    }
+}
+
 enum Source {
     Spcr,
     /// No usable SPCR, and COM1 answered or UEFI has a serial device. The
@@ -91,7 +98,8 @@ fn sinks() -> Sinks {
     }
 }
 
-/// Decides, and reports, whether to launch. Returns the sinks when it will.
+/// Decides whether to launch, and reports it where it will not. Returns the
+/// sinks when it will.
 pub fn check(cpu: &Cpu) -> Option<Sinks> {
     let mut blockers: Vec<String> = Vec::new();
     if cpu.vendor != Vendor::Amd {
@@ -138,12 +146,15 @@ pub fn check(cpu: &Cpu) -> Option<Sinks> {
         );
         return None;
     }
-    let sinks = sinks?;
+    sinks
+}
+
+/// Reports a launch blocked after the gate, by what `launch=psp` needs.
+pub fn block(why: &str) {
     check::after_summary(
-        Tag::Info,
-        "launch.start",
-        &[],
-        format_args!("launching, the SL writes to {}", sinks.source),
+        Tag::Fail,
+        "launch.gate",
+        &[("blockers", Value::Count(1))],
+        format_args!("not launching: {why}"),
     );
-    Some(sinks)
 }
