@@ -57,12 +57,15 @@ repos:
 
   - repo: local
     hooks:
+      # One run over the workspace: batches in parallel would each rewrite
+      # every crate's files at once and can leave one empty.
       - id: cargo-fmt
         name: cargo fmt
         description: Format Rust code
-        entry: cargo fmt --
+        entry: cargo fmt
         language: system
         files: \.rs$
+        pass_filenames: false
 
       - id: cargo-clippy
         name: cargo clippy
