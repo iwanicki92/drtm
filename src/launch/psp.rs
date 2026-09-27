@@ -153,7 +153,7 @@ pub fn prepare(devices: &Devices, tsc_per_ms: u64) -> Result<Service, String> {
         // Device Support option on, and its service reports DRTM off without.
         let hint = match drtm_device::described() {
             Some(false) => {
-                ", and no ACPI table describes a DRTM0002 device, so a DRTM \
+                ", and no ACPI table describes a DRTM000x device, so a DRTM \
                  Virtual Device Support option in firmware setup may be off"
             }
             _ => "",

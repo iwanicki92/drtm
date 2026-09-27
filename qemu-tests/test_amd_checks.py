@@ -463,7 +463,10 @@ def test_the_drtm_acpi_device_is_reported(mmconfig_above_4gib_boot: str):
     (values,) = fields(mmconfig_above_4gib_boot, "amd.drtm_device")
     assert values["found"] is True
     assert values["table"] == "SSDT"
+    assert values["hid"] == "DRTM0002"
     assert "DRTM0002" in detail
+    # Only DRTM0001 hints at a client platform.
+    assert "client" not in detail
 
 
 def test_the_named_table_is_the_one_holding_the_device(mmconfig_above_4gib_boot: str):
