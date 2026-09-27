@@ -11,6 +11,8 @@
 //! and that header, and the key token. The signature and token are
 //! little-endian, as the service reads them.
 
+pub mod foreign;
+
 use rand_core::{CryptoRng, RngCore};
 use rsa::pkcs8::{DecodePrivateKey, DecodePublicKey};
 use rsa::pss::{Signature, SigningKey, VerifyingKey};
