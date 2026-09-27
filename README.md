@@ -58,11 +58,11 @@ optional: with no file the defaults apply. One `key=value` per line, `#`
 starting a comment, and anything wrong in it is reported and the default
 kept.
 
-| Key      | Values                                           | Default  |
-|----------|--------------------------------------------------|----------|
-| `level`  | `off`, `error`, `warn`, `info`, `debug`, `trace` | `info`   |
-| `format` | `text`, `json`                                   | `text`   |
-| `launch` | `skinit`, `off`                                  | `skinit` |
+| Key      | Values                                           | Default |
+|----------|--------------------------------------------------|---------|
+| `level`  | `off`, `error`, `warn`, `info`, `debug`, `trace` | `info`  |
+| `format` | `text`, `json`                                   | `text`  |
+| `launch` | `auto`, `psp`, `skinit`, `off`                   | `auto`  |
 
 The first two can be built in, for a binary copied to an ESP with no
 `drtm.conf` beside it, along with where records go. A `drtm.conf` on the
