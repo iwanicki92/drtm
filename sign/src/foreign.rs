@@ -47,6 +47,13 @@ impl Foreign {
         let at = self.image.len() - TOKEN_LEN;
         self.image[at..].try_into().unwrap()
     }
+
+    /// The `$AS1` header's `SecPatchLevel`, which `LAUNCH` extends into
+    /// PCR 18.
+    pub fn sec_patch_level(&self) -> u32 {
+        let at = self.image.len() - crate::BLOCK_LEN + crate::HDR_SEC_PATCH_LEVEL;
+        u32::from_le_bytes(self.image[at..at + 4].try_into().unwrap())
+    }
 }
 
 /// Finds the SL in `input` and checks it has the layout the SLB needs.
@@ -160,6 +167,14 @@ mod tests {
         let key = Key::from_pem(PEM).unwrap();
         assert_eq!(found.key_id, crate::key_id(&key.public()));
         assert_eq!(found.token(), &key.token());
+        assert_eq!(found.sec_patch_level(), crate::SEC_PATCH_LEVEL);
+    }
+
+    #[test]
+    fn reads_the_sec_patch_level() {
+        let mut image = signed(0x1230);
+        image[0x1230 + crate::HDR_SEC_PATCH_LEVEL] = 7;
+        assert_eq!(extract(&image).unwrap().sec_patch_level(), 7);
     }
 
     #[test]

@@ -41,7 +41,7 @@ const HDR_VERSION: usize = 0x10;
 const HDR_SIZE_FW_SIGNED: usize = 0x14;
 const HDR_SIG_OPTION: usize = 0x30;
 const HDR_SIG_PARAMETERS: usize = 0x38;
-const HDR_SEC_PATCH_LEVEL: usize = 0x4C;
+pub(crate) const HDR_SEC_PATCH_LEVEL: usize = 0x4C;
 const HDR_SIZE_IMAGE: usize = 0x6C;
 
 // KEY_IMAGE_4096 fields (appendix B.2). Version 2 and the exponent's size
@@ -219,10 +219,10 @@ fn extend(pcr: &[u8], measurement: &[u8]) -> [u8; 32] {
 }
 
 /// PCR 18 in SHA-256 after `LAUNCH`: zero extended with the token's digest,
-/// then with the digest of `SecPatchLevel` as a 32-bit word.
-pub fn launch_pcr18(token: &[u8; TOKEN_LEN]) -> [u8; 32] {
+/// then with the digest of the header's `SecPatchLevel` as a 32-bit word.
+pub fn launch_pcr18(token: &[u8; TOKEN_LEN], sec_patch_level: u32) -> [u8; 32] {
     let pcr = extend(&[0; 32], &Sha256::digest(token));
-    extend(&pcr, &Sha256::digest(SEC_PATCH_LEVEL.to_le_bytes()))
+    extend(&pcr, &Sha256::digest(sec_patch_level.to_le_bytes()))
 }
 
 /// PCR 17 in SHA-256 after `LAUNCH` but its last extend: the `SKINIT` value
@@ -302,7 +302,10 @@ mod tests {
         let mut next = Sha256::new();
         next.update(pcr);
         next.update(Sha256::digest([0u8; 4]));
-        assert_eq!(launch_pcr18(&token), <[u8; 32]>::from(next.finalize()));
+        assert_eq!(
+            launch_pcr18(&token, SEC_PATCH_LEVEL),
+            <[u8; 32]>::from(next.finalize())
+        );
         assert_ne!(launch_pcr17(&zero), zero);
     }
 }

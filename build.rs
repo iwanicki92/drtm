@@ -76,7 +76,7 @@ fn foreign(out: &Path) -> String {
     let sha1 = extend::<Sha1>(measured);
     let sha256 = extend::<Sha256>(measured);
     let pcr17 = sign::launch_pcr17(sha256.as_slice().try_into().unwrap());
-    let pcr18 = sign::launch_pcr18(found.token());
+    let pcr18 = sign::launch_pcr18(found.token(), found.sec_patch_level());
     let bytes = out.join("sl-foreign.bin");
     fs::write(&bytes, &found.image).unwrap();
     let key_id: String = found.key_id.iter().map(|b| format!("{b:02x}")).collect();
@@ -146,7 +146,7 @@ fn build_image(root: &Path, out: &Path, key: &sign::Key, feature: &str, name: &s
     );
     if feature == "psp" {
         let pcr17 = sign::launch_pcr17(sha256.as_slice().try_into().unwrap());
-        let pcr18 = sign::launch_pcr18(&key.token());
+        let pcr18 = sign::launch_pcr18(&key.token(), sign::SEC_PATCH_LEVEL);
         rust += &format!(
             "/// SHA-256 PCR 17, all but the last extend, and PCR 18 after the
 /// PSP service's `LAUNCH` of the `PSP` image.
