@@ -4,9 +4,9 @@
 
 //! Whether the platform describes AMD's DRTM ACPI device.
 //!
-//! Reported rather than judged. Nothing in the reference set reads the
-//! device, so its absence is not known to stop a launch, and UEFI exposes no
-//! namespace to ask whether firmware reports it enabled.
+//! Reported rather than judged: firmware other than AMD's need not publish
+//! it, and UEFI exposes no namespace to ask whether it reports it enabled.
+//! Its absence is also a hint when the PSP service reports DRTM off.
 
 use crate::acpi::{self, AML};
 use crate::check;
@@ -33,14 +33,7 @@ pub fn report() {
         return;
     };
 
-    // The DSDT hangs off the FADT rather than the root table, and is where a
-    // firmware that does not give the device a table of its own would put it.
-    let Some(table) = tables
-        .into_iter()
-        .chain(acpi::dsdt())
-        .filter(|table| AML.iter().any(|signature| table[..4] == **signature))
-        .find(|table| describes_device(table))
-    else {
+    let Some(table) = find(tables) else {
         check::info!(
             "amd.drtm_device",
             found = check::flag(false);
@@ -61,6 +54,22 @@ pub fn report() {
         "DRTM0002 device in the {signature} from {oem} {oem_table}, \
          _STA not evaluated"
     );
+}
+
+/// Whether any ACPI table describes the device, or `None` without tables.
+pub fn described() -> Option<bool> {
+    acpi::tables().ok().map(|tables| find(tables).is_some())
+}
+
+/// The first AML table carrying the hardware ID.
+fn find(tables: impl IntoIterator<Item = &'static [u8]>) -> Option<&'static [u8]> {
+    // The DSDT hangs off the FADT rather than the root table, and is where a
+    // firmware that does not give the device a table of its own would put it.
+    tables
+        .into_iter()
+        .chain(acpi::dsdt())
+        .filter(|table| AML.iter().any(|signature| table[..4] == **signature))
+        .find(|table| describes_device(table))
 }
 
 /// Whether the table's AML carries the hardware ID anywhere.

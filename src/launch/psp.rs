@@ -13,8 +13,8 @@ use alloc::string::String;
 use common::params::MailboxSource;
 use common::psp::{self, Command, Mailbox};
 
-use crate::amd::aspt;
 use crate::amd::psp as secure_processor;
+use crate::amd::{aspt, drtm_device};
 use crate::pci::Devices;
 use crate::tpm::{self, Family, Probe};
 
@@ -149,8 +149,17 @@ pub fn prepare(devices: &Devices, tsc_per_ms: u64) -> Result<Service, String> {
         .command(Command::GetCapability, 0, [0; 3], psp::TIMEOUT_MS)
         .map_err(|error| format!("GET_CAPABILITY got no answer ({error:?})"))?;
     if !capability.ok() || capability.results[0] & psp::CAP_ENABLED == 0 {
+        // Turin firmware publishes the device only with its DRTM Virtual
+        // Device Support option on, and its service reports DRTM off without.
+        let hint = match drtm_device::described() {
+            Some(false) => {
+                ", and no ACPI table describes a DRTM0002 device, so a DRTM \
+                 Virtual Device Support option in firmware setup may be off"
+            }
+            _ => "",
+        };
         return Err(format!(
-            "GET_CAPABILITY answers {} with {:#x}, DRTM not enabled",
+            "GET_CAPABILITY answers {} with {:#x}, DRTM not enabled{hint}",
             psp::status_name(capability.status),
             capability.results[0]
         ));
