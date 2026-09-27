@@ -30,6 +30,9 @@ const STATUS_MASK: u32 = 0xFFFF;
 pub const TIMEOUT_MS: u64 = 5000;
 pub const EXTEND_TIMEOUT_MS: u64 = 10_000;
 
+/// The event data `EXTEND_OSSL_DIGEST` logs and extends after the range.
+pub const EXTEND_MARKER: &[u8] = b"AMDSL";
+
 /// `GET_CAPABILITY`'s first result word: bit 0 DRTM enabled.
 pub const CAP_ENABLED: u32 = 1 << 0;
 

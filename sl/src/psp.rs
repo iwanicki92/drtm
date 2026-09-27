@@ -10,7 +10,7 @@
 //! every problem. A mailbox that stops answering ends the mailbox steps,
 //! and what needs only the TPM still runs.
 
-use core::{ptr, slice};
+use core::slice;
 
 use common::out::Out;
 use common::params::{Family, Params, Psp};
@@ -21,11 +21,10 @@ use common::tcg_log::{self, Log};
 use common::tpm::{Bank, DrtmPcrs};
 use common::transport::Tpm;
 
-use crate::probe::Probe;
-use crate::{SL_LOCALITY, read, tpm};
+use common::params::{Handoff, Sender};
 
-/// The event data `EXTEND_OSSL_DIGEST` logs and extends after the range.
-const MARKER: &[u8] = b"AMDSL";
+use crate::handoff::{self, Measured};
+use crate::{SL_LOCALITY, read, tpm};
 
 /// What `ALLOCATE_SHARED_MEMORY` asks for.
 const SHARED_REQUEST: u32 = 0x10000;
@@ -187,8 +186,9 @@ impl Session<'_> {
     }
 }
 
-/// Runs the PSP path, from `LAUNCH` to the probe.
-pub fn run(out: &mut Out, params: &Params, psp: &Psp, slb: u32) {
+/// Runs the PSP path, from `LAUNCH` to handing the TPM back, and returns
+/// what the DLME is to know.
+pub fn run(out: &mut Out, params: &Params, psp: &Psp, slb: u32) -> (Handoff, Measured) {
     // Safety: the parameter page checked the address is below 4 GiB, which
     // the SL identity maps, and the preamble found the service there.
     let mailbox = unsafe { Mailbox::new(psp.mailbox as usize, params.tsc_per_ms) };
@@ -209,16 +209,24 @@ pub fn run(out: &mut Out, params: &Params, psp: &Psp, slb: u32) {
         cap(&mut session);
     }
     judge_pcrs(&mut session, fuses);
-    extend(&mut session, slb);
+    let measured = handoff::measure(params);
+    let dlme_extended = extend(&mut session, &measured);
     tmr_descriptors(&mut session);
     let shared = shared_memory(&mut session, slb);
     tcg_log(&mut session, slb, shared);
     ivrs(&mut session, shared);
     teardown(&mut session);
-    release(&mut session);
     if session.held {
         session.tpm.relinquish();
     }
+    let handoff = Handoff {
+        from: Sender::Psp,
+        launch: fuses,
+        mailbox_dead: session.dead.is_some(),
+        dlme_extended,
+        ..Handoff::FOREIGN
+    };
+    (handoff, measured)
 }
 
 /// Step 1. Returns the anti-rollback and TSME words `LAUNCH` returns.
@@ -446,41 +454,18 @@ fn judge_pcrs(s: &mut Session, fuses: Option<(u32, u32)>) {
     }
 }
 
-/// Step 3: the SLB, from its base to the end of the parameter page, which
-/// nothing else measures. The preamble's copy of that range is extended in
-/// its place where there is one.
-fn extend(s: &mut Session, slb: u32) {
-    // Both are symbols `sl.ld` defines in the SLB, and only their
-    // addresses are taken.
-    let (start, params) = (&raw const __sl_start as usize, &raw const __params as usize);
-    let len = (params - start + common::params::SIZE) as u32;
-    let copy = s.psp.extend_copy != 0;
-    let base = if copy {
-        s.psp.extend_copy
-    } else {
-        u64::from(slb)
-    };
+/// Step 3: the DLME, which is what the guide's MLE is here. Returns
+/// whether the service measured it.
+fn extend(s: &mut Session, measured: &Measured) -> bool {
+    let (base, len) = (s.params.dlme.block, s.params.dlme.len);
     let aligned = base.is_multiple_of(MLE_ALIGN);
-    let (at, len_usize) = (base as usize, len as usize);
     let before = s.pcrs(Bank::Sha256);
-    let mut hash = sha256::Sha256::new();
-    // Safety: the SLB and the copy, which the parameter page checked, lie
-    // below 4 GiB, which the SL identity maps. Both are read a byte at a
-    // time, since the SLB holds the SL's own static variables.
-    let matches = unsafe {
-        hash.update_from(at, len_usize);
-        (0..len_usize).all(|i| {
-            ptr::read_volatile((at + i) as *const u8)
-                == ptr::read_volatile((slb as usize + i) as *const u8)
-        })
-    };
-    let digest = hash.finish();
     let Some(answer) = s.command(
         "launch.psp_extend",
         Command::ExtendOsslDigest,
         [len, base as u32, (base >> 32) as u32],
     ) else {
-        return;
+        return false;
     };
     if !s.launched {
         s.declined(
@@ -489,25 +474,20 @@ fn extend(s: &mut Session, slb: u32) {
             &answer,
             psp::NOT_SUPPORTED,
         );
-        return;
+        return false;
     }
     let status = answer.status;
-    let fields = |pcr17: &'static [u8]| -> [(&str, Value<'_>); 8] {
+    let digest = measured.sha256;
+    let fields = |pcr17: &'static [u8]| -> [(&str, Value<'_>); 7] {
         [
             ("base", Value::Hex(base)),
             ("size", Value::Hex(len.into())),
             ("aligned", Value::Flag(aligned)),
-            ("copy", Value::Flag(copy)),
-            ("matches_slb", Value::Flag(matches)),
-            ("digest", Value::Bytes(&digest)),
+            ("matches_build", Value::Flag(measured.matches)),
+            ("digest", Value::Bytes(&measured.sha256)),
             ("status", Value::Hex(status.into())),
             ("pcr17", Value::Bytes(pcr17)),
         ]
-    };
-    let what = match (copy, matches) {
-        (false, _) => "",
-        (true, true) => " (a copy of the SLB)",
-        (true, false) => " (a copy that differs from the SLB)",
     };
     let unaligned = if aligned {
         ""
@@ -520,11 +500,11 @@ fn extend(s: &mut Session, slb: u32) {
             "launch.psp_extend",
             &fields(&[]),
             format_args!(
-                "EXTEND_OSSL_DIGEST of {len:#x} bytes at {base:#x}{what} answers {}{unaligned}",
+                "EXTEND_OSSL_DIGEST of the DLME, {len:#x} bytes at {base:#x}, answers {}{unaligned}",
                 psp::status_name(answer.status)
             ),
         );
-        return;
+        return false;
     }
     let (Some(before), Some(after)) = (before, s.pcrs(Bank::Sha256)) else {
         s.out.check(
@@ -533,9 +513,9 @@ fn extend(s: &mut Session, slb: u32) {
             &fields(&[]),
             format_args!("EXTEND_OSSL_DIGEST answered, the PCRs did not read"),
         );
-        return;
+        return true;
     };
-    let marker = sha256::digest(MARKER);
+    let marker = sha256::digest(psp::EXTEND_MARKER);
     let expect = |pcr: &[u8]| {
         let pcr: [u8; 32] = pcr.try_into().unwrap_or([0; 32]);
         sha256::extend(&sha256::extend(&pcr, &digest), &marker)
@@ -543,17 +523,18 @@ fn extend(s: &mut Session, slb: u32) {
     let ok = after[0].as_bytes() == expect(before[0].as_bytes())
         && after[1].as_bytes() == expect(before[1].as_bytes());
     let mut fields = fields(&[]);
-    fields[7].1 = Value::Bytes(after[0].as_bytes());
+    fields[6].1 = Value::Bytes(after[0].as_bytes());
     s.out.check(
         if ok { Tag::Pass } else { Tag::Fail },
         "launch.psp_extend",
         &fields,
         format_args!(
-            "EXTEND_OSSL_DIGEST of {len:#x} bytes at {base:#x}{what} {} PCR 17 \
-             and 18 with the range, then AMDSL{unaligned}",
+            "EXTEND_OSSL_DIGEST of the DLME, {len:#x} bytes at {base:#x}, {} PCR 17 \
+             and 18 with it, then AMDSL{unaligned}",
             if ok { "extended" } else { "did not extend" }
         ),
     );
+    true
 }
 
 /// Step 4: the service's own record of the TMR the preamble set up.
@@ -905,75 +886,4 @@ fn teardown(s: &mut Session) {
             psp::status_name(answer.status)
         ),
     );
-}
-
-/// Step 9: `TMR_RELEASE`, and a device write that shows the TMR blocked
-/// before it and not after.
-fn release(s: &mut Session) {
-    if s.dead.is_some() {
-        let _ = s.command("launch.psp_tmr", Command::TmrRelease, [0; 3]);
-        return;
-    }
-    let armed = match s.params.pit {
-        Some(pit) => Probe::arm(&pit, s.params.tsc_per_ms).map_err(Some),
-        None => Err(None),
-    };
-    let before = armed.as_ref().ok().map(Probe::watch);
-    let Some(answer) = s.command("launch.psp_tmr", Command::TmrRelease, [0; 3]) else {
-        if let Ok(probe) = armed {
-            probe.disarm();
-        }
-        return;
-    };
-    s.out.check(
-        if answer.ok() { Tag::Pass } else { Tag::Fail },
-        "launch.psp_tmr",
-        &[("status", Value::Hex(answer.status.into()))],
-        format_args!("TMR_RELEASE answers {}", psp::status_name(answer.status)),
-    );
-
-    let probe = match armed {
-        Ok(probe) => probe,
-        Err(why) => {
-            s.out.check(
-                Tag::Info,
-                "launch.psp_probe",
-                &[],
-                format_args!(
-                    "no probe: {}",
-                    why.unwrap_or("the MADT names no IO-APIC pin for the PIT")
-                ),
-            );
-            return;
-        }
-    };
-    let after = probe.watch();
-    let fields = [
-        ("vector", Value::Hex(probe.vector.into())),
-        ("apic_id", Value::Count(probe.apic_id.into())),
-        ("enabled_apic", Value::Flag(probe.enabled_apic)),
-        ("before", Value::Flag(before == Some(true))),
-        ("after", Value::Flag(after)),
-    ];
-    probe.disarm();
-    match (before == Some(true), after) {
-        (false, true) => s.out.check(
-            Tag::Pass,
-            "launch.psp_probe",
-            &fields,
-            format_args!("the PIT's interrupt was blocked, and arrived after TMR_RELEASE"),
-        ),
-        (true, _) => s.out.check(
-            Tag::Fail,
-            "launch.psp_probe",
-            &fields,
-            format_args!("the PIT's interrupt arrived under the TMR, which it covers"),
-        ),
-        (false, false) => s.out.check(
-            Tag::Info,
-            "launch.psp_probe",
-            &fields,
-            format_args!("the PIT's interrupt never arrived, the probe shows nothing"),
-        ),
-    }
 }

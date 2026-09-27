@@ -4,11 +4,12 @@
 
 //! Builds the Secure Loader once per launch path, flattens each build into
 //! the image `SKINIT` measures, signs it for the PSP DRTM service, and
-//! computes the PCR values its launch should leave.
+//! computes the PCR values its launch should leave. Builds and flattens the
+//! DLME the same, and computes what measuring it adds.
 //!
 //! Writes `sl-classic.bin` and `sl-psp.bin`, each the measured image and its
-//! signature block, and `sl.rs` into `OUT_DIR` for `src/launch` to embed,
-//! and copies both images to `target/` for the QEMU tests. `DRTM_SL_KEY` names a PKCS#8 PEM key to
+//! signature block, `dlme.bin`, and `sl.rs` into `OUT_DIR` for `src/launch`
+//! to embed, and copies all three images to `target/` for the QEMU tests. `DRTM_SL_KEY` names a PKCS#8 PEM key to
 //! sign with in place of the test key in `keys/test/`. `DRTM_FOREIGN_SL`
 //! names a signed SL built elsewhere, which a debug build then embeds as
 //! well, for `launch=foreign`.
@@ -34,6 +35,17 @@ const MAX_MEASURED: usize = 61440;
 const PARAMS_FIELD: usize = 68;
 const HEADER_LEN: usize = 70;
 
+/// The DLME's image, parameter page and scratch memory take at most this
+/// much of its block, and its parameter page this much.
+const DLME_MAX: usize = 0x40000;
+const PARAMS_SIZE_DLME: usize = common::params::SIZE;
+const PAGE: usize = 0x1000;
+
+/// `OS_SL_DESCRIPTOR_V1`'s GUID, which the DLME opens with.
+const DESCRIPTOR_GUID: [u8; 16] = [
+    0xe5, 0xc7, 0x04, 0x68, 0x83, 0x42, 0x1a, 0x1d, 0xd0, 0xcc, 0xd3, 0x98, 0x12, 0x88, 0x1d, 0x48,
+];
+
 const PT_LOAD: u32 = 1;
 const PT_DYNAMIC: u32 = 2;
 const PT_INTERP: u32 = 3;
@@ -41,7 +53,14 @@ const PT_INTERP: u32 = 3;
 fn main() {
     let root = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
     let out = PathBuf::from(env::var("OUT_DIR").unwrap());
-    for path in ["sl", "common", ".cargo/config.toml", "Cargo.toml", TEST_KEY] {
+    for path in [
+        "sl",
+        "dlme",
+        "common",
+        ".cargo/config.toml",
+        "Cargo.toml",
+        TEST_KEY,
+    ] {
         println!("cargo:rerun-if-changed={path}");
     }
     println!("cargo:rerun-if-env-changed=DRTM_SL_KEY");
@@ -53,9 +72,16 @@ fn main() {
         .unwrap_or_else(|e| panic!("the SL key {} is unusable: {e}", key_path.display()));
 
     let mut rust = String::new();
+    let mut classic = None;
     for (feature, name) in [("classic", "CLASSIC"), ("psp", "PSP")] {
-        rust += &build_image(&root, &out, &key, feature, name);
+        let (image, sha1, sha256) = build_image(&root, &out, &key, feature, name);
+        rust += &image;
+        if feature == "classic" {
+            classic = Some((sha1, sha256));
+        }
     }
+    let (sha1, sha256) = classic.unwrap();
+    rust += &build_dlme(&root, &out, &sha1, &sha256);
     rust += &foreign(&out);
     fs::write(out.join("sl.rs"), rust).unwrap();
 }
@@ -108,9 +134,16 @@ fn foreign(out: &Path) -> String {
 
 /// Builds, flattens and signs the SL with `feature`, writes it to
 /// `sl-{feature}.bin` in `OUT_DIR` and `target/`, and returns the Rust that
-/// describes it as the `Image` called `name`.
-fn build_image(root: &Path, out: &Path, key: &sign::Key, feature: &str, name: &str) -> String {
-    let elf = fs::read(build(root, out, feature)).expect("the SL ELF reads");
+/// describes it as the `Image` called `name`, and PCR 17 after its
+/// `SKINIT` in SHA-1 and SHA-256.
+fn build_image(
+    root: &Path,
+    out: &Path,
+    key: &sign::Key,
+    feature: &str,
+    name: &str,
+) -> (String, Vec<u8>, Vec<u8>) {
+    let elf = fs::read(build(root, out, "sl", Some(feature))).expect("the SL ELF reads");
     let mut image = flatten(&elf);
     let header = |at: usize| usize::from(u16::from_le_bytes([image[at], image[at + 1]]));
     let (length, params) = (header(2), header(PARAMS_FIELD));
@@ -128,9 +161,7 @@ fn build_image(root: &Path, out: &Path, key: &sign::Key, feature: &str, name: &s
     image.extend_from_slice(&block);
     let file = format!("sl-{feature}.bin");
     fs::write(out.join(&file), &image).unwrap();
-    let target = env::var_os("CARGO_TARGET_DIR").map_or_else(|| root.join("target"), PathBuf::from);
-    fs::create_dir_all(&target).unwrap();
-    fs::write(target.join(&file), &image).unwrap();
+    fs::write(target_dir(root).join(&file), &image).unwrap();
 
     let bytes = out.join(&file);
     let mut rust = format!(
@@ -155,12 +186,59 @@ pub const PSP_PCR18: [u8; 32] = {pcr18:?};
 "
         );
     }
-    rust
+    (rust, sha1, sha256)
 }
 
-/// Builds `sl` in a target directory of its own under `OUT_DIR`, so it
-/// never waits on the lock the outer build holds, and returns its ELF.
-fn build(root: &Path, out: &Path, feature: &str) -> PathBuf {
+/// Builds and flattens the DLME, writes it to `dlme.bin` in `OUT_DIR`, and
+/// returns the Rust that describes it as `DLME`. `sha1` and `sha256` are
+/// PCR 17 after the classic SL's `SKINIT`, which the SL then extends with
+/// the DLME.
+fn build_dlme(root: &Path, out: &Path, sha1: &[u8], sha256: &[u8]) -> String {
+    let elf = fs::read(build(root, out, "dlme", None)).expect("the DLME ELF reads");
+    let mut image = load(&elf, DLME_MAX);
+    let (start, _) = section(&elf, b".text");
+    let (params, params_size) = section(&elf, b".params");
+    let (tables, tables_size) = section(&elf, b".page_tables");
+    let (len, end) = (params - start, tables + tables_size - start);
+    assert!(
+        len.is_multiple_of(PAGE) && params_size == PARAMS_SIZE_DLME && image.len() <= len,
+        "the DLME's parameter page does not follow its image on a page boundary"
+    );
+    assert!(
+        image.starts_with(&DESCRIPTOR_GUID),
+        "the DLME does not open with OS_SL_DESCRIPTOR_V1"
+    );
+    image.resize(len, 0);
+    fs::write(out.join("dlme.bin"), &image).unwrap();
+    fs::write(target_dir(root).join("dlme.bin"), &image).unwrap();
+
+    let digest256 = Sha256::digest(&image);
+    let pcr17_sha1 = extend_with::<Sha1>(sha1, &Sha1::digest(&image));
+    let pcr17_sha256 = extend_with::<Sha256>(sha256, &digest256);
+    let bytes = out.join("dlme.bin");
+    format!(
+        "pub const DLME: DlmeImage = DlmeImage {{
+    bytes: include_bytes!({bytes:?}),
+    end: {end:#x},
+    sha256: {:?},
+    pcr17_sha1: {pcr17_sha1:?},
+    pcr17_sha256: {pcr17_sha256:?},
+}};
+",
+        digest256.as_slice()
+    )
+}
+
+/// The outer build's `target/`, where the QEMU tests find the images.
+fn target_dir(root: &Path) -> PathBuf {
+    let target = env::var_os("CARGO_TARGET_DIR").map_or_else(|| root.join("target"), PathBuf::from);
+    fs::create_dir_all(&target).unwrap();
+    target
+}
+
+/// Builds `package` in a target directory of its own under `OUT_DIR`, so
+/// it never waits on the lock the outer build holds, and returns its ELF.
+fn build(root: &Path, out: &Path, package: &str, feature: Option<&str>) -> PathBuf {
     let target_dir = out.join("sl-target");
     let mut cargo = Command::new(env::var("CARGO").unwrap());
     cargo
@@ -169,14 +247,18 @@ fn build(root: &Path, out: &Path, feature: &str) -> PathBuf {
             "build",
             "--offline",
             "-p",
-            "sl",
+            package,
             "--profile",
             "sl",
             "--target",
             SL_TARGET,
-            "--features",
-            feature,
         ])
+        .args(
+            feature
+                .map(|feature| ["--features", feature])
+                .into_iter()
+                .flatten(),
+        )
         .arg("--target-dir")
         .arg(&target_dir);
     // What the outer build passes down is for the EFI binary, and the SL
@@ -192,8 +274,8 @@ fn build(root: &Path, out: &Path, feature: &str) -> PathBuf {
         cargo.env_remove(variable);
     }
     let status = cargo.status().expect("cargo runs");
-    assert!(status.success(), "building the Secure Loader failed");
-    target_dir.join(SL_TARGET).join("sl").join("sl")
+    assert!(status.success(), "building {package} failed");
+    target_dir.join(SL_TARGET).join("sl").join(package)
 }
 
 fn u16_at(bytes: &[u8], at: usize) -> usize {
@@ -208,11 +290,10 @@ fn u64_at(bytes: &[u8], at: usize) -> usize {
     u64::from_le_bytes(bytes[at..at + 8].try_into().unwrap()) as usize
 }
 
-/// The measured image: every loaded byte from the link address up, padded
-/// with zeros to the length the header gives. Fails on anything `SKINIT`
-/// or the SLB layout would not take.
-fn flatten(elf: &[u8]) -> Vec<u8> {
-    assert_eq!(&elf[..4], b"\x7fELF", "the SL is not an ELF file");
+/// Every loaded byte from the link address up, from an ELF whose memory
+/// takes at most `limit` bytes and which nothing needs to relocate.
+fn load(elf: &[u8], limit: usize) -> Vec<u8> {
+    assert_eq!(&elf[..4], b"\x7fELF", "not an ELF file");
     let (phoff, phentsize, phnum) = (u64_at(elf, 0x20), u16_at(elf, 0x36), u16_at(elf, 0x38));
     let segments: Vec<(u32, usize, usize, usize, usize)> = (0..phnum)
         .map(|i| {
@@ -230,18 +311,18 @@ fn flatten(elf: &[u8]) -> Vec<u8> {
         segments
             .iter()
             .all(|s| s.0 != PT_DYNAMIC && s.0 != PT_INTERP),
-        "the SL has a dynamic section, and nothing would apply its relocations"
+        "the ELF has a dynamic section, and nothing would apply its relocations"
     );
     let loads: Vec<_> = segments.iter().filter(|s| s.0 == PT_LOAD).collect();
     let base = loads
         .iter()
         .map(|s| s.2)
         .min()
-        .expect("the SL loads nothing");
+        .expect("the ELF loads nothing");
     let end = loads.iter().map(|s| s.2 + s.4).max().unwrap();
     assert!(
-        end - base <= SLB_SIZE,
-        "the SL's memory does not fit in the SLB"
+        end - base <= limit,
+        "the ELF's memory takes over {limit:#x} bytes"
     );
 
     let mut image = Vec::new();
@@ -252,7 +333,14 @@ fn flatten(elf: &[u8]) -> Vec<u8> {
         }
         image[at..at + filesz].copy_from_slice(&elf[offset..offset + filesz]);
     }
+    image
+}
 
+/// The measured image: [`load`], padded with zeros to the length the
+/// header gives. Fails on anything `SKINIT` or the SLB layout would not
+/// take.
+fn flatten(elf: &[u8]) -> Vec<u8> {
+    let mut image = load(elf, SLB_SIZE);
     let (entry, length, params) = (
         u16_at(&image, 0),
         u16_at(&image, 2),
@@ -315,15 +403,20 @@ fn section(elf: &[u8], name: &[u8]) -> (usize, usize) {
             elf[at..].starts_with(name) && elf[at + name.len()] == 0
         })
         .map(|sh| (u64_at(sh, 0x10), u64_at(sh, 0x20)))
-        .unwrap_or_else(|| panic!("the SL has no {} section", String::from_utf8_lossy(name)))
+        .unwrap_or_else(|| panic!("the ELF has no {} section", String::from_utf8_lossy(name)))
 }
 
 /// What PCR 17 holds after `SKINIT` in the bank `D` hashes: its reset
 /// value, zero, extended with the image's digest.
 fn extend<D: Digest>(image: &[u8]) -> Vec<u8> {
     let digest = D::digest(image);
-    let mut pcr = D::new();
-    pcr.update(vec![0; digest.len()]);
-    pcr.update(digest);
-    pcr.finalize().to_vec()
+    extend_with::<D>(&vec![0; digest.len()], &digest)
+}
+
+/// `pcr` extended with `digest` in the bank `D` hashes.
+fn extend_with<D: Digest>(pcr: &[u8], digest: &[u8]) -> Vec<u8> {
+    let mut hash = D::new();
+    hash.update(pcr);
+    hash.update(digest);
+    hash.finalize().to_vec()
 }

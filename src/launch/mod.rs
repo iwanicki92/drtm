@@ -3,13 +3,14 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 //! The AMD launch: the gate, the choice of path, then the preamble, which
-//! ends in `SKINIT` and the Secure Loader built from `sl/`.
+//! ends in `SKINIT` and the Secure Loader built from `sl/`, which hands off
+//! to the DLME built from `dlme/`.
 
+mod dlme;
 mod gate;
 mod pit;
 mod preamble;
 mod psp;
-mod standin;
 mod trampoline;
 
 use common::record::{Tag, Value};
@@ -32,10 +33,21 @@ pub struct Image {
     pub expected_sha256: [u8; 32],
 }
 
+/// The DLME and what `build.rs` computed from it.
+pub struct DlmeImage {
+    /// The measured image, in whole pages. Its parameter page follows.
+    pub bytes: &'static [u8],
+    /// Where its scratch memory ends, from the block's start.
+    pub end: usize,
+    pub sha256: [u8; 32],
+    /// PCR 17 after the classic SL's `SKINIT` and its extend of the DLME.
+    pub pcr17_sha1: [u8; 20],
+    pub pcr17_sha256: [u8; 32],
+}
+
 /// A signed SL built elsewhere, which `launch=foreign` places in the SLB
 /// without drtm's parameter page. One whose header carries AMD's GUID gets
-/// its `AmdSlInputParameters` and a stand-in OS SL instead. It reports
-/// only through POST codes.
+/// its `AmdSlInputParameters`, naming drtm's DLME as its OS SL.
 pub struct Foreign {
     pub image: Image,
     /// The key its token names.
@@ -52,9 +64,10 @@ pub struct Foreign {
 pub const HAS_FOREIGN: bool = image::FOREIGN.is_some();
 
 /// The SL built for each path, `CLASSIC` and `PSP`, the PCRs the PSP
-/// service's `LAUNCH` should leave, and `FOREIGN` where the build has one.
+/// service's `LAUNCH` should leave, the `DLME`, and `FOREIGN` where the
+/// build has one.
 mod image {
-    use super::{Foreign, Image};
+    use super::{DlmeImage, Foreign, Image};
 
     include!(concat!(env!("OUT_DIR"), "/sl.rs"));
 }
@@ -97,7 +110,7 @@ pub fn run(config: &Config, cpu: &Cpu, devices: &Devices) {
         (Some(_), Launch::Foreign) => (
             "foreign",
             "the foreign SL through the PSP DRTM service, which reports only \
-             through port 0x80 and does not return",
+             through port 0x80 until it jumps to the DLME",
         ),
         (Some(_), _) => ("psp", "through the PSP DRTM service"),
         (None, Launch::Skinit) => ("classic", "classic SKINIT, as launch=skinit asks"),
@@ -111,13 +124,16 @@ pub fn run(config: &Config, cpu: &Cpu, devices: &Devices) {
                 ("path", Value::Text(format_args!("{path}"))),
                 ("key_id", Value::Bytes(&foreign.key_id)),
             ],
-            format_args!("launching {why}"),
+            format_args!("launching {why}, the DLME writes to {}", sinks.source()),
         ),
         None => check::after_summary(
             Tag::Info,
             "launch.start",
             &[("path", Value::Text(format_args!("{path}")))],
-            format_args!("launching {why}, the SL writes to {}", sinks.source()),
+            format_args!(
+                "launching {why}, the SL and the DLME write to {}",
+                sinks.source()
+            ),
         ),
     }
     preamble::launch(config, sinks, service, foreign, tsc_per_ms);

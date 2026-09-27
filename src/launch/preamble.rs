@@ -10,7 +10,6 @@
 //! sink list at debug level.
 
 use alloc::format;
-use alloc::string::String;
 
 use core::arch::asm;
 use core::arch::x86_64::__cpuid;
@@ -19,7 +18,7 @@ use core::time::Duration;
 
 use common::clock;
 use common::out::Out;
-use common::params::{self, Family, Params, Path, Psp};
+use common::params::{self, Dlme, Family, Params, Path, Psp};
 use common::record::{Tag, Value};
 use common::sha256;
 use common::tpm::Bank;
@@ -29,9 +28,9 @@ use uefi::boot::{self, AllocateType, MemoryType, OpenProtocolAttributes, OpenPro
 use uefi::mem::memory_map::MemoryAttribute;
 use uefi::proto::security::MemoryProtection;
 
+use super::dlme::{self, Regions};
 use super::gate::Sinks;
 use super::psp::{self, Service};
-use super::standin::{self, Regions};
 use super::{Foreign, image, pit, trampoline};
 use crate::amd::aspt;
 use crate::config::Config;
@@ -53,7 +52,7 @@ const SLB_ALIGN: usize = 2 << 20;
 const SLB_PAGES: usize = (SLB_ALIGN + SLB_SIZE - PAGE) / PAGE;
 
 /// The alignment the guide's appendix E.1 asks of the MLE the PSP path
-/// extends. The SLB and the copy of it the SL extends both keep it.
+/// extends. The DLME's block keeps it, and the SLB where it can.
 const MLE_ALIGN: u64 = 64 << 20;
 
 /// `IA32_APIC_BASE`: the xAPIC's MMIO base in bits 51:12, x2APIC mode in
@@ -107,19 +106,16 @@ fn allocate_aligned(size: usize) -> Option<*mut u8> {
     })
 }
 
-/// The stand-in OS SL's block, the AP startup area below 1 MiB and the
-/// foreign SL's heap.
-fn allocate_standin() -> Option<Regions> {
-    let block = allocate_aligned(standin::BLOCK_SIZE)?;
+/// A foreign SL's AP startup area below 1 MiB and its heap.
+fn allocate_foreign() -> Option<Regions> {
     let ap_startup = boot::allocate_pages(
         AllocateType::MaxAddress(0xF_FFFF),
         MemoryType::LOADER_DATA,
-        standin::AP_STARTUP_SIZE / PAGE,
+        dlme::AP_STARTUP_SIZE / PAGE,
     )
     .ok()?;
-    let reserved = allocate(MemoryType::LOADER_DATA, standin::RESERVED_SIZE / PAGE)?;
+    let reserved = allocate(MemoryType::LOADER_DATA, dlme::RESERVED_SIZE / PAGE)?;
     Some(Regions {
-        block: block as u64,
         ap_startup: ap_startup.as_ptr() as u32,
         reserved: reserved as u64,
     })
@@ -257,19 +253,15 @@ pub fn launch(
         fail("no TPM answers any more");
         return;
     };
-    // The PSP path puts the SLB and the copy the SL extends on 64 MiB
-    // boundaries where they are free. Without a copy the SLB is extended.
-    // A foreign SL gets no copy, since nothing tells it where one is.
+    // The PSP path puts the SLB on a 64 MiB boundary where one is free.
+    // Every path puts the DLME's block on one.
     let aligned = service.as_ref().and_then(|_| allocate_aligned(SLB_SIZE));
-    let copy = service
-        .as_ref()
-        .filter(|_| foreign.is_none())
-        .and_then(|_| allocate_aligned(SLB_SIZE));
-    let (Some(block), Some(page)) = (
+    let (Some(block), Some(dlme_block), Some(page)) = (
         aligned.or_else(|| allocate(MemoryType::LOADER_DATA, SLB_PAGES)),
+        allocate_aligned(dlme::BLOCK_SIZE),
         allocate(MemoryType::LOADER_CODE, 1),
     ) else {
-        fail("no memory below 4 GiB for the SLB and the trampoline");
+        fail("no memory below 4 GiB for the SLB, the DLME and the trampoline");
         return;
     };
     if let Err(error) = make_executable(page) {
@@ -280,12 +272,12 @@ pub fn launch(
         return;
     }
     let slb = (block as usize).next_multiple_of(SLB_ALIGN) as *mut u8;
-    let standin = match foreign.and_then(|foreign| foreign.parameters) {
+    let foreign_regions = match foreign.and_then(|foreign| foreign.parameters) {
         None => None,
-        Some(at) => match allocate_standin() {
+        Some(at) => match allocate_foreign() {
             Some(regions) => Some((at, regions)),
             None => {
-                fail("no memory for the foreign SL's OS SL block, AP startup area or heap");
+                fail("no memory for the foreign SL's AP startup area or heap");
                 return;
             }
         },
@@ -331,37 +323,39 @@ pub fn launch(
             tmr_size: psp::TMR_SIZE,
             pcr17,
             pcr18,
-            extend_copy: copy.map_or(0, |copy| copy as u64),
         }),
         pit: service.as_ref().and_then(|_| pit::find()),
         ivrs_sha256: match acpi::find(b"IVRS") {
             Ok(Some(ivrs)) if service.is_some() => Some(sha256::digest(ivrs)),
             _ => None,
         },
+        dlme: Dlme {
+            block: dlme_block as u64,
+            len: dlme::len(),
+            sha256: image::DLME.sha256,
+            pcr17_sha1: image::DLME.pcr17_sha1,
+            pcr17_sha256: image::DLME.pcr17_sha256,
+        },
     };
-    // Safety: `slb` is 64 KiB inside the block just allocated, `copy` a
-    // 64 KiB block of its own, the stand-in's block its own allocation of
-    // `standin::BLOCK_SIZE`, and `page` a page of loader code below 4 GiB,
-    // none used by anything else.
+    let page_bytes = params.encode();
+    // Safety: `slb` is 64 KiB inside the block just allocated, the DLME's
+    // block its own allocation of `dlme::BLOCK_SIZE`, and `page` a page of
+    // loader code below 4 GiB, none used by anything else.
     unsafe {
         ptr::write_bytes(slb, 0, SLB_SIZE);
         ptr::copy_nonoverlapping(image.bytes.as_ptr(), slb, image.bytes.len());
+        dlme::install(dlme_block, &page_bytes);
         // A foreign SL keeps its parameters in its own image, and the zeroed
         // tail is its scratch space.
-        if let Some((at, regions)) = &standin {
-            standin::install(regions.block as *mut u8);
-            let page_bytes = standin::parameters(regions);
-            ptr::copy_nonoverlapping(page_bytes.as_ptr(), slb.add(*at), standin::PARAMETERS_LEN);
+        if let Some((at, regions)) = &foreign_regions {
+            let parameters = dlme::parameters(dlme_block as u64, regions);
+            ptr::copy_nonoverlapping(parameters.as_ptr(), slb.add(*at), dlme::PARAMETERS_LEN);
         } else if foreign.is_none() {
-            let page_bytes = params.encode();
             ptr::copy_nonoverlapping(
                 page_bytes.as_ptr(),
                 slb.add(image.params_offset),
                 params::SIZE,
             );
-        }
-        if let Some(copy) = copy {
-            ptr::copy_nonoverlapping(slb, copy, image.params_offset + params::SIZE);
         }
         trampoline::install(page);
     }
@@ -380,33 +374,42 @@ pub fn launch(
             slb as u64, image.measured
         ),
     );
-    if let Some((at, regions)) = &standin {
+    check::after_summary(
+        Tag::Info,
+        "launch.dlme_placed",
+        &[
+            ("block", Value::Hex(params.dlme.block)),
+            ("measured", Value::Count(params.dlme.len.into())),
+            ("sha256", Value::Bytes(&params.dlme.sha256)),
+            ("reached", Value::Hex(dlme::REACHED.into())),
+        ],
+        format_args!(
+            "the DLME at {:#x}, {} bytes measured, writes {:#x} to port 0x80 \
+             once an SL jumps to it",
+            params.dlme.block,
+            params.dlme.len,
+            dlme::REACHED
+        ),
+    );
+    if let Some((at, regions)) = &foreign_regions {
         check::after_summary(
             Tag::Info,
             "launch.foreign_parameters",
             &[
                 ("at", Value::Hex(slb as u64 + *at as u64)),
-                ("os_sl_block", Value::Hex(regions.block)),
+                ("os_sl_block", Value::Hex(params.dlme.block)),
                 ("ap_startup", Value::Hex(regions.ap_startup.into())),
                 ("reserved", Value::Hex(regions.reserved)),
-                ("reached", Value::Hex(standin::REACHED.into())),
             ],
             format_args!(
-                "AmdSlInputParameters at {:#x} name a stand-in OS SL at {:#x}, \
-                 which writes {:#x} to port 0x80 if the SL jumps to it",
+                "AmdSlInputParameters at {:#x} name the DLME at {:#x} as the OS SL",
                 slb as u64 + *at as u64,
-                regions.block,
-                standin::REACHED
+                params.dlme.block,
             ),
         );
     }
     if let Some(psp) = &params.psp {
         let pit = params.pit;
-        let extended = match (foreign, psp.extend_copy) {
-            (Some(_), _) => String::from("whatever the foreign SL asks for"),
-            (None, 0) => String::from("the SLB"),
-            (None, at) => format!("a copy of it at {at:#x}"),
-        };
         check::after_summary(
             Tag::Info,
             "launch.psp_service",
@@ -429,14 +432,13 @@ pub fn launch(
                 ("ioapic", Value::Hex(pit.map_or(0, |pit| pit.ioapic.into()))),
                 ("pit_pin", Value::Count(pit.map_or(0, |pit| pit.pin.into()))),
                 ("ivrs", Value::Flag(params.ivrs_sha256.is_some())),
-                ("extend_copy", Value::Hex(psp.extend_copy)),
                 ("expected_pcr17", Value::Bytes(&psp.pcr17)),
                 ("expected_pcr18", Value::Bytes(&psp.pcr18)),
             ],
             format_args!(
                 "the service at {:#x} from the {} is kicked, TMR 0 is to cover \
                  [{:#x}, {:#x}) once boot services are gone, the SLB is {}on \
-                 a 64 MiB boundary, the extend measures {}",
+                 a 64 MiB boundary",
                 psp.mailbox,
                 psp.source.name(),
                 psp.tmr_base,
@@ -446,7 +448,6 @@ pub fn launch(
                 } else {
                     "not "
                 },
-                extended
             ),
         );
     }

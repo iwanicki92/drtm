@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 
 """The PSP DRTM launch: `SKINIT`, then the service's `LAUNCH` and every
-command after it, as the Secure Loader reports them.
+command after it, as the Secure Loader and the DLME report them.
 
 The PCRs are predicted here from `target/sl-psp.bin`, apart from what the
 build predicted, so a wrong prediction in either shows.
@@ -11,7 +11,7 @@ build predicted, so a wrong prediction in either shows.
 
 import hashlib
 
-from conftest import SL_PSP, launch_state, qemu_log, qemu_traces, records
+from conftest import DLME, SL_PSP, launch_state, qemu_log, qemu_traces, records
 from test_launch import STACK_LIMIT, after_launch, checks, measured_image, stack_used
 
 # The signature block behind the measured image: the `$AS1` header, then
@@ -20,7 +20,8 @@ SIG_HEADER_LEN = 0x100
 SIGNATURE_LEN = 0x200
 TOKEN_LEN = 0x440
 
-# The mailbox steps after `LAUNCH`, in the guide's order.
+# The mailbox steps after `LAUNCH`, in the guide's order. `TMR_RELEASE` is
+# the DLME's.
 AFTER_LAUNCH = [
     "launch.psp_extend",
     "launch.psp_tmrs",
@@ -62,6 +63,13 @@ def expected_pcr18() -> str:
     return extend(pcr, sha256((0).to_bytes(4, "little"))).hex()
 
 
+def with_dlme(pcr: str) -> str:
+    """SHA-256 `pcr` after `EXTEND_OSSL_DIGEST` of the DLME: its digest,
+    then the marker's."""
+    extended = extend(bytes.fromhex(pcr), sha256(DLME.read_bytes()))
+    return extend(extended, sha256(b"AMDSL")).hex()
+
+
 def result(capture: str, identifier: str) -> str:
     """The one result `identifier` reported after the launch."""
     (found,) = [
@@ -80,7 +88,8 @@ def sha256_pcr17(capture: str) -> dict:
 
 
 def sl_summary(capture: str) -> dict:
-    """The summary the SL prints, the last of the two."""
+    """The summary the DLME prints for itself and the SL, the last of the
+    two."""
     return [r for r in records(capture) if r["rec"] == "summary"][-1]
 
 
@@ -103,6 +112,8 @@ def test_every_psp_step_passes(psp_launch_boot: str):
         "launch.pcr19_22",
         *[step for step in AFTER_LAUNCH if step != "launch.psp_shared"],
         "launch.psp_probe",
+        "launch.dlme_pcr17",
+        "launch.dlme_pcr18",
     ]:
         assert result(psp_launch_boot, identifier) == "pass", identifier
     assert sha256_pcr17(psp_launch_boot)["result"] == "pass"
@@ -114,15 +125,29 @@ def test_every_psp_step_passes(psp_launch_boot: str):
     assert (summary["fail"], summary["warn"], summary["verdict"]) == (0, 0, "pass")
 
 
-def test_the_extend_measures_a_copy_of_the_slb(psp_launch_boot: str):
-    (service,) = checks(psp_launch_boot, "launch.psp_service")
-    (skinit,) = checks(psp_launch_boot, "launch.skinit")
+def test_the_extend_measures_the_dlme(psp_launch_boot: str):
+    (placed,) = checks(psp_launch_boot, "launch.dlme_placed")
     (extend,) = checks(psp_launch_boot, "launch.psp_extend")
-    copy = int(service["fields"]["extend_copy"], 16)
-    assert copy % (64 << 20) == 0
-    assert copy != int(skinit["fields"]["slb"], 16)
-    assert int(extend["fields"]["base"], 16) == copy
-    assert (extend["fields"]["copy"], extend["fields"]["matches_slb"]) == (True, True)
+    block = int(placed["fields"]["block"], 16)
+    assert block % (64 << 20) == 0
+    assert int(extend["fields"]["base"], 16) == block
+    assert int(extend["fields"]["size"], 16) == len(DLME.read_bytes())
+    assert extend["fields"]["digest"] == sha256(DLME.read_bytes()).hex()
+    assert (extend["fields"]["aligned"], extend["fields"]["matches_build"]) == (
+        True,
+        True,
+    )
+
+
+def test_the_dlme_judges_the_final_pcrs(psp_launch_boot: str):
+    (dlme,) = checks(psp_launch_boot, "launch.dlme")
+    assert dlme["fields"]["from"] == "drtm's PSP SL"
+    (launch,) = checks(psp_launch_boot, "launch.psp_launch")
+    words = {k: int(launch["fields"][k], 16) for k in ("anti_rollback", "tsme")}
+    (pcr17,) = checks(psp_launch_boot, "launch.dlme_pcr17")
+    assert pcr17["fields"]["pcr17"] == with_dlme(expected_pcr17(**words))
+    (pcr18,) = checks(psp_launch_boot, "launch.dlme_pcr18")
+    assert pcr18["fields"]["pcr18"] == with_dlme(expected_pcr18())
 
 
 def test_the_launch_measures_as_predicted(psp_launch_boot: str):
@@ -239,9 +264,10 @@ def test_a_launch_timeout_skips_the_mailbox(psp_timeout_boot: str):
     assert int(launch["fields"]["c2pmsg_72"], 16) == 0x0004_0000
     for step in AFTER_LAUNCH:
         assert result(psp_timeout_boot, step) == "skip", step
-    # The TPM steps still run.
+    # The TPM steps still run, and the DLME expects nothing of LAUNCH.
     assert checks(psp_timeout_boot, "launch.locality")
     assert checks(psp_timeout_boot, "launch.pcr17")
+    assert result(psp_timeout_boot, "launch.dlme_pcr17") == "skip"
 
 
 def refused(capture: str, boot: str, reason: str) -> None:

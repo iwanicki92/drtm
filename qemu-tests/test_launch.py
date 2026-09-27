@@ -2,10 +2,12 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""The classic SKINIT launch, from the gate to the Secure Loader's report.
+"""The classic SKINIT launch, from the gate to the Secure Loader's report
+and the DLME it hands off to.
 
-The SL reports with the same records the checks do, after a second summary
-of its own, so the helpers in `conftest` read both parts of a launch boot.
+The SL and the DLME report with the same records the checks do, then the
+DLME prints a second summary for both, so the helpers in `conftest` read
+both parts of a launch boot.
 """
 
 import hashlib
@@ -13,6 +15,7 @@ import re
 from pathlib import Path
 
 from conftest import (
+    DLME,
     SL_CLASSIC,
     launch_state,
     messages,
@@ -50,6 +53,17 @@ def expected_pcr17(algorithm: str) -> str:
     shows."""
     digest = hashlib.new(algorithm, measured_image()).digest()
     return hashlib.new(algorithm, bytes(len(digest)) + digest).hexdigest()
+
+
+def dlme_digest(algorithm: str) -> bytes:
+    """The digest of `target/dlme.bin`, the DLME's measured image."""
+    return hashlib.new(algorithm, DLME.read_bytes()).digest()
+
+
+def expected_dlme_pcr17(algorithm: str) -> str:
+    """PCR 17 once the classic SL has extended the DLME into it."""
+    pcr = bytes.fromhex(expected_pcr17(algorithm))
+    return hashlib.new(algorithm, pcr + dlme_digest(algorithm)).hexdigest()
 
 
 def stack_used(capture: str) -> int:
@@ -101,18 +115,64 @@ def test_the_sl_takes_locality_2(launch_boot: str):
 
 
 def test_the_launch_runs_in_order(launch_boot: str):
-    # From the gate to the halt, with every preamble step and the SL's
-    # tally in between, and nothing of the SL's before the trampoline.
+    # From the gate to the halt, with every preamble step, the SL's report
+    # and the DLME's in between, and nothing of the SL's before the
+    # trampoline.
     found = after_launch(launch_boot)
     ids = [record.get("id", record["rec"]) for record in found]
-    assert ids[:3] == ["launch.start", "launch.skinit", "launch.preamble"]
+    assert ids[:4] == [
+        "launch.start",
+        "launch.skinit",
+        "launch.dlme_placed",
+        "launch.preamble",
+    ]
     assert ids[-2:] == ["summary", "launch.halted"]
+    assert ids.count("summary") == 1
+    assert ids.index("launch.dlme_extend") < ids.index("launch.dlme")
     steps = [r["detail"] for r in found if r.get("id") == "launch.preamble"]
     assert steps[-1] == "entering the trampoline, SKINIT follows"
     assert found[-2]["verdict"] == "pass"
     assert found[-2]["fail"] == 0
     # The trampoline's marker byte, just before the SL's first line.
     assert "\nSdrtm: " in launch_boot.replace("\r", "")
+
+
+def test_the_sl_measures_the_dlme(launch_boot: str):
+    (placed,) = checks(launch_boot, "launch.dlme_placed")
+    assert placed["fields"]["sha256"] == dlme_digest("sha256").hex()
+    assert placed["fields"]["measured"] == len(DLME.read_bytes())
+    (extend,) = checks(launch_boot, "launch.dlme_extend")
+    assert extend["result"] == "pass"
+    assert extend["fields"]["banks"] == "0x3"
+    for bank in ("sha1", "sha256"):
+        assert extend["fields"][bank] == dlme_digest(bank).hex()
+
+
+def test_the_dlme_judges_pcr17(launch_boot: str):
+    (dlme,) = checks(launch_boot, "launch.dlme")
+    assert dlme["fields"]["from"] == "drtm's classic SL"
+    assert (
+        dlme["fields"]["block"]
+        == checks(launch_boot, "launch.dlme_placed")[0]["fields"]["block"]
+    )
+    judged = checks(launch_boot, "launch.dlme_pcr17")
+    assert [r["fields"]["bank"] for r in judged] == ["sha1", "sha256"]
+    for pcr17 in judged:
+        assert pcr17["result"] == "pass"
+        assert pcr17["fields"]["extended"] is True
+        assert pcr17["fields"]["pcr17"] == expected_dlme_pcr17(pcr17["fields"]["bank"])
+
+
+def test_one_summary_counts_the_sl_and_the_dlme(launch_boot: str):
+    # Everything the SL and the DLME judged, from the trampoline to the
+    # summary, and nothing twice.
+    found = after_launch(launch_boot)
+    details = [record.get("detail") for record in found]
+    start = details.index("entering the trampoline, SKINIT follows") + 1
+    summary = found[-2]
+    judged = [r["result"] for r in found[start:-2] if r["rec"] == "check"]
+    for tag in ("pass", "fail", "warn"):
+        assert summary[tag] == judged.count(tag), tag
 
 
 def test_the_platform_saw_a_clean_launch(launch_boot: str):
@@ -148,6 +208,13 @@ def test_the_psp_service_holds_locality_2(launch_psp_boot: str):
     for pcr17 in checks(launch_psp_boot, "launch.pcr17"):
         assert pcr17["result"] == "pass"
         assert pcr17["fields"]["locality"] == 0
+    # Locality 0 cannot extend PCR 17, so the DLME finds the SL's value.
+    (extend,) = checks(launch_psp_boot, "launch.dlme_extend")
+    assert extend["result"] == "skip"
+    for pcr17 in checks(launch_psp_boot, "launch.dlme_pcr17"):
+        assert pcr17["result"] == "pass"
+        assert pcr17["fields"]["extended"] is False
+        assert pcr17["fields"]["pcr17"] == expected_pcr17(pcr17["fields"]["bank"])
 
 
 def test_no_config_still_launches(launch_defaults_boot: str):
@@ -158,12 +225,17 @@ def test_no_config_still_launches(launch_defaults_boot: str):
 
 
 def test_a_bank_without_a_computed_value_is_reported(launch_defaults_boot: str):
-    (tag,) = [
-        tag
-        for tag, detail in results(launch_defaults_boot, "launch.pcr17")
-        if detail.startswith("sha384")
-    ]
-    assert tag == "INFO"
+    for identifier in ("launch.pcr17", "launch.dlme_pcr17"):
+        (tag,) = [
+            tag
+            for tag, detail in results(launch_defaults_boot, identifier)
+            if detail.startswith("sha384")
+        ]
+        assert tag == "INFO", identifier
+    # The SL hashes SHA-1 and SHA-256 alone, and says so.
+    ((tag, detail),) = results(launch_defaults_boot, "launch.dlme_extend")
+    assert tag == "PASS"
+    assert "the other active banks are not extended" in detail
     assert [tag for tag, _ in results(launch_defaults_boot, "launch.pcr18_22")] == [
         "PASS"
     ] * 3
@@ -247,5 +319,11 @@ def test_a_tpm_1_2_measures_the_image(launch_tpm_1_2_boot: str):
     assert [r["result"] for r in checks(launch_tpm_1_2_boot, "launch.pcr18_22")] == [
         "pass"
     ]
+    # TPM_Extend takes the SHA-1 digest alone.
+    (extend,) = checks(launch_tpm_1_2_boot, "launch.dlme_extend")
+    assert (extend["result"], extend["fields"]["banks"]) == ("pass", "0x1")
+    (judged,) = checks(launch_tpm_1_2_boot, "launch.dlme_pcr17")
+    assert judged["result"] == "pass"
+    assert judged["fields"]["pcr17"] == expected_dlme_pcr17("sha1")
     assert launch_state("launch_tpm_1_2_boot")["hash"] == "ok"
     assert qemu_log("launch_tpm_1_2_boot") == ""

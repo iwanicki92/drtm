@@ -7,19 +7,22 @@
 it.
 
 The SL reports only through POST codes on port 0x80, so these tests read
-the log `isa-post-code` wrote rather than the console.
+the log `isa-post-code` wrote, and the console for the DLME it hands off
+to.
 """
 
 import pytest
 from conftest import (
+    DLME_REACHED,
     FOREIGN_SL,
     SESSION,
-    STANDIN_REACHED,
     launch_state,
     qemu_log,
     qemu_traces,
 )
 from machine import post_codes
+from test_launch import after_launch, checks
+from test_psp_launch import with_dlme
 
 if FOREIGN_SL is None:
     pytest.skip("DRTM_TEST_FOREIGN_SL is not set", allow_module_level=True)
@@ -38,7 +41,7 @@ FAILED = 0x1E00
 # client SL also hands the SMM supervisor over, which the EPYC one leaves.
 LAUNCH_AND_TMRS = [
     0x4,  # LAUNCH
-    0xB,  # EXTEND_OSSL_DIGEST over the stand-in
+    0xB,  # EXTEND_OSSL_DIGEST over the DLME
     0x9,  # GET_TMR_DESCRIPTORS
     0x9,
     0x9,
@@ -59,10 +62,44 @@ def sl_codes() -> list[int]:
     return [code & 0xFFFF for code in codes if code & 0xFFFF_0000 == SL]
 
 
-def test_the_sl_hands_off_to_the_stand_in(foreign_amd_sl_boot: str):
+def test_the_sl_hands_off_to_the_dlme(foreign_amd_sl_boot: str):
     codes = post_codes(SESSION.boot_log_dir(BOOT) / "post-codes.txt")
-    assert codes[-1] == STANDIN_REACHED
+    assert codes[-1] == DLME_REACHED
     assert 0x1001 in sl_codes()[:2]
+    (dlme,) = checks(foreign_amd_sl_boot, "launch.dlme")
+    assert dlme["fields"]["from"] == "a foreign SL"
+
+
+def test_the_dlme_reports_the_launch(foreign_amd_sl_boot: str):
+    # PCR 18 is known from the token alone. PCR 17's last extend takes
+    # words LAUNCH returned to AMD's SL, which the DLME never sees.
+    (service,) = checks(foreign_amd_sl_boot, "launch.psp_service")
+    (pcr18,) = checks(foreign_amd_sl_boot, "launch.dlme_pcr18")
+    assert pcr18["result"] == "pass"
+    assert pcr18["fields"]["pcr18"] == with_dlme(service["fields"]["expected_pcr18"])
+    (pcr17,) = checks(foreign_amd_sl_boot, "launch.dlme_pcr17")
+    assert pcr17["result"] == "info"
+    for identifier in ("launch.psp_tmr", "launch.psp_probe"):
+        (found,) = checks(foreign_amd_sl_boot, identifier)
+        assert found["result"] == "pass", identifier
+    found = after_launch(foreign_amd_sl_boot)
+    assert [r.get("id", r["rec"]) for r in found[-2:]] == ["summary", "launch.halted"]
+    assert found[-2]["verdict"] == "pass"
+
+
+def test_the_dlme_reads_what_the_sl_left(foreign_amd_sl_boot: str):
+    # The header, the TMR the preamble set up, and the service's log,
+    # which replays to the PCRs the DLME read.
+    (handoff,) = checks(foreign_amd_sl_boot, "launch.amd_handoff")
+    assert handoff["fields"]["tmr_descriptors"] == 1
+    (service,) = checks(foreign_amd_sl_boot, "launch.psp_service")
+    (tmr,) = checks(foreign_amd_sl_boot, "launch.amd_tmr")
+    assert (tmr["fields"]["base"], tmr["fields"]["size"]) == (
+        service["fields"]["tmr_base"],
+        service["fields"]["tmr_size"],
+    )
+    (log,) = checks(foreign_amd_sl_boot, "launch.amd_log")
+    assert log["fields"]["replays"] is True
 
 
 def test_every_psp_command_is_answered(foreign_amd_sl_boot: str):

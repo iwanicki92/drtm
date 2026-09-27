@@ -15,7 +15,7 @@
  * nothing needs relocating.
  */
 
-ENTRY(sl_entry32)
+ENTRY(entry32)
 
 SL_VBASE = 0xFFFFFFFF80000000;
 SLB_SIZE = 0x10000;
@@ -32,7 +32,7 @@ SECTIONS
      * layout up to bootloader_data_offset at byte 68.
      */
     .header : {
-        SHORT(sl_entry32 - __sl_start)
+        SHORT(entry32 - __sl_start)
         SHORT(__image_end - __sl_start)
         QUAD(0) QUAD(0) QUAD(0) QUAD(0) QUAD(0) QUAD(0) QUAD(0)
         LONG(0) SHORT(0)

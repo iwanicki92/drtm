@@ -4,9 +4,10 @@
 
 //! drtm's Secure Loader: the code `SKINIT` measures and starts.
 //!
-//! It reads the DRTM PCRs, judges whether the TPM measured this image,
-//! reports on the sinks the parameter page lists, and halts. Nothing runs
-//! after it, so it extends nothing and wakes no processor.
+//! It reads the DRTM PCRs, judges whether the TPM measured this image and
+//! reports on the sinks the parameter page lists. Then it measures drtm's
+//! DLME and jumps to it, which judges the rest and halts. The SL wakes no
+//! processor.
 //!
 //! It is built once per launch path, the `classic` or `psp` feature, and
 //! the preamble writes the image of the path it takes into the SLB.
@@ -21,24 +22,26 @@
 compile_error!("build the SL with exactly one of the classic and psp features");
 
 mod entry;
-#[cfg(feature = "psp")]
-mod probe;
+mod handoff;
 #[cfg(feature = "psp")]
 mod psp;
 
-use core::fmt::{self, Write};
+use core::fmt::Write;
 use core::panic::PanicInfo;
 
-use common::params::{self, Family, Params};
+use common::params::{self, Params};
+use common::pcr::read;
 use common::record::Tag;
-use common::tpm::{self, Bank, DrtmPcrs, FIRST_DRTM_PCR, ReadError};
-use common::transport::{self, Tpm};
+use common::transport::Tpm;
 use common::uart;
 #[cfg(feature = "classic")]
 use {
-    common::params::PspDrtm,
+    common::params::{Family, Handoff, PspDrtm, Sender},
+    common::pcr,
     common::record::Value,
+    common::tpm::Bank,
     common::verdict::{self, Pcr17},
+    handoff::Measured,
 };
 
 use common::out::Out;
@@ -77,9 +80,6 @@ fn stack_used() -> usize {
 /// The locality a Secure Loader extends PCR 17 and 18 from.
 pub(crate) const SL_LOCALITY: u8 = 2;
 
-/// Header, update counter, selection and six SHA-512 digests fit in 512.
-const RESPONSE_MAX: usize = 512;
-
 fn params() -> Result<Params, params::Invalid> {
     // Safety: the page lies inside the SLB, which the page tables map, and
     // nothing writes it while the SL runs.
@@ -112,19 +112,25 @@ extern "C" fn sl_main(slb: u32) -> ! {
     out.debug(format_args!("SL running, SLB at {slb:#x}"));
 
     #[cfg(feature = "classic")]
-    classic(&mut out, &params);
+    let next = Some(classic(&mut out, &params));
     #[cfg(feature = "psp")]
-    match &params.psp {
-        Some(psp) => psp::run(&mut out, &params, psp, slb),
-        None => out.unchecked(
-            Tag::Fail,
-            "launch.params",
-            &[],
-            format_args!("the parameter page names no PSP service for this PSP SL"),
-        ),
-    }
+    let next = match &params.psp {
+        Some(psp) => Some(psp::run(&mut out, &params, psp, slb)),
+        None => {
+            out.unchecked(
+                Tag::Fail,
+                "launch.params",
+                &[],
+                format_args!("the parameter page names no PSP service for this PSP SL"),
+            );
+            None
+        }
+    };
 
     out.debug(format_args!("stack used: {} bytes", stack_used()));
+    if let Some((handoff, measured)) = next {
+        handoff::jump(&mut out, &params, handoff, &measured, slb);
+    }
     out.summary();
     out.unchecked(
         Tag::Info,
@@ -135,9 +141,10 @@ extern "C" fn sl_main(slb: u32) -> ! {
     halt();
 }
 
-/// The classic path: the PCRs `SKINIT` left, judged against the build.
+/// The classic path: the PCRs `SKINIT` left, judged against the build,
+/// then the DLME measured into PCR 17.
 #[cfg(feature = "classic")]
-fn classic(out: &mut Out, params: &Params) {
+fn classic(out: &mut Out, params: &Params) -> (Handoff, Measured) {
     let (tpm, locality_granted) = take_locality(out, params);
     match params.family {
         Family::V2_0 => {
@@ -149,8 +156,91 @@ fn classic(out: &mut Out, params: &Params) {
         }
         Family::V1_2 => report_bank(out, params, &tpm, Bank::Sha1),
     }
+    let measured = handoff::measure(params);
+    let extended_banks = extend_dlme(out, params, &tpm, &measured);
     if locality_granted {
         tpm.relinquish();
+    }
+    let handoff = Handoff {
+        from: Sender::Classic,
+        extended_banks,
+        ..Handoff::FOREIGN
+    };
+    (handoff, measured)
+}
+
+/// Extends PCR 17 with the DLME in the SHA-1 and SHA-256 banks, the ones
+/// the SL hashes, where they are active. Returns the banks extended. Kept
+/// out of `classic`, whose frame would otherwise hold its buffers while
+/// the banks are read.
+#[cfg(feature = "classic")]
+#[inline(never)]
+fn extend_dlme(out: &mut Out, params: &Params, tpm: &Tpm, measured: &Measured) -> u32 {
+    if !measured.matches {
+        // The handoff reports it, and does not jump.
+        return 0;
+    }
+    if tpm.locality() != SL_LOCALITY {
+        out.check(
+            Tag::Skip,
+            "launch.dlme_extend",
+            &[],
+            format_args!(
+                "the DLME is not extended into PCR 17, locality {SL_LOCALITY} was not granted"
+            ),
+        );
+        return 0;
+    }
+    let active = match params.family {
+        Family::V2_0 => params.banks,
+        Family::V1_2 => Bank::Sha1.bit(),
+    };
+    let both: [(Bank, &[u8]); 2] = [
+        (Bank::Sha1, &measured.sha1),
+        (Bank::Sha256, &measured.sha256),
+    ];
+    let mut digests = both;
+    let mut count = 0;
+    for pair in both {
+        if active & pair.0.bit() != 0 {
+            digests[count] = pair;
+            count += 1;
+        }
+    }
+    let banks = digests[..count]
+        .iter()
+        .fold(0, |bits, (bank, _)| bits | bank.bit());
+    let unhashed = active & !(Bank::Sha1.bit() | Bank::Sha256.bit());
+    let fields = [
+        ("banks", Value::Hex(banks.into())),
+        ("unhashed", Value::Hex(unhashed.into())),
+        ("sha1", Value::Bytes(&measured.sha1)),
+        ("sha256", Value::Bytes(&measured.sha256)),
+    ];
+    let rest = if unhashed == 0 {
+        ""
+    } else {
+        ", the other active banks are not extended, since the SL hashes SHA-1 and SHA-256 alone"
+    };
+    match pcr::extend17(tpm, params.family, &digests[..count]) {
+        Ok(()) => {
+            out.check(
+                Tag::Pass,
+                "launch.dlme_extend",
+                &fields,
+                format_args!("PCR 17 extended with the DLME's digest{rest}"),
+            );
+            banks
+        }
+        Err(failure) => {
+            out.check(
+                Tag::Fail,
+                "launch.dlme_extend",
+                &fields,
+                format_args!("PCR 17 was not extended with the DLME ({failure})"),
+            );
+            0
+        }
     }
 }
 
@@ -205,48 +295,6 @@ fn take_locality(out: &mut Out, params: &Params) -> (Tpm, bool) {
     let fallback = tpm(params, 0);
     let granted = fallback.request().is_ok();
     (fallback, granted)
-}
-
-/// Why a bank did not read.
-pub(crate) enum Failure {
-    Transport(transport::Error),
-    Read(ReadError),
-}
-
-impl fmt::Display for Failure {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Transport(error) => write!(f, "the TPM did not answer: {}", error.name()),
-            Self::Read(ReadError::Response(rc)) => write!(f, "response code {rc:#x}"),
-            Self::Read(ReadError::Malformed) => write!(f, "a malformed response"),
-        }
-    }
-}
-
-pub(crate) fn read(tpm: &Tpm, family: Family, bank: Bank) -> Result<DrtmPcrs, Failure> {
-    let mut response = [0; RESPONSE_MAX];
-    match family {
-        Family::V2_0 => {
-            let len = tpm
-                .transmit(&tpm::pcr_read_command(bank), &mut response)
-                .map_err(Failure::Transport)?;
-            tpm::parse_pcr_read(&response[..len], bank).map_err(Failure::Read)
-        }
-        Family::V1_2 => {
-            let mut pcrs = [tpm::Digest::new(&[]).ok_or(Failure::Read(ReadError::Malformed))?;
-                tpm::DRTM_PCR_COUNT];
-            for (i, pcr) in pcrs.iter_mut().enumerate() {
-                let len = tpm
-                    .transmit(
-                        &tpm::pcr_read_command_1_2(FIRST_DRTM_PCR + i),
-                        &mut response,
-                    )
-                    .map_err(Failure::Transport)?;
-                *pcr = tpm::parse_pcr_read_1_2(&response[..len]).map_err(Failure::Read)?;
-            }
-            Ok(pcrs)
-        }
-    }
 }
 
 /// Reads one bank and judges it.

@@ -4,7 +4,8 @@
 
 //! The parameter page: what the preamble tells the Secure Loader, written
 //! into the SLB behind the measured image at the header's
-//! `bootloader_data_offset`.
+//! `bootloader_data_offset`, and the DLME the same, behind its own image.
+//! drtm's SL adds the [`Handoff`] to the DLME's copy before jumping to it.
 //!
 //! `SL_DEV` keeps devices away from it but the measurement does not cover
 //! it, so the SL validates it before use and trusts it after, which is
@@ -14,13 +15,13 @@
 
 use core::fmt;
 
-use crate::record::Format;
+use crate::record::{Format, Tag};
 use crate::tpm::Bank;
 use crate::transport::Interface;
 use crate::uart::{Space, Uart};
 
 pub const MAGIC: [u8; 8] = *b"DRTMSLPP";
-pub const VERSION: u32 = 3;
+pub const VERSION: u32 = 4;
 pub const MAX_SINKS: usize = 4;
 
 const SINK_SIZE: usize = 16;
@@ -41,14 +42,32 @@ const IOAPIC: usize = TMR_SIZE + 8;
 const IVRS_SHA256: usize = IOAPIC + 8;
 const PSP_PCR17: usize = IVRS_SHA256 + 32;
 const PSP_PCR18: usize = PSP_PCR17 + 32;
-// Version 3.
-const EXTEND_COPY: usize = PSP_PCR18 + 32;
+// Version 4.
+const DLME: usize = PSP_PCR18 + 32;
+const DLME_LEN: usize = DLME + 8;
+const DLME_SHA256: usize = DLME + 16;
+const DLME_PCR17_SHA1: usize = DLME_SHA256 + 32;
+const DLME_PCR17_SHA256: usize = DLME_PCR17_SHA1 + 20;
+// The handoff, which the preamble leaves zero.
+const FROM: usize = DLME_PCR17_SHA256 + 32;
+const HANDOFF_FLAGS: usize = FROM + 1;
+const EXTENDED_BANKS: usize = FROM + 4;
+const ANTI_ROLLBACK: usize = EXTENDED_BANKS + 4;
+const TSME: usize = ANTI_ROLLBACK + 4;
+const COUNTS: usize = TSME + 4;
 
 /// Bytes the page takes.
-pub const SIZE: usize = EXTEND_COPY + 8;
+pub const SIZE: usize = COUNTS + 4 * Tag::ALL.len();
 
-/// The copy `EXTEND_COPY` names is at most this long.
-pub const EXTEND_COPY_MAX: u64 = 0x10000;
+/// The DLME's block, which holds its image, its page and its scratch
+/// memory, and on the foreign path what AMD's SL leaves for it.
+pub const DLME_BLOCK_SIZE: u64 = 1 << 20;
+
+/// `HANDOFF_FLAGS`: `LAUNCH` succeeded, the mailbox stopped answering, and
+/// `EXTEND_OSSL_DIGEST` measured the DLME.
+const LAUNCHED: u8 = 1 << 0;
+const MAILBOX_DEAD: u8 = 1 << 1;
+const DLME_EXTENDED: u8 = 1 << 2;
 
 /// `PIT_FLAGS`: an entry is there, and how the pin is wired.
 const PIT_PRESENT: u8 = 1 << 0;
@@ -116,9 +135,101 @@ pub struct Psp {
     pub pcr17: [u8; 32],
     /// PCR 18 in SHA-256 after `LAUNCH`.
     pub pcr18: [u8; 32],
-    /// Where the preamble copied the SLB up to the end of this page, for
-    /// `EXTEND_OSSL_DIGEST` to measure in its place, or 0 for no copy.
-    pub extend_copy: u64,
+}
+
+/// The DLME the preamble placed, and what measuring it should leave.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Dlme {
+    /// Its block, [`DLME_BLOCK_SIZE`] bytes on a 64 MiB boundary.
+    pub block: u64,
+    /// The measured image at the block's start, in whole pages. Its copy of
+    /// this page follows it.
+    pub len: u32,
+    /// The SHA-256 of its measured image.
+    pub sha256: [u8; 32],
+    /// PCR 17 once the classic SL has extended the image into it.
+    pub pcr17_sha1: [u8; 20],
+    pub pcr17_sha256: [u8; 32],
+}
+
+/// Who jumped to the DLME.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Sender {
+    /// A foreign SL, which leaves the handoff as the preamble wrote it.
+    Foreign,
+    Classic,
+    Psp,
+}
+
+/// What drtm's SL tells the DLME, written into the DLME's page before the
+/// jump.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Handoff {
+    pub from: Sender,
+    /// `LAUNCH`'s anti-rollback and TSME words, where it succeeded.
+    pub launch: Option<(u32, u32)>,
+    /// A command got no answer, so no more should be sent.
+    pub mailbox_dead: bool,
+    /// `EXTEND_OSSL_DIGEST` measured the DLME.
+    pub dlme_extended: bool,
+    /// The banks the classic SL extended the DLME into, as [`Bank::bit`]
+    /// flags.
+    pub extended_banks: u32,
+    /// The SL's results per tag, indexed by `Tag as usize`.
+    pub counts: [u32; Tag::ALL.len()],
+}
+
+impl Handoff {
+    /// What a foreign SL leaves: the preamble's zeroes.
+    pub const FOREIGN: Self = Self {
+        from: Sender::Foreign,
+        launch: None,
+        mailbox_dead: false,
+        dlme_extended: false,
+        extended_banks: 0,
+        counts: [0; Tag::ALL.len()],
+    };
+
+    /// Writes the handoff into `page`, a page [`Params::encode`] wrote.
+    pub fn write(&self, page: &mut [u8; SIZE]) {
+        page[FROM] = match self.from {
+            Sender::Foreign => 0,
+            Sender::Classic => 1,
+            Sender::Psp => 2,
+        };
+        page[HANDOFF_FLAGS] = if self.launch.is_some() { LAUNCHED } else { 0 }
+            | if self.mailbox_dead { MAILBOX_DEAD } else { 0 }
+            | if self.dlme_extended { DLME_EXTENDED } else { 0 };
+        page[EXTENDED_BANKS..EXTENDED_BANKS + 4]
+            .copy_from_slice(&self.extended_banks.to_le_bytes());
+        let (anti_rollback, tsme) = self.launch.unwrap_or_default();
+        page[ANTI_ROLLBACK..ANTI_ROLLBACK + 4].copy_from_slice(&anti_rollback.to_le_bytes());
+        page[TSME..TSME + 4].copy_from_slice(&tsme.to_le_bytes());
+        for (i, count) in self.counts.iter().enumerate() {
+            let at = COUNTS + 4 * i;
+            page[at..at + 4].copy_from_slice(&count.to_le_bytes());
+        }
+    }
+
+    /// The handoff in a page [`Params::decode`] accepted.
+    pub fn read(page: &[u8; SIZE]) -> Result<Self, Invalid> {
+        let u32_at = |at: usize| u32::from_le_bytes(page[at..at + 4].try_into().unwrap());
+        let from = match page[FROM] {
+            0 => Sender::Foreign,
+            1 => Sender::Classic,
+            2 => Sender::Psp,
+            _ => return Err(Invalid::Field("handoff source")),
+        };
+        let flags = page[HANDOFF_FLAGS];
+        Ok(Self {
+            from,
+            launch: (flags & LAUNCHED != 0).then(|| (u32_at(ANTI_ROLLBACK), u32_at(TSME))),
+            mailbox_dead: flags & MAILBOX_DEAD != 0,
+            dlme_extended: flags & DLME_EXTENDED != 0,
+            extended_banks: u32_at(EXTENDED_BANKS),
+            counts: core::array::from_fn(|i| u32_at(COUNTS + 4 * i)),
+        })
+    }
 }
 
 /// Where the PIT's interrupt reaches the IO-APIC, from the MADT.
@@ -154,6 +265,7 @@ pub struct Params {
     pub pit: Option<Pit>,
     /// The SHA-256 of the IVRS the checks read from ACPI.
     pub ivrs_sha256: Option<[u8; 32]>,
+    pub dlme: Dlme,
 }
 
 /// Why a page was refused.
@@ -238,8 +350,7 @@ impl Params {
             page[TMR_BASE..TMR_BASE + 8].copy_from_slice(&psp.tmr_base.to_le_bytes());
             page[TMR_SIZE..TMR_SIZE + 8].copy_from_slice(&psp.tmr_size.to_le_bytes());
             page[PSP_PCR17..PSP_PCR18].copy_from_slice(&psp.pcr17);
-            page[PSP_PCR18..EXTEND_COPY].copy_from_slice(&psp.pcr18);
-            page[EXTEND_COPY..SIZE].copy_from_slice(&psp.extend_copy.to_le_bytes());
+            page[PSP_PCR18..DLME].copy_from_slice(&psp.pcr18);
         }
         if let Some(pit) = &self.pit {
             page[PIT_PIN] = pit.pin;
@@ -252,6 +363,11 @@ impl Params {
             page[IVRS_PRESENT] = 1;
             page[IVRS_SHA256..PSP_PCR17].copy_from_slice(ivrs);
         }
+        page[DLME..DLME + 8].copy_from_slice(&self.dlme.block.to_le_bytes());
+        page[DLME_LEN..DLME_LEN + 4].copy_from_slice(&self.dlme.len.to_le_bytes());
+        page[DLME_SHA256..DLME_PCR17_SHA1].copy_from_slice(&self.dlme.sha256);
+        page[DLME_PCR17_SHA1..DLME_PCR17_SHA256].copy_from_slice(&self.dlme.pcr17_sha1);
+        page[DLME_PCR17_SHA256..FROM].copy_from_slice(&self.dlme.pcr17_sha256);
         page
     }
 
@@ -347,10 +463,6 @@ impl Params {
                 if mailbox == 0 || mailbox + 0x60 > 1 << 32 {
                     return Err(Invalid::Field("mailbox"));
                 }
-                let extend_copy = u64_at(EXTEND_COPY);
-                if extend_copy.saturating_add(EXTEND_COPY_MAX) > 1 << 32 {
-                    return Err(Invalid::Field("extend copy"));
-                }
                 Some(Psp {
                     mailbox,
                     source,
@@ -363,7 +475,6 @@ impl Params {
                     tmr_size: u64_at(TMR_SIZE),
                     pcr17: digest(PSP_PCR17),
                     pcr18: digest(PSP_PCR18),
-                    extend_copy,
                 })
             }
         };
@@ -383,6 +494,22 @@ impl Params {
             None
         };
         let ivrs_sha256 = (page[IVRS_PRESENT] != 0).then(|| digest(IVRS_SHA256));
+        // The SLs and the DLME map the low 4 GiB, and the block is aligned
+        // as the guide's appendix E.1 asks of an MLE.
+        let (block, len) = (u64_at(DLME), u32_at(DLME_LEN));
+        if block == 0 || block % (64 << 20) != 0 || block + DLME_BLOCK_SIZE > 1 << 32 {
+            return Err(Invalid::Field("dlme"));
+        }
+        if len == 0 || len % 0x1000 != 0 || u64::from(len) + SIZE as u64 > DLME_BLOCK_SIZE {
+            return Err(Invalid::Field("dlme length"));
+        }
+        let dlme = Dlme {
+            block,
+            len,
+            sha256: digest(DLME_SHA256),
+            pcr17_sha1: page[DLME_PCR17_SHA1..DLME_PCR17_SHA256].try_into().unwrap(),
+            pcr17_sha256: digest(DLME_PCR17_SHA256),
+        };
         Ok(Self {
             format,
             level: page[17],
@@ -398,6 +525,7 @@ impl Params {
             psp,
             pit,
             ivrs_sha256,
+            dlme,
         })
     }
 }
@@ -434,7 +562,6 @@ mod tests {
                 tmr_size: 1 << 32,
                 pcr17: [3; 32],
                 pcr18: [4; 32],
-                extend_copy: 0x0800_0000,
             }),
             pit: Some(Pit {
                 ioapic: 0xFEC0_0000,
@@ -443,6 +570,13 @@ mod tests {
                 level: false,
             }),
             ivrs_sha256: Some([5; 32]),
+            dlme: Dlme {
+                block: 0x0800_0000,
+                len: 0x8000,
+                sha256: [6; 32],
+                pcr17_sha1: [7; 20],
+                pcr17_sha256: [8; 32],
+            },
         }
     }
 
@@ -462,6 +596,29 @@ mod tests {
         assert_eq!(sample().expected(Bank::Sha384), None);
     }
 
+    fn damaged_page(at: usize, value: u8) -> [u8; SIZE] {
+        let mut page = sample().encode();
+        page[at] = value;
+        page
+    }
+
+    #[test]
+    fn carries_the_handoff() {
+        let mut page = sample().encode();
+        assert_eq!(Handoff::read(&page), Ok(Handoff::FOREIGN));
+        let handoff = Handoff {
+            from: Sender::Psp,
+            launch: Some((0x1234, 0x5678)),
+            mailbox_dead: true,
+            dlme_extended: true,
+            extended_banks: Bank::Sha256.bit(),
+            counts: [1, 2, 3, 4, 5],
+        };
+        handoff.write(&mut page);
+        assert_eq!(Handoff::read(&page), Ok(handoff));
+        assert_eq!(Params::decode(&page), Ok(sample()));
+    }
+
     #[test]
     fn refuses_a_damaged_page() {
         let good = sample().encode();
@@ -471,8 +628,8 @@ mod tests {
             Params::decode(&page)
         };
         assert_eq!(damaged(0, b'X'), Err(Invalid::Magic));
-        // A version 2 page, which carries no extend copy.
-        assert_eq!(damaged(8, 2), Err(Invalid::Version(2)));
+        // A version 3 page, which names no DLME.
+        assert_eq!(damaged(8, 3), Err(Invalid::Version(3)));
         assert_eq!(damaged(12, 0), Err(Invalid::Size(SIZE as u32 & !0xFF)));
         assert_eq!(damaged(16, 7), Err(Invalid::Field("format")));
         assert_eq!(damaged(17, 6), Err(Invalid::Field("level")));
@@ -491,10 +648,13 @@ mod tests {
         );
         // The mailbox moved above 4 GiB.
         assert_eq!(damaged(MAILBOX + 4, 1), Err(Invalid::Field("mailbox")));
-        // The copy moved above 4 GiB.
+        // The DLME moved above 4 GiB, and off its 64 MiB boundary.
+        assert_eq!(damaged(DLME + 4, 1), Err(Invalid::Field("dlme")));
+        assert_eq!(damaged(DLME + 2, 1), Err(Invalid::Field("dlme")));
+        assert_eq!(damaged(DLME_LEN, 1), Err(Invalid::Field("dlme length")));
         assert_eq!(
-            damaged(EXTEND_COPY + 4, 1),
-            Err(Invalid::Field("extend copy"))
+            Handoff::read(&damaged_page(FROM, 3)),
+            Err(Invalid::Field("handoff source"))
         );
         let mut page = good;
         page[IOAPIC..IOAPIC + 4].fill(0);

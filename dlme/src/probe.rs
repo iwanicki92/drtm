@@ -5,8 +5,8 @@
 //! A device write into a range the TMR covers: the PIT's interrupt, which
 //! the IO-APIC delivers as a write into the `0xFEE0_0000` window.
 //!
-//! GIF and IF are both clear after `SKINIT`, so an interrupt that arrives
-//! stays pending in the local APIC's IRR and needs no handler. The probe
+//! IF is clear in the DLME, and GIF too after `SKINIT`, so an interrupt that
+//! arrives stays pending in the local APIC's IRR and needs no handler. The probe
 //! reads the IRR, through the xAPIC page or the x2APIC MSRs.
 
 use core::arch::asm;
@@ -65,7 +65,7 @@ fn wrmsr(msr: u32, value: u64) {
 }
 
 fn outb(port: u16, value: u8) {
-    // Safety: the PIT's ports, which nothing else drives while the SL runs.
+    // Safety: the PIT's ports, which nothing else drives while the DLME runs.
     unsafe { asm!("out dx, al", in("dx") port, in("al") value, options(nomem, nostack)) };
 }
 
@@ -79,7 +79,7 @@ impl Lapic {
     fn read(&self, offset: u32) -> u32 {
         match self {
             // Safety: the xAPIC page lies below 4 GiB, checked when it was
-            // found, which the SL identity maps.
+            // found, which the DLME identity maps.
             Self::X(base) => unsafe { ptr::read_volatile((base + offset as usize) as *const u32) },
             Self::X2 => rdmsr(0x800 + (offset >> 4)) as u32,
         }
@@ -123,7 +123,7 @@ pub struct Probe {
 impl Probe {
     fn ioapic_write(&self, register: u32, value: u32) {
         // Safety: the MADT names the IO-APIC here, below 4 GiB, which the
-        // parameter page checked and the SL identity maps.
+        // parameter page checked and the DLME identity maps.
         unsafe {
             ptr::write_volatile(self.ioapic as *mut u32, register);
             ptr::write_volatile((self.ioapic + IOAPIC_WINDOW) as *mut u32, value);

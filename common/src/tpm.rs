@@ -2,8 +2,8 @@
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
-//! Reading the DRTM PCRs: the commands and their responses, for either TPM
-//! family. How the bytes reach the TPM is the caller's, through the UEFI
+//! Reading and extending the DRTM PCRs: the commands and their responses,
+//! for either TPM family. How the bytes reach the TPM is the caller's, through the UEFI
 //! TCG2 protocol before the launch or [`crate::transport`] after it.
 
 /// The DRTM PCRs, 17 to 22. A TPM 2.0 starts them at all ones and only a
@@ -132,6 +132,57 @@ pub fn pcr_read_command(bank: Bank) -> [u8; 20] {
         0x03,    // sizeofSelect
         0x00, 0x00, 0x7E, // pcrSelect
     ]
+}
+
+/// `TPM2_PCR_Extend` of `pcr` with one digest per bank, authorised by the
+/// empty password session `TPM_RS_PW` (TPM 2.0 Library Part 3, section
+/// 22.2). Writes the command into `command` and returns its length.
+pub fn pcr_extend_command(
+    pcr: u32,
+    digests: &[(Bank, &[u8])],
+    command: &mut [u8; EXTEND_MAX],
+) -> usize {
+    let mut len = 0;
+    let mut put = |bytes: &[u8]| {
+        command[len..len + bytes.len()].copy_from_slice(bytes);
+        len += bytes.len();
+    };
+    put(&[0x80, 0x02]); // TPM_ST_SESSIONS
+    put(&[0; 4]); // commandSize, below
+    put(&[0x00, 0x00, 0x01, 0x82]); // TPM_CC_PCR_Extend
+    put(&pcr.to_be_bytes());
+    put(&9u32.to_be_bytes()); // authorizationSize
+    put(&[0x40, 0x00, 0x00, 0x09]); // TPM_RS_PW
+    put(&[0, 0, 0, 0, 0]); // no nonce, no attributes, no HMAC
+    put(&(digests.len() as u32).to_be_bytes());
+    for (bank, digest) in digests {
+        put(&bank.algorithm().to_be_bytes());
+        put(digest);
+    }
+    command[2..6].copy_from_slice(&(len as u32).to_be_bytes());
+    len
+}
+
+/// The longest `TPM2_PCR_Extend` [`pcr_extend_command`] writes, one digest
+/// in every bank.
+pub const EXTEND_MAX: usize = 31 + 5 * (2 + MAX_DIGEST);
+
+/// `TPM_Extend` of `pcr` on a TPM 1.2 (TPM Main Part 3, section 16.1).
+pub fn pcr_extend_command_1_2(pcr: u32, digest: &[u8; 20]) -> [u8; 34] {
+    let mut command = [0; 34];
+    command[..10].copy_from_slice(&[0x00, 0xC1, 0, 0, 0, 34, 0, 0, 0, 0x14]);
+    command[10..14].copy_from_slice(&pcr.to_be_bytes());
+    command[14..].copy_from_slice(digest);
+    command
+}
+
+/// Whether a response of either family reports success.
+pub fn parse_response_code(response: &[u8]) -> Result<(), ReadError> {
+    Reader {
+        data: response,
+        at: 0,
+    }
+    .header()
 }
 
 /// Big-endian reads over a TPM response, each `None` once past its end.
@@ -346,6 +397,48 @@ mod tests {
             parse_pcr_read(&failed, Bank::Sha256),
             Err(ReadError::Response(0x184))
         );
+    }
+
+    #[test]
+    fn extend_command() {
+        let mut command = [0; EXTEND_MAX];
+        let (sha1, sha256) = ([0x11; 20], [0x22; 32]);
+        let len = pcr_extend_command(
+            17,
+            &[(Bank::Sha1, &sha1), (Bank::Sha256, &sha256)],
+            &mut command,
+        );
+        assert_eq!(len, 31 + 22 + 34);
+        assert_eq!(response_size(&command), Some(len));
+        assert_eq!(
+            &command[..14],
+            &[0x80, 0x02, 0, 0, 0, len as u8, 0, 0, 1, 0x82, 0, 0, 0, 17]
+        );
+        assert_eq!(&command[27..33], &[0, 0, 0, 2, 0, 0x04]);
+        assert_eq!(&command[len - 34..len - 32], &[0, 0x0B]);
+        let every: Vec<(Bank, &[u8])> = Bank::ALL
+            .iter()
+            .map(|&b| (b, &[0u8; MAX_DIGEST][..b.digest_len()]))
+            .collect();
+        assert!(pcr_extend_command(17, &every, &mut command) <= EXTEND_MAX);
+        assert_eq!(
+            parse_response_code(&[0x80, 0x02, 0, 0, 0, 19, 0, 0, 0, 0]),
+            Ok(())
+        );
+        assert_eq!(
+            parse_response_code(&[0x80, 0x01, 0, 0, 0, 10, 0, 0, 0x09, 0x22]),
+            Err(ReadError::Response(0x922))
+        );
+    }
+
+    #[test]
+    fn tpm_1_2_extend() {
+        let command = pcr_extend_command_1_2(17, &[0xAB; 20]);
+        assert_eq!(
+            &command[..14],
+            &[0, 0xC1, 0, 0, 0, 34, 0, 0, 0, 0x14, 0, 0, 0, 17]
+        );
+        assert_eq!(&command[14..], &[0xAB; 20]);
     }
 
     #[test]

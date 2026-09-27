@@ -53,6 +53,7 @@ EFI_BINARY = REPO_ROOT / "target" / "x86_64-unknown-uefi" / "debug" / "drtm.efi"
 # The signed SLs the build embeds in the binary, one per launch path.
 SL_CLASSIC = REPO_ROOT / "target" / "sl-classic.bin"
 SL_PSP = REPO_ROOT / "target" / "sl-psp.bin"
+DLME = REPO_ROOT / "target" / "dlme.bin"
 
 LOGS_DIR = Path(__file__).parent / "logs"
 CACHE_DIR = Path(__file__).parent / "dl-cache"
@@ -64,13 +65,11 @@ CACHE_DIR = Path(__file__).parent / "dl-cache"
 SUMMARY_RECORD = 'drtm: {"rec":"summary"'
 CHECKS_COMPLETE = "drtm: checks complete"
 
-# What a launch boot prints last, from the Secure Loader, and what ends one
-# early: a blocked gate, a failed preamble, or the SL refusing its
-# parameters or panicking. Both forms carry the identifier as is.
+# What a launch boot prints last, from the DLME or the SL, and what ends one
+# early: a blocked gate, a failed preamble, or the SL or the DLME refusing
+# its parameters or panicking. Both forms carry the identifier as is.
 LAUNCH_HALTED = "launch.halted"
 LAUNCH_GATE = "launch.gate"
-# The preamble's last line before `SKINIT`, all a foreign SL's run prints.
-LAUNCH_SKINIT = "entering the trampoline"
 LAUNCH_STOPPED = [
     "launch.gate",
     "launch.params",
@@ -673,21 +672,22 @@ def launch_blocked_boot() -> dict:
     return {"amd_drtm": True, "launch": LAUNCH_GATE, "query_launch": True}
 
 
-STANDIN_REACHED = 0xD7D70001
-"""What drtm's stand-in OS SL writes once AMD's SL has jumped to it. A
-fatal error in AMD's SL resets the machine instead, which ends the run."""
+DLME_REACHED = 0xD7D70001
+"""What drtm's DLME writes first once AMD's SL has jumped to it. A fatal
+error in AMD's SL resets the machine instead, which ends the run."""
 
 
 def _amd_sl_done(codes: list[int]) -> bool:
-    return STANDIN_REACHED in codes
+    return DLME_REACHED in codes
 
 
 @boot_configuration
 def foreign_amd_sl_boot() -> dict:
     """Serial output of one `launch=foreign` boot of the SL
     `DRTM_TEST_FOREIGN_SL` names, with the PSP DRTM service ready and the
-    POST codes logged until the SL's run ends. `client-smm` answers the two
-    SMM commands AMD's client SL sends, which server firmware refuses."""
+    POST codes logged, until the DLME it hands off to halts. `client-smm`
+    answers the two SMM commands AMD's client SL sends, which server
+    firmware refuses."""
     sl = FOREIGN_SL
     assert sl is not None
     return {
@@ -696,7 +696,7 @@ def foreign_amd_sl_boot() -> dict:
         "amd_fch_pmio": True,
         "strict": False,
         "config": FULL_OUTPUT + "launch=foreign\n",
-        "launch": LAUNCH_SKINIT,
+        "launch": LAUNCH_HALTED,
         "build": lambda: foreign_efi_binary(Path(sl), "foreign-test"),
         "post_codes_done": _amd_sl_done,
         "query_launch": True,

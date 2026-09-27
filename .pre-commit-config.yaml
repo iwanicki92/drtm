@@ -97,6 +97,14 @@ repos:
         files: \.rs$
         pass_filenames: false
 
+      - id: cargo-clippy-dlme
+        name: cargo clippy (dlme)
+        description: Lint the DLME for its own target
+        entry: cargo clippy -p dlme --target x86_64-unknown-none --profile sl -- -D warnings
+        language: system
+        files: \.rs$
+        pass_filenames: false
+
       - id: cargo-clippy-common
         name: cargo clippy (common, sign)
         description: Lint the shared crate, the signer and their tests on the host

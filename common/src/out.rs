@@ -40,12 +40,28 @@ pub struct Out {
 
 impl Out {
     pub fn new(sinks: [Option<Uart>; MAX_SINKS], format: Format, level: u8) -> Self {
+        Self::resume(sinks, format, level, [0; Tag::ALL.len()])
+    }
+
+    /// Goes on from `counts`, the tally [`Out::counts`] gave, so one
+    /// summary covers the SL and the DLME.
+    pub fn resume(
+        sinks: [Option<Uart>; MAX_SINKS],
+        format: Format,
+        level: u8,
+        counts: [u32; Tag::ALL.len()],
+    ) -> Self {
         Self {
             sinks: Sinks(sinks),
             format,
             level,
-            counts: [0; Tag::ALL.len()],
+            counts,
         }
+    }
+
+    /// The results so far per tag, indexed by `Tag as usize`.
+    pub fn counts(&self) -> [u32; Tag::ALL.len()] {
+        self.counts
     }
 
     /// Reports one result and counts it for the summary. Printed at the

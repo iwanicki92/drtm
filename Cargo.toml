@@ -20,6 +20,7 @@ log = "0.4"
 uefi = { version = "0.36.1", features = ["alloc", "global_allocator", "panic_handler"] }
 
 [build-dependencies]
+common = { path = "common" }
 sha1 = { version = "0.10", default-features = false }
 sha2 = { version = "0.10", default-features = false }
 sign = { path = "sign" }
@@ -28,7 +29,7 @@ sign = { path = "sign" }
 workspace = true
 
 [workspace]
-members = [".", "common", "sign", "sl"]
+members = [".", "common", "dlme", "sign", "sl"]
 # `cargo build` at the root builds the EFI binary. The other members target
 # something else, see docs/development.md.
 default-members = ["."]
@@ -39,8 +40,9 @@ default-members = ["."]
 # `cargo clippy` during development should report rather than stop.
 undocumented_unsafe_blocks = "warn"
 
-# The Secure Loader, which build.rs builds with this profile. The measured
-# image has to stay under 60 KiB with room left in the SLB behind it.
+# The Secure Loader and the DLME, which build.rs builds with this profile.
+# The SL's measured image has to stay under 60 KiB with room left in the
+# SLB behind it.
 [profile.sl]
 inherits = "release"
 opt-level = "s"
