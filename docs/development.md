@@ -35,8 +35,9 @@ The repository is a Cargo workspace. The root package is `drtm`, the EFI
 binary, and the workspace's only default member, so a plain `cargo build`
 or `cargo clippy` builds that and nothing else. `sl` is the Secure Loader
 that runs after `SKINIT`, built for `x86_64-unknown-none` by `build.rs` once
-per launch path, through its `classic` and `psp` features, and embedded in
-`drtm.efi`, so it needs that target added:
+per launch path, through its `classic` and `psp` features, and `dlme` the
+DLME it hands off to, built once. Both are embedded in `drtm.efi`, so they
+need that target added:
 
 ```sh
 rustup target add x86_64-unknown-none
@@ -138,8 +139,9 @@ counts hold what ran rather than what printed, so lowering the level does not
 move them.
 
 `launch=auto` is the default: once the checks allow it, the run goes on
-through `SKINIT` into the Secure Loader, which reports and halts, through
-the PSP DRTM service where the platform offers it. With the defaults, a
+through `SKINIT` into the Secure Loader, which reports and hands off to the
+DLME, which reports and halts, through the PSP DRTM service where the
+platform offers it. With the defaults, a
 missing `drtm.conf` launches too. `launch=psp` insists on the PSP path and
 `launch=skinit` never takes it. `launch=off` stops after the summary, as a
 run did before the launch existed. See `docs/design.md` for what the gate
@@ -206,11 +208,12 @@ cargo build
 Produces `target/x86_64-unknown-uefi/debug/drtm.efi`. The target is fixed in
 `.cargo/config.toml`, so no `--target` flag is needed. `build.rs` first builds
 the Secure Loader twice with its own `sl` profile into a target directory
-under `OUT_DIR`, once per launch path. It flattens each build into the image
-`SKINIT` measures, fails the build on anything the SLB layout does not allow,
-and computes the PCR values that launch should leave. It also copies the
-images to `target/sl-classic.bin` and `target/sl-psp.bin`, where the QEMU
-tests recompute those values.
+under `OUT_DIR`, once per launch path, then the DLME with the same profile.
+It flattens each build into the image that is measured, fails the build on
+anything the SLB or the DLME's block does not allow, and computes the PCR
+values the launch should leave. It also copies the images to
+`target/sl-classic.bin`, `target/sl-psp.bin` and `target/dlme.bin`, where
+the QEMU tests recompute those values.
 
 ## Linting
 
@@ -226,8 +229,9 @@ pre-commit run --all-files    # run everything once, e.g. after cloning
 
 `cargo-fmt` and `cargo-clippy` hooks shell out to the local toolchain
 directly, so `rustup component add rustfmt clippy` is needed once too. Clippy
-runs four times: `drtm` for UEFI, `sl` for `x86_64-unknown-none` once per
-launch path and `common` on the host with its tests.
+runs five times: `drtm` for UEFI, `sl` for `x86_64-unknown-none` once per
+launch path, `dlme` for the same target, and `common` on the host with its
+tests.
 
 ## Licensing
 
@@ -254,7 +258,9 @@ pages, and adds a link back to that index on each crate's root page.
 
 - `src/`: the Rust binary. `src/launch/` is the gate and the preamble.
 - `sl/`: the Secure Loader, with its linker script `sl.ld`.
-- `common/`: what `drtm` and the Secure Loader share.
+- `dlme/`: the DLME every launch hands off to, with its linker script
+  `dlme.ld`.
+- `common/`: what `drtm`, the Secure Loader and the DLME share.
 - `qemu-tests/`: the pytest-based QEMU test suite (kept out of Cargo's own
   `tests/` directory to avoid confusion between the two). The harness it
   boots with is the `drtmtest` package from the `drtm-tests` repository.

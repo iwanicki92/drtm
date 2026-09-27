@@ -33,8 +33,9 @@ checks it currently performs is whatever `src/main.rs` reports and
 
 The AMD launch, classic `SKINIT` and through the PSP DRTM service, is
 built to agreed designs: the preamble in `drtm`, the Secure Loader in `sl`,
-what both share in `common`, and the SL's signer in `sign`. Intel TXT and
-ARM stay out of scope until the user asks for them.
+the DLME it hands off to in `dlme`, what they share in `common`, and the
+SL's signer in `sign`. Intel TXT and ARM stay out of scope until the user
+asks for them.
 
 Committed files cite upstream sources only: APM section numbers, or paths
 into EDK2/QEMU/Linux. Never the private notes repo the reference material
@@ -65,9 +66,9 @@ note before assuming defaults.
     `rustup component add rustfmt clippy`). Clippy by hand is plain
     `cargo clippy -- -D warnings`: `--all-targets` fails on a duplicate
     `panic_impl`, since the test target links `std` against the `uefi`
-    crate's panic handler. `sl` (once per `classic` and `psp` feature) and
-    `common` have hooks of their own, for their own targets, in the same
-    config.
+    crate's panic handler. `sl` (once per `classic` and `psp` feature),
+    `dlme` and `common` have hooks of their own, for their own targets, in
+    the same config.
 - Run the host unit tests: `cargo test-host`, an alias for `cargo test`
     on the host target of the crates that can run there (`common`, `sign`).
 - Run the fwscan tests: `uv run --project tools/fwscan pytest tools/fwscan`.

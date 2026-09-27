@@ -306,7 +306,7 @@ exercises the emulator and not this binary.
 Every boot here runs with `launch=off` unless it asks for a launch, which
 `make_esp` writes into its `drtm.conf`, so the checks run on a platform that
 could launch and is not asked to. The launch boots in `test_launch.py` read on
-past the checks' summary to the Secure Loader's `launch.halted`: one through a
+past the checks' summary to the DLME's `launch.halted`: one through a
 TIS TPM that must measure the image in SHA-1 and SHA-256, one with the PSP DRTM
 service holding localities 1 to 4, one on the defaults with a SHA-384 bank, one
 through a TPM 1.2, one through a CRB TPM that fails `tpm.locality` and launches
@@ -318,14 +318,15 @@ whose `LAUNCH` times out, one without an IVRS, and five whose `LAUNCH` the
 service refuses. Four of those patch a field of the signed image inside the
 ESP's copy of `drtm.efi`, through `machine.patch_sl`, and one raises the
 platform's patch level. The tests recompute PCR 17 and 18 from the measured part
-of `target/sl-psp.bin` and its key token rather than trusting what drtm
-printed.
+of `target/sl-psp.bin`, its key token and `target/dlme.bin` rather than
+trusting what drtm printed.
 
 `test_foreign_sl_amd.py` runs only when `DRTM_TEST_FOREIGN_SL` names one of
 AMD's SLs. It builds a second binary embedding it, boots it with
 `launch=foreign`, and reads the POST codes `isa-post-code` logged to
 `post-codes.txt` in the boot's log directory, since that SL writes nothing
-else. What the boot needs from QEMU is in `docs/foreign-sl.md`.
+else, then the DLME's report on serial. What the boot needs from QEMU is in
+`docs/foreign-sl.md`.
 What each check can prove, and what the build still models loosely, is in
 `qemu-drtm-support.md`. Dasharo's own TrenchBoot QEMU tests run on upstream and
 never get further than GRUB's precondition checks.

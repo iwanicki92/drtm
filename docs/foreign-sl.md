@@ -73,10 +73,10 @@ Such a build accepts `launch=foreign` in `drtm.conf`. It takes the PSP path
 or blocks, since the SL issues `LAUNCH` itself. A build without the variable
 reports `launch=foreign` as a `config` warning and keeps the default.
 
-The run's last `drtm:` record is `launch.skinit`, with
-`launch.foreign_parameters` before it naming where everything was placed.
-From then on the SL owns the machine and reports only through POST codes on
-port `0x80`.
+Before `SKINIT` the preamble prints `launch.foreign_parameters`, naming
+where everything was placed. From then on the SL owns the machine and
+reports only through POST codes on port `0x80`, until it jumps to `drtm`'s
+DLME, which reports on the sinks like the rest of `drtm`.
 
 ## What the SL expects
 
@@ -105,8 +105,8 @@ from the SL itself, its strings and its code.
 None of these may overlap the SLB, and after `LAUNCH` the SL requires each to
 lie inside a TMR. It measures the OS SL image with `EXTEND_OSSL_DIGEST`,
 which wants the block 64 MiB aligned. It fills the parameters area with a
-header of its own (memory map, TMR descriptors, TCG log, ACPI tables, SMM
-configuration) and then jumps to the OS SL.
+header of its own and the tables it names, described below, and then jumps
+to the OS SL.
 
 The OS SL image carries an `OS_SL_DESCRIPTOR_V1` the SL finds by its GUID,
 `e5c70468-8342-1a1d-d0cc-d39812881d48` in memory order:
@@ -118,8 +118,55 @@ The OS SL image carries an `OS_SL_DESCRIPTOR_V1` the SL finds by its GUID,
 | `0x14` | 8    | `EntryOffset`   |
 | `0x1c` | 8    | `ApEntryOffset` |
 
-`drtm`'s OS SL is a stand-in: its entry writes `0xd7d70001` to port `0x80`
-and halts, and its AP entry halts.
+`drtm`'s OS SL is its DLME, the one its own Secure Loaders hand off to. The
+block holds its image, its parameter page and scratch memory, and the rest
+is the parameters area. The SL jumps to the entry with `jmp edx`, in its
+own flat 32-bit segments with paging off, `EDX` the entry and `EAX` its
+SLB. The DLME writes `0xd7d70001` to port `0x80` first, then finds its own
+address and needs nothing else from those registers. Its AP entry halts.
+
+## What the SL leaves the OS SL
+
+The header at the start of the parameters area, read from the code that
+prints it. Offsets of the tables are from the header, and `Size` covers
+the header and its tables. The client SL writes version 4, a `0x7c`-byte
+header. The EPYC SL writes version 2, whose tables start at `0x54` under
+QEMU. The fields up to `0x40` read the same in both.
+
+| Offset | Size | Field                                        |
+|--------|------|----------------------------------------------|
+| `0x00` | 4    | `Version`                                    |
+| `0x04` | 4    | `Size`                                       |
+| `0x08` | 8    | `EnabledFeatures`                            |
+| `0x10` | 4    | `MemoryDescriptorsOffset`                    |
+| `0x14` | 4    | `MemoryDescriptorsCount`                     |
+| `0x18` | 4    | `TmrDescriptorsOffset`                       |
+| `0x1c` | 4    | `TmrDescriptorsCount`                        |
+| `0x20` | 4    | `TcgLogOffset`                               |
+| `0x24` | 4    | `TcgLogSize`                                 |
+| `0x28` | 4    | `AcpiTablesOffset`                           |
+| `0x2c` | 4    | `AcpiTablesSize`                             |
+| `0x30` | 4    | `SmmConfigurationOffset`                     |
+| `0x34` | 4    | `SmmConfigurationSize`                       |
+| `0x38` | 8    | `DrtmTaCommandRegister`, the mailbox         |
+| `0x40` | 4    | `ReleaseTmrCmd`, `0x30000`                   |
+| `0x44` | 4    | `LocalityAccessCmd`, `0x80000`               |
+| `0x48` | 2 × 4| `ErrorLog` port, data port, index and size   |
+| `0x50` | 4    | `EnableSmmCmd`                               |
+
+Memory and TMR descriptors are `0x20` bytes each: a version of 1, a type
+(2 for a TMR), a size of `0x20`, one more word (a TMR's index, 1 in the
+memory descriptors seen so far), then a 64-bit base and a 64-bit length in
+bytes. The log is a copy of the one `GET_TCG_LOGS` names.
+
+The DLME reports the header (`launch.amd_handoff`), each TMR
+(`launch.amd_tmr`), each memory descriptor at `debug`, and whether the log
+replays to PCR 17 and 18 (`launch.amd_log`), all as `info`, since the layout
+is not published. It judges PCR 18, which the preamble knows from the
+token and the `$AS1` header's `SecPatchLevel`, extended with the DLME as
+`EXTEND_OSSL_DIGEST` does. PCR 17 is only reported: its last extend takes
+the words `LAUNCH` returned to the SL. Then it sends `TMR_RELEASE` and
+runs the probe as after `drtm`'s own PSP launch.
 
 ## Reading the POST codes
 
@@ -134,7 +181,7 @@ The SL's codes are dwords `0xb000NNNN`. The ones that matter:
 | `0xb000100c`               | `LAUNCH` accepted the signature             |
 | `0xb0001eNN`               | step `NN` failed                            |
 | `0xb000100a`               | about to jump to the OS SL                  |
-| `0xd7d70001`               | `drtm`'s stand-in was reached               |
+| `0xd7d70001`               | `drtm`'s DLME was reached                   |
 
 A fatal error does not write a POST code. The SL stores its `0xdeadNNNN`
 code at `0xfed10060` and resets the machine through port `0xcf9`. So a
@@ -158,10 +205,12 @@ DRTM_TEST_FOREIGN_SL=path/to/amddrtm.dll \
     uv run --project qemu-tests pytest qemu-tests/test_foreign_sl_amd.py
 ```
 
-The tests check the stand-in was reached, every command was answered in
-either SL's order above, and the PSP model verified the signature. Under
-QEMU the client SL 1.0.19.4 and the EPYC SLs 1.10.4.1 to 1.10.4.9 all reach
-the stand-in. The EPYC 1.10.1.0 and 1.10.2.0 do not, and why is not known.
+The tests check the DLME was reached, every command was answered in either
+SL's order above, the PSP model verified the signature, and the DLME's
+report: PCR 18, `TMR_RELEASE`, the probe, the TMR and log the SL left, and
+a passing summary. Under QEMU the client SL 1.0.19.4 and the EPYC SLs
+1.10.4.1 to 1.10.4.9 all pass. The EPYC 1.10.1.0 and 1.10.2.0 do not reach
+the DLME, and why is not known.
 The boot needs four things from our QEMU beyond a PSP launch:
 
 - `isa-post-code`, which logs every write to ports `0x80` to `0x83` whole,
