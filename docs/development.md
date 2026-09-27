@@ -141,10 +141,10 @@ move them.
 `launch=auto` is the default: once the checks allow it, the run goes on
 through `SKINIT` into the Secure Loader, which reports and hands off to the
 DLME, which reports and halts, through the PSP DRTM service where the
-platform offers it. With the defaults, a
-missing `drtm.conf` launches too. `launch=psp` insists on the PSP path and
-`launch=skinit` never takes it. `launch=off` stops after the summary, as a
-run did before the launch existed. See `docs/design.md` for what the gate
+platform offers it. With the defaults, a missing `drtm.conf` launches too.
+`launch=psp` insists on the PSP path and `launch=skinit` never takes it.
+`launch=off` stops after the summary, as a run did before the launch
+existed. See `docs/design.md` for what the gate
 blocks on and how the path is chosen. `launch=foreign` exists only in a build
 made with `DRTM_FOREIGN_SL`, see `docs/foreign-sl.md`.
 

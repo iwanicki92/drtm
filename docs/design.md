@@ -119,11 +119,11 @@ answers there.
 `src/launch/` allocates the SLB, the DLME's block and a page for the
 trampoline below 4 GiB. It copies the Secure Loader into the SLB and the
 DLME into its block, each with the same parameter page behind it. The SLB
-sits on a 2 MiB boundary, which the Secure Loader's page tables need, and
-on the PSP path on a 64 MiB one if one is free. The DLME's 1 MiB block sits
-on a 64 MiB boundary, since the guide's appendix E.1 asks that of an
-extended range. The page carries the output format, level and sinks, the
-TPM's family, interface and active banks, the time-stamp counter rate,
+and the DLME's 1 MiB block sit on a 2 MiB boundary, which their page tables
+need. On the PSP paths the block sits on a 64 MiB one, since the guide's
+appendix E.1 asks that of the range `EXTEND_OSSL_DIGEST` measures. The
+page carries the output format, level and sinks, the TPM's family,
+interface and active banks, the time-stamp counter rate,
 whether the PSP DRTM service was ready, and where the DLME is, its length,
 SHA-256 and the PCR 17 the classic path should leave, as `common::params`
 lays it out. On the PSP path it also carries the mailbox, the capability
@@ -177,7 +177,8 @@ computed a value for, SHA-1 and SHA-256, and PCR 18 to 22 against zero.
 Then it hashes the DLME in SHA-1 and SHA-256 and, holding locality 2,
 extends PCR 17 with it in those banks where they are active
 (`launch.dlme_extend`). Other active banks are not extended, and the
-record says so.
+record says so. Nothing guards the block against device writes between the
+hash and the jump on this path, where the PSP paths have TMR 0 over it.
 
 Both paths end in the handoff. Where the DLME's SHA-256 is the one the
 build computed, the Secure Loader writes its tally and what the DLME needs
@@ -205,8 +206,8 @@ for it again if not. In the guide's order:
 1. Locality 2, which the launch unlocks, and the SHA-256 PCRs against the
     build's predictions.
 1. `EXTEND_OSSL_DIGEST` over the DLME, which is the guide's MLE here,
-    checked against the PCRs read before it. The Secure Loader reports
-    whether the DLME is the one the build made.
+    checked against the PCRs read before it. A DLME that is not the one
+    the build made is not sent.
 1. `GET_TMR_DESCRIPTORS`, `ALLOCATE_SHARED_MEMORY`, `GET_TCG_LOGS` and
     `GET_IVRS_TABLE_INFO`. The log is parsed and replayed against PCR 17
     and 18, and the IVRS compared with the one ACPI holds.
@@ -228,12 +229,14 @@ It reads the handoff from its page. After the classic Secure Loader it
 judges PCR 17 in each bank: the `SKINIT` value, then the DLME's digest
 where the Secure Loader extended it (`launch.dlme_pcr17`). After a PSP
 launch it judges SHA-256 PCR 17 and 18 as `LAUNCH` and the extend of the
-DLME leave them (`launch.dlme_pcr17`, `launch.dlme_pcr18`), then sends
-`TMR_RELEASE` with a probe around it: the PIT's interrupt, which the
-IO-APIC delivers as a device write into the `0xFEE` window, must stay out
-of the local APIC's IRR under the TMR and arrive once it is gone. A
-mailbox that stopped answering in the Secure Loader skips it. The summary
-starts from the Secure Loader's tally, so it counts the whole launch, and
+DLME leave them (`launch.dlme_pcr17`, `launch.dlme_pcr18`). Both are
+skipped where `LAUNCH` failed or the extend got no answer, which may still
+have measured the DLME. Then it sends `TMR_RELEASE` with a probe around
+it: the PIT's interrupt, which the IO-APIC delivers as a device write into
+the `0xFEE` window, must stay out of the local APIC's IRR under the TMR
+and arrive once it is gone. A failed `LAUNCH` or a mailbox that stopped
+answering in the Secure Loader skips it. After drtm's Secure Loaders the
+summary starts from their tally, so it counts the whole launch, and
 `launch.halted` follows it. The machine needs a power cycle before the next
 attempt, since a reset would boot drtm from the same media and launch
 again.

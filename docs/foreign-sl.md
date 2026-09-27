@@ -94,8 +94,8 @@ from the SL itself, its strings and its code.
 | `0x08` | 8    | `OsSlBlockBase`        | a 1 MiB block on a 64 MiB boundary  |
 | `0x10` | 8    | `OsSlBlockSize`        | 1 MiB                               |
 | `0x18` | 8    | `OsSlImageOffset`      | 0, within the block                 |
-| `0x20` | 8    | `OsSlImageSize`        | `0x1000`                            |
-| `0x28` | 8    | `OsSlParametersOffset` | `0x1000`                            |
+| `0x20` | 8    | `OsSlImageSize`        | the DLME's measured length          |
+| `0x28` | 8    | `OsSlParametersOffset` | the end of the DLME's scratch       |
 | `0x30` | 8    | `OsSlParametersSize`   | the rest of the block               |
 | `0x38` | 4    | `ApStartupBase`        | 16 KiB below 1 MiB                  |
 | `0x3c` | 4    | `ApStartupSize`        | 16 KiB                              |
@@ -133,26 +133,26 @@ the header and its tables. The client SL writes version 4, a `0x7c`-byte
 header. The EPYC SL writes version 2, whose tables start at `0x54` under
 QEMU. The fields up to `0x40` read the same in both.
 
-| Offset | Size | Field                                        |
-|--------|------|----------------------------------------------|
-| `0x00` | 4    | `Version`                                    |
-| `0x04` | 4    | `Size`                                       |
-| `0x08` | 8    | `EnabledFeatures`                            |
-| `0x10` | 4    | `MemoryDescriptorsOffset`                    |
-| `0x14` | 4    | `MemoryDescriptorsCount`                     |
-| `0x18` | 4    | `TmrDescriptorsOffset`                       |
-| `0x1c` | 4    | `TmrDescriptorsCount`                        |
-| `0x20` | 4    | `TcgLogOffset`                               |
-| `0x24` | 4    | `TcgLogSize`                                 |
-| `0x28` | 4    | `AcpiTablesOffset`                           |
-| `0x2c` | 4    | `AcpiTablesSize`                             |
-| `0x30` | 4    | `SmmConfigurationOffset`                     |
-| `0x34` | 4    | `SmmConfigurationSize`                       |
-| `0x38` | 8    | `DrtmTaCommandRegister`, the mailbox         |
-| `0x40` | 4    | `ReleaseTmrCmd`, `0x30000`                   |
-| `0x44` | 4    | `LocalityAccessCmd`, `0x80000`               |
-| `0x48` | 2 × 4| `ErrorLog` port, data port, index and size   |
-| `0x50` | 4    | `EnableSmmCmd`                               |
+| Offset | Size  | Field                                      |
+|--------|-------|--------------------------------------------|
+| `0x00` | 4     | `Version`                                  |
+| `0x04` | 4     | `Size`                                     |
+| `0x08` | 8     | `EnabledFeatures`                          |
+| `0x10` | 4     | `MemoryDescriptorsOffset`                  |
+| `0x14` | 4     | `MemoryDescriptorsCount`                   |
+| `0x18` | 4     | `TmrDescriptorsOffset`                     |
+| `0x1c` | 4     | `TmrDescriptorsCount`                      |
+| `0x20` | 4     | `TcgLogOffset`                             |
+| `0x24` | 4     | `TcgLogSize`                               |
+| `0x28` | 4     | `AcpiTablesOffset`                         |
+| `0x2c` | 4     | `AcpiTablesSize`                           |
+| `0x30` | 4     | `SmmConfigurationOffset`                   |
+| `0x34` | 4     | `SmmConfigurationSize`                     |
+| `0x38` | 8     | `DrtmTaCommandRegister`, the mailbox       |
+| `0x40` | 4     | `ReleaseTmrCmd`, `0x30000`                 |
+| `0x44` | 4     | `LocalityAccessCmd`, `0x80000`             |
+| `0x48` | 4 × 2 | `ErrorLog` port, data port, index and size |
+| `0x50` | 4     | `EnableSmmCmd`                             |
 
 Memory and TMR descriptors are `0x20` bytes each: a version of 1, a type
 (2 for a TMR), a size of `0x20`, one more word (a TMR's index, 1 in the
@@ -162,11 +162,13 @@ bytes. The log is a copy of the one `GET_TCG_LOGS` names.
 The DLME reports the header (`launch.amd_handoff`), each TMR
 (`launch.amd_tmr`), each memory descriptor at `debug`, and whether the log
 replays to PCR 17 and 18 (`launch.amd_log`), all as `info`, since the layout
-is not published. It judges PCR 18, which the preamble knows from the
-token and the `$AS1` header's `SecPatchLevel`, extended with the DLME as
-`EXTEND_OSSL_DIGEST` does. PCR 17 is only reported: its last extend takes
-the words `LAUNCH` returned to the SL. Then it sends `TMR_RELEASE` and
-runs the probe as after `drtm`'s own PSP launch.
+is not published. PCR 18 is `info` too, with whether it matches the token
+and the `$AS1` header's `SecPatchLevel`, extended with the DLME as
+`EXTEND_OSSL_DIGEST` does: another SL may extend more. PCR 17 is only
+reported, since its last extend takes the words `LAUNCH` returned to the
+SL. Then it sends `TMR_RELEASE` and runs the probe as after `drtm`'s own
+PSP launch. The summary counts the DLME's records alone, since AMD's SL
+passes on no tally.
 
 ## Reading the POST codes
 
@@ -207,10 +209,11 @@ DRTM_TEST_FOREIGN_SL=path/to/amddrtm.dll \
 
 The tests check the DLME was reached, every command was answered in either
 SL's order above, the PSP model verified the signature, and the DLME's
-report: PCR 18, `TMR_RELEASE`, the probe, the TMR and log the SL left, and
-a passing summary. Under QEMU the client SL 1.0.19.4 and the EPYC SLs
-1.10.4.1 to 1.10.4.9 all pass. The EPYC 1.10.1.0 and 1.10.2.0 do not reach
-the DLME, and why is not known.
+report: PCR 18 against a value the tests compute from the SL, `TMR_RELEASE`,
+the probe, the TMR and log the SL left, and a passing summary. A boot that
+never reaches the DLME is still judged by its POST codes. Under QEMU the
+client SL 1.0.19.4 and the EPYC SLs 1.10.4.1 to 1.10.4.9 all pass. The EPYC
+1.10.1.0 and 1.10.2.0 do not reach the DLME, and why is not known.
 The boot needs four things from our QEMU beyond a PSP launch:
 
 - `isa-post-code`, which logs every write to ports `0x80` to `0x83` whole,
