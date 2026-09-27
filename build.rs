@@ -204,9 +204,18 @@ fn build_dlme(root: &Path, out: &Path, sha1: &[u8], sha256: &[u8]) -> String {
         len.is_multiple_of(PAGE) && params_size == PARAMS_SIZE_DLME && image.len() <= len,
         "the DLME's parameter page does not follow its image on a page boundary"
     );
+    // AMD's SL jumps to both entries unchecked.
+    let (version, entry, ap_entry) = (
+        u32_at(&image, 0x10),
+        u64_at(&image, 0x14),
+        u64_at(&image, 0x1c),
+    );
     assert!(
-        image.starts_with(&DESCRIPTOR_GUID),
-        "the DLME does not open with OS_SL_DESCRIPTOR_V1"
+        image.starts_with(&DESCRIPTOR_GUID)
+            && version == 1
+            && entry < image.len()
+            && ap_entry < image.len(),
+        "the DLME does not open with an OS_SL_DESCRIPTOR_V1 whose entries lie in its image"
     );
     image.resize(len, 0);
     fs::write(out.join("dlme.bin"), &image).unwrap();

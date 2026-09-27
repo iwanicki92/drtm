@@ -10,6 +10,7 @@ build predicted, so a wrong prediction in either shows.
 """
 
 import hashlib
+from pathlib import Path
 
 from conftest import DLME, SL_PSP, launch_state, qemu_log, qemu_traces, records
 from test_launch import STACK_LIMIT, after_launch, checks, measured_image, stack_used
@@ -63,10 +64,10 @@ def expected_pcr18() -> str:
     return extend(pcr, sha256((0).to_bytes(4, "little"))).hex()
 
 
-def with_dlme(pcr: str) -> str:
-    """SHA-256 `pcr` after `EXTEND_OSSL_DIGEST` of the DLME: its digest,
-    then the marker's."""
-    extended = extend(bytes.fromhex(pcr), sha256(DLME.read_bytes()))
+def with_dlme(pcr: str, dlme: Path = DLME) -> str:
+    """SHA-256 `pcr` after `EXTEND_OSSL_DIGEST` of the DLME in `dlme`: its
+    digest, then the marker's."""
+    extended = extend(bytes.fromhex(pcr), sha256(dlme.read_bytes()))
     return extend(extended, sha256(b"AMDSL")).hex()
 
 
@@ -99,7 +100,6 @@ def test_auto_takes_the_psp_path(psp_launch_boot: str):
     assert not checks(psp_launch_boot, "launch.path")
     (service,) = checks(psp_launch_boot, "launch.psp_service")
     assert service["fields"]["source"] == "ASPT"
-    assert service["fields"]["slb_aligned"] is True
     assert service["fields"]["ivrs"] is True
     assert service["fields"]["expected_pcr18"] == expected_pcr18()
 
@@ -268,6 +268,30 @@ def test_a_launch_timeout_skips_the_mailbox(psp_timeout_boot: str):
     assert checks(psp_timeout_boot, "launch.locality")
     assert checks(psp_timeout_boot, "launch.pcr17")
     assert result(psp_timeout_boot, "launch.dlme_pcr17") == "skip"
+    assert result(psp_timeout_boot, "launch.dlme_pcr18") == "skip"
+
+
+def test_an_extend_timeout_leaves_the_pcrs_unjudged(psp_extend_timeout_boot: str):
+    # The late extend may still have measured the DLME, so the DLME judges
+    # neither PCR, and sends nothing to the dead mailbox.
+    assert result(psp_extend_timeout_boot, "launch.psp_launch") == "pass"
+    assert result(psp_extend_timeout_boot, "launch.psp_extend") == "fail"
+    for step in AFTER_LAUNCH[1:]:
+        assert result(psp_extend_timeout_boot, step) == "skip", step
+    for pcr in ("launch.dlme_pcr17", "launch.dlme_pcr18"):
+        (found,) = checks(psp_extend_timeout_boot, pcr)
+        assert found["result"] == "skip", pcr
+        assert "EXTEND_OSSL_DIGEST got no answer" in found["detail"], pcr
+
+
+def test_a_changed_dlme_is_neither_extended_nor_run(psp_bad_dlme_boot: str):
+    (extend,) = checks(psp_bad_dlme_boot, "launch.psp_extend")
+    assert extend["result"] == "skip"
+    (handoff,) = checks(psp_bad_dlme_boot, "launch.handoff")
+    assert handoff["result"] == "fail"
+    assert not checks(psp_bad_dlme_boot, "launch.dlme")
+    assert records(psp_bad_dlme_boot)[-1]["id"] == "launch.halted"
+    assert sl_summary(psp_bad_dlme_boot)["verdict"] == "fail"
 
 
 def refused(capture: str, boot: str, reason: str) -> None:
@@ -281,8 +305,11 @@ def refused(capture: str, boot: str, reason: str) -> None:
         assert declined["result"] == "info", step
         fields = declined["fields"]
         assert fields["status"] == fields["expected"], step
-    assert result(capture, "launch.psp_tmr") == "pass"
-    assert result(capture, "launch.psp_probe") == "pass"
+    # The DLME expects nothing of a refused LAUNCH, and has no TMR to free.
+    assert result(capture, "launch.dlme_pcr17") == "skip"
+    assert result(capture, "launch.dlme_pcr18") == "skip"
+    assert result(capture, "launch.psp_tmr") == "skip"
+    assert not checks(capture, "launch.psp_probe")
 
 
 def test_a_flipped_signature_byte_is_refused(psp_bad_signature_boot: str):

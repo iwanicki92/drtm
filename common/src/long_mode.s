@@ -23,6 +23,9 @@
     /* The control register and MSR bits changed here. */
     .set CR0_PG, 1 << 31            /* paging */
     .set CR4_PAE, 1 << 5            /* page table entries of 64 bits */
+    .set CR4_LA57, 1 << 12          /* five-level paging */
+    .set CR4_PCIDE, 1 << 17         /* process-context identifiers */
+    .set CR4_CET, 1 << 23           /* control-flow enforcement */
     .set MSR_EFER, 0xC0000080       /* extended feature enable register */
     .set EFER_LME, 1 << 8           /* long mode enable */
 
@@ -115,7 +118,9 @@
      * keeps running because its physical addresses are mapped to
      * themselves.
      */
+    /* Four-level tables, whatever the code before this left in CR4. */
     mov eax, cr4
+    and eax, ~(CR4_LA57 | CR4_PCIDE | CR4_CET)
     or eax, CR4_PAE
     mov cr4, eax
     mov cr3, ebx

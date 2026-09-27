@@ -52,7 +52,7 @@ const SLB_ALIGN: usize = 2 << 20;
 const SLB_PAGES: usize = (SLB_ALIGN + SLB_SIZE - PAGE) / PAGE;
 
 /// The alignment the guide's appendix E.1 asks of the MLE the PSP path
-/// extends. The DLME's block keeps it, and the SLB where it can.
+/// extends, the DLME's block.
 const MLE_ALIGN: u64 = 64 << 20;
 
 /// `IA32_APIC_BASE`: the xAPIC's MMIO base in bits 51:12, x2APIC mode in
@@ -93,11 +93,11 @@ fn allocate(memory: MemoryType, pages: usize) -> Option<*mut u8> {
         .map(|block| block.as_ptr())
 }
 
-/// `size` bytes on a 64 MiB boundary below 4 GiB, the first one free.
-fn allocate_aligned(size: usize) -> Option<*mut u8> {
-    (1..(1u64 << 32) / MLE_ALIGN).find_map(|slot| {
+/// `size` bytes on an `align` boundary below 4 GiB, the first one free.
+fn allocate_aligned(size: usize, align: u64) -> Option<*mut u8> {
+    (1..(1u64 << 32) / align).find_map(|slot| {
         boot::allocate_pages(
-            AllocateType::Address(slot * MLE_ALIGN),
+            AllocateType::Address(slot * align),
             MemoryType::LOADER_DATA,
             size / PAGE,
         )
@@ -253,12 +253,15 @@ pub fn launch(
         fail("no TPM answers any more");
         return;
     };
-    // The PSP path puts the SLB on a 64 MiB boundary where one is free.
-    // Every path puts the DLME's block on one.
-    let aligned = service.as_ref().and_then(|_| allocate_aligned(SLB_SIZE));
+    // Only `EXTEND_OSSL_DIGEST` wants the DLME's block on 64 MiB.
+    let dlme_align = if service.is_some() {
+        MLE_ALIGN
+    } else {
+        params::DLME_ALIGN
+    };
     let (Some(block), Some(dlme_block), Some(page)) = (
-        aligned.or_else(|| allocate(MemoryType::LOADER_DATA, SLB_PAGES)),
-        allocate_aligned(dlme::BLOCK_SIZE),
+        allocate(MemoryType::LOADER_DATA, SLB_PAGES),
+        allocate_aligned(dlme::BLOCK_SIZE, dlme_align),
         allocate(MemoryType::LOADER_CODE, 1),
     ) else {
         fail("no memory below 4 GiB for the SLB, the DLME and the trampoline");
@@ -425,10 +428,6 @@ pub fn launch(
                 ),
                 ("tmr_base", Value::Hex(psp.tmr_base)),
                 ("tmr_size", Value::Hex(psp.tmr_size)),
-                (
-                    "slb_aligned",
-                    Value::Flag((slb as u64).is_multiple_of(MLE_ALIGN)),
-                ),
                 ("ioapic", Value::Hex(pit.map_or(0, |pit| pit.ioapic.into()))),
                 ("pit_pin", Value::Count(pit.map_or(0, |pit| pit.pin.into()))),
                 ("ivrs", Value::Flag(params.ivrs_sha256.is_some())),
@@ -437,17 +436,11 @@ pub fn launch(
             ],
             format_args!(
                 "the service at {:#x} from the {} is kicked, TMR 0 is to cover \
-                 [{:#x}, {:#x}) once boot services are gone, the SLB is {}on \
-                 a 64 MiB boundary",
+                 [{:#x}, {:#x}) once boot services are gone",
                 psp.mailbox,
                 psp.source.name(),
                 psp.tmr_base,
                 psp.tmr_base + psp.tmr_size,
-                if (slb as u64).is_multiple_of(MLE_ALIGN) {
-                    ""
-                } else {
-                    "not "
-                },
             ),
         );
     }

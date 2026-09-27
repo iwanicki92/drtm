@@ -213,8 +213,9 @@ fn with_dlme(pcr: &[u8; 32], params: &Params) -> [u8; 32] {
 }
 
 /// After a PSP launch: PCR 17 and 18 as `LAUNCH` and the DLME's extend
-/// left them. A foreign SL's `LAUNCH` words never reach the DLME, so its
-/// PCR 17 is reported unjudged. Returns the PCRs, where they read.
+/// left them. After a foreign SL both are `info`: its `LAUNCH` words never
+/// reach the DLME, and its extends are its own. Returns the PCRs, where they
+/// read.
 fn judge_psp(
     out: &mut Out,
     params: &Params,
@@ -240,13 +241,27 @@ fn judge_psp(
     };
     let foreign = handoff.from == Sender::Foreign;
     let extended = foreign || handoff.dlme_extended;
-    if !foreign && handoff.launch.is_none() {
-        out.check(
-            Tag::Skip,
-            "launch.dlme_pcr17",
-            &[("pcr17", Value::Bytes(pcrs[0].as_bytes()))],
-            format_args!("LAUNCH did not succeed, so no value is expected past the SL's"),
-        );
+    let unknown = if foreign {
+        None
+    } else if handoff.launch.is_none() {
+        Some("LAUNCH did not succeed, so no value is expected past the SL's")
+    } else if handoff.extend_unanswered {
+        Some("EXTEND_OSSL_DIGEST got no answer, so whether it measured the DLME is unknown")
+    } else {
+        None
+    };
+    if let Some(why) = unknown {
+        for (id, pcr) in [
+            ("launch.dlme_pcr17", &pcrs[0]),
+            ("launch.dlme_pcr18", &pcrs[1]),
+        ] {
+            out.check(
+                Tag::Skip,
+                id,
+                &[("value", Value::Bytes(pcr.as_bytes()))],
+                format_args!("{why}"),
+            );
+        }
         return Some(pcrs);
     }
     let what = if extended {
@@ -301,13 +316,20 @@ fn judge_psp(
     };
     let pcr18 = pcrs[1].as_bytes();
     let ok = pcr18 == expected;
+    // A foreign SL may extend more than the one measurement assumed here.
+    let tag = match (foreign, ok) {
+        (true, _) => Tag::Info,
+        (false, true) => Tag::Pass,
+        (false, false) => Tag::Fail,
+    };
     out.check(
-        if ok { Tag::Pass } else { Tag::Fail },
+        tag,
         "launch.dlme_pcr18",
         &[
             ("bank", Value::Text(format_args!("sha256"))),
             ("pcr18", Value::Bytes(pcr18)),
             ("expected", Value::Bytes(&expected)),
+            ("matches", Value::Flag(ok)),
         ],
         format_args!(
             "sha256 PCR 18 {} the SL's key token and SecPatchLevel{what}",
@@ -323,12 +345,19 @@ fn release(out: &mut Out, params: &Params, handoff: &Handoff) {
     let Some(psp) = params.psp else {
         return;
     };
-    if handoff.mailbox_dead {
+    let unsent = if handoff.mailbox_dead {
+        Some("the mailbox stopped answering in the SL")
+    } else if handoff.from == Sender::Psp && handoff.launch.is_none() {
+        Some("LAUNCH did not succeed")
+    } else {
+        None
+    };
+    if let Some(why) = unsent {
         out.check(
             Tag::Skip,
             "launch.psp_tmr",
             &[],
-            format_args!("TMR_RELEASE not sent, the mailbox stopped answering in the SL"),
+            format_args!("TMR_RELEASE not sent, {why}"),
         );
         return;
     }

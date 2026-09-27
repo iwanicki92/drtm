@@ -17,8 +17,8 @@ use common::params;
 use super::image::DLME;
 
 /// The block: the DLME's image, its parameter page and scratch memory,
-/// then the area a foreign SL fills for it. 64 MiB aligned, as
-/// `EXTEND_OSSL_DIGEST` wants the image it measures.
+/// then the area a foreign SL fills for it. 64 MiB aligned on the PSP
+/// paths, as `EXTEND_OSSL_DIGEST` wants the image it measures.
 pub const BLOCK_SIZE: usize = params::DLME_BLOCK_SIZE as usize;
 const PAGE: usize = 0x1000;
 

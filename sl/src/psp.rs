@@ -211,6 +211,7 @@ pub fn run(out: &mut Out, params: &Params, psp: &Psp, slb: u32) -> (Handoff, Mea
     judge_pcrs(&mut session, fuses);
     let measured = handoff::measure(params);
     let dlme_extended = extend(&mut session, &measured);
+    let extend_unanswered = session.dead == Some(Command::ExtendOsslDigest);
     tmr_descriptors(&mut session);
     let shared = shared_memory(&mut session, slb);
     tcg_log(&mut session, slb, shared);
@@ -224,6 +225,7 @@ pub fn run(out: &mut Out, params: &Params, psp: &Psp, slb: u32) -> (Handoff, Mea
         launch: fuses,
         mailbox_dead: session.dead.is_some(),
         dlme_extended,
+        extend_unanswered,
         ..Handoff::FOREIGN
     };
     (handoff, measured)
@@ -456,9 +458,27 @@ fn judge_pcrs(s: &mut Session, fuses: Option<(u32, u32)>) {
 
 /// Step 3: the DLME, which is what the guide's MLE is here. Returns
 /// whether the service measured it.
+/// A DLME that is not the build's goes unmeasured. The handoff reports it,
+/// and does not jump. Out of line, so its record adds nothing to `run`'s
+/// frame.
+#[cold]
+#[inline(never)]
+fn not_extended(out: &mut Out, measured: &Measured) {
+    out.check(
+        Tag::Skip,
+        "launch.psp_extend",
+        &[("digest", Value::Bytes(&measured.sha256))],
+        format_args!("EXTEND_OSSL_DIGEST not sent, the DLME in memory is not the build's"),
+    );
+}
+
 fn extend(s: &mut Session, measured: &Measured) -> bool {
     let (base, len) = (s.params.dlme.block, s.params.dlme.len);
     let aligned = base.is_multiple_of(MLE_ALIGN);
+    if !measured.matches {
+        not_extended(s.out, measured);
+        return false;
+    }
     let before = s.pcrs(Bank::Sha256);
     let Some(answer) = s.command(
         "launch.psp_extend",

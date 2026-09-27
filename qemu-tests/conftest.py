@@ -40,6 +40,7 @@ from machine import (
     inject_corrected_error,
     make_esp,
     options,
+    patch_dlme,
     patch_sl,
     post_codes,
     unsupported_binary,
@@ -176,6 +177,7 @@ def boot_and_capture(
     launch: str | None = None,
     pcr_banks: tuple[str, ...] | None = None,
     sl_patch: str | None = None,
+    dlme_patch: bool = False,
     build: Callable[[], Path] | None = None,
     post_codes_done: Callable[[list[int]], bool] | None = None,
     **machine,
@@ -196,15 +198,16 @@ def boot_and_capture(
     done, for `launch_state` to read.
 
     `launch` leaves the launch on and reads on past the summary to the
-    line it names: `LAUNCH_HALTED`, the Secure Loader's last, or
-    `LAUNCH_GATE` for a launch the gate blocks. `pcr_banks` gives the TPM
+    line it names: `LAUNCH_HALTED`, the last line of the DLME or of an SL
+    that cannot hand off, or `LAUNCH_GATE` for a launch the gate blocks. `pcr_banks` gives the TPM
     other banks than the session's. `sl_patch` names a field of the signed
-    PSP SL that `machine.patch_sl` changes in the ESP's copy of the binary.
+    PSP SL that `machine.patch_sl` changes in the ESP's copy of the binary,
+    and `dlme_patch` has `machine.patch_dlme` change the DLME there.
     `build` builds and names another binary to boot.
 
     `post_codes_done` attaches `isa-post-code`, logging to `post-codes.txt`
-    in `log_dir`, and waits after `launch` until the codes logged so far
-    satisfy it.
+    in `log_dir`, and waits before `launch` until the codes logged so far
+    satisfy it. Where they never do, `launch` is not read.
     """
     marker = SUMMARY_RECORD if config and "format=json" in config else CHECKS_COMPLETE
     with tempfile.TemporaryDirectory(prefix="drtm-esp-") as scratch:
@@ -214,6 +217,10 @@ def boot_and_capture(
             patched.write_bytes(
                 patch_sl(binary.read_bytes(), SL_PSP.read_bytes(), sl_patch)
             )
+            binary = patched
+        if dlme_patch:
+            patched = Path(scratch) / "patched-dlme.efi"
+            patched.write_bytes(patch_dlme(binary.read_bytes(), DLME.read_bytes()))
             binary = patched
         esp = make_esp(Path(scratch), binary, config, launch is not None)
         settings = Settings.from_environment()
@@ -242,13 +249,18 @@ def boot_and_capture(
             # is still in flight. Read to its end, or a loaded host leaves
             # the summary record cut short and unparsable.
             vm.expect("\n", LINE_TIMEOUT)
-            if launch is not None:
+            # Codes first: a launch that never reaches the code that prints
+            # `launch` is still judged by what it logged.
+            reached = True
+            if codes is not None and post_codes_done is not None:
+                _wait_for_post_codes(vm, codes, post_codes_done)
+                reached = post_codes_done(post_codes(codes))
+            if launch is not None and reached:
                 stops = [stop for stop in LAUNCH_STOPPED if stop != launch]
                 vm.expect(launch, BOOT_TIMEOUT, failures=stops)
                 vm.expect("\n", LINE_TIMEOUT)
-            if codes is not None and post_codes_done is not None:
-                _wait_for_post_codes(vm, codes, post_codes_done)
-            if query_launch:
+            # A guest that reset has taken QEMU down with it.
+            if query_launch and vm.running:
                 _LAUNCH_STATE[log_dir] = vm.wait_for_qmp().execute("query-amd-drtm")
             return vm.capture
 
@@ -533,6 +545,35 @@ def psp_timeout_boot() -> dict:
         **_psp_machine(**{"command-delay": 6000, "delayed-command": 4}),
         "launch": LAUNCH_HALTED,
     }
+
+
+@boot_configuration
+def psp_extend_timeout_boot() -> dict:
+    """Serial output of one PSP launch whose `EXTEND_OSSL_DIGEST` answers
+    after 11 s, past the SL's 10 s, and still measures the DLME."""
+    return {
+        **_psp_machine(**{"command-delay": 11000, "delayed-command": 0xB}),
+        "launch": LAUNCH_HALTED,
+    }
+
+
+@boot_configuration
+def launch_bad_dlme_boot() -> dict:
+    """Serial output of one classic launch whose DLME differs from the
+    build's by a byte, so the SL does not jump to it."""
+    return {
+        "amd_drtm": True,
+        "tpm": "tis",
+        "launch": LAUNCH_HALTED,
+        "dlme_patch": True,
+    }
+
+
+@boot_configuration
+def psp_bad_dlme_boot() -> dict:
+    """Serial output of one PSP launch whose DLME differs from the
+    build's by a byte."""
+    return {**_psp_machine(), "launch": LAUNCH_HALTED, "dlme_patch": True}
 
 
 @boot_configuration
@@ -830,7 +871,9 @@ def launch_state(name: str) -> dict:
     """What the platform device recorded of boot `name`, from
     `query-amd-drtm`: whether a launch happened, whether SL_DEV is armed and
     which ranges are kept from DMA."""
-    return _LAUNCH_STATE[SESSION.boot_log_dir(name)]
+    state = _LAUNCH_STATE.get(SESSION.boot_log_dir(name))
+    assert state is not None, f"QEMU exited before {name} could be queried"
+    return state
 
 
 def _is_trace(line: str) -> bool:

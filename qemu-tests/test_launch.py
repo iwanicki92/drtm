@@ -163,16 +163,44 @@ def test_the_dlme_judges_pcr17(launch_boot: str):
         assert pcr17["fields"]["pcr17"] == expected_dlme_pcr17(pcr17["fields"]["bank"])
 
 
-def test_one_summary_counts_the_sl_and_the_dlme(launch_boot: str):
-    # Everything the SL and the DLME judged, from the trampoline to the
-    # summary, and nothing twice.
-    found = after_launch(launch_boot)
+# Records the summary does not count, which look like checks.
+UNCOUNTED = ("launch.dlme", "launch.halted")
+
+
+def counted_once(capture: str) -> None:
+    """The last summary counts everything the SL and the DLME judged,
+    from the trampoline on, and nothing twice."""
+    found = after_launch(capture)
     details = [record.get("detail") for record in found]
     start = details.index("entering the trampoline, SKINIT follows") + 1
-    summary = found[-2]
-    judged = [r["result"] for r in found[start:-2] if r["rec"] == "check"]
-    for tag in ("pass", "fail", "warn"):
-        assert summary[tag] == judged.count(tag), tag
+    end = max(i for i, record in enumerate(found) if record["rec"] == "summary")
+    judged = [
+        r["result"]
+        for r in found[start:end]
+        if r["rec"] == "check" and r["id"] not in UNCOUNTED
+    ]
+    # `info` is left out: progress at `debug` looks the same, uncounted.
+    for tag in ("pass", "fail", "warn", "skip"):
+        assert found[end][tag] == judged.count(tag), tag
+
+
+def test_one_summary_counts_the_sl_and_the_dlme(
+    launch_boot: str, launch_psp_boot: str, psp_timeout_boot: str
+):
+    # All pass, then warn and skip carried across, then fail.
+    for capture in (launch_boot, launch_psp_boot, psp_timeout_boot):
+        counted_once(capture)
+
+
+def test_a_changed_dlme_is_neither_extended_nor_run(launch_bad_dlme_boot: str):
+    # The SL reports the mismatch, prints its own summary and halts.
+    assert not checks(launch_bad_dlme_boot, "launch.dlme_extend")
+    (handoff,) = checks(launch_bad_dlme_boot, "launch.handoff")
+    assert handoff["result"] == "fail"
+    assert not checks(launch_bad_dlme_boot, "launch.dlme")
+    found = after_launch(launch_bad_dlme_boot)
+    assert [r.get("id", r["rec"]) for r in found[-2:]] == ["summary", "launch.halted"]
+    assert found[-2]["verdict"] == "fail"
 
 
 def test_the_platform_saw_a_clean_launch(launch_boot: str):
@@ -211,7 +239,9 @@ def test_the_psp_service_holds_locality_2(launch_psp_boot: str):
     # Locality 0 cannot extend PCR 17, so the DLME finds the SL's value.
     (extend,) = checks(launch_psp_boot, "launch.dlme_extend")
     assert extend["result"] == "skip"
-    for pcr17 in checks(launch_psp_boot, "launch.dlme_pcr17"):
+    judged = checks(launch_psp_boot, "launch.dlme_pcr17")
+    assert [r["fields"]["bank"] for r in judged] == ["sha1", "sha256"]
+    for pcr17 in judged:
         assert pcr17["result"] == "pass"
         assert pcr17["fields"]["extended"] is False
         assert pcr17["fields"]["pcr17"] == expected_pcr17(pcr17["fields"]["bank"])

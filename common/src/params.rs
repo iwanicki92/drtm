@@ -63,11 +63,16 @@ pub const SIZE: usize = COUNTS + 4 * Tag::ALL.len();
 /// memory, and on the foreign path what AMD's SL leaves for it.
 pub const DLME_BLOCK_SIZE: u64 = 1 << 20;
 
-/// `HANDOFF_FLAGS`: `LAUNCH` succeeded, the mailbox stopped answering, and
-/// `EXTEND_OSSL_DIGEST` measured the DLME.
+/// The block's least alignment, the 2 MiB page the DLME maps it with. PSP
+/// launches put it on 64 MiB, as `EXTEND_OSSL_DIGEST` wants.
+pub const DLME_ALIGN: u64 = 2 << 20;
+
+/// `HANDOFF_FLAGS`: `LAUNCH` succeeded, the mailbox stopped answering,
+/// `EXTEND_OSSL_DIGEST` measured the DLME, or got no answer.
 const LAUNCHED: u8 = 1 << 0;
 const MAILBOX_DEAD: u8 = 1 << 1;
 const DLME_EXTENDED: u8 = 1 << 2;
+const EXTEND_UNANSWERED: u8 = 1 << 3;
 
 /// `PIT_FLAGS`: an entry is there, and how the pin is wired.
 const PIT_PRESENT: u8 = 1 << 0;
@@ -140,7 +145,7 @@ pub struct Psp {
 /// The DLME the preamble placed, and what measuring it should leave.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Dlme {
-    /// Its block, [`DLME_BLOCK_SIZE`] bytes on a 64 MiB boundary.
+    /// Its block, [`DLME_BLOCK_SIZE`] bytes on a [`DLME_ALIGN`] boundary.
     pub block: u64,
     /// The measured image at the block's start, in whole pages. Its copy of
     /// this page follows it.
@@ -172,6 +177,9 @@ pub struct Handoff {
     pub mailbox_dead: bool,
     /// `EXTEND_OSSL_DIGEST` measured the DLME.
     pub dlme_extended: bool,
+    /// `EXTEND_OSSL_DIGEST` timed out, so whether it measured the DLME is
+    /// unknown.
+    pub extend_unanswered: bool,
     /// The banks the classic SL extended the DLME into, as [`Bank::bit`]
     /// flags.
     pub extended_banks: u32,
@@ -186,6 +194,7 @@ impl Handoff {
         launch: None,
         mailbox_dead: false,
         dlme_extended: false,
+        extend_unanswered: false,
         extended_banks: 0,
         counts: [0; Tag::ALL.len()],
     };
@@ -199,7 +208,12 @@ impl Handoff {
         };
         page[HANDOFF_FLAGS] = if self.launch.is_some() { LAUNCHED } else { 0 }
             | if self.mailbox_dead { MAILBOX_DEAD } else { 0 }
-            | if self.dlme_extended { DLME_EXTENDED } else { 0 };
+            | if self.dlme_extended { DLME_EXTENDED } else { 0 }
+            | if self.extend_unanswered {
+                EXTEND_UNANSWERED
+            } else {
+                0
+            };
         page[EXTENDED_BANKS..EXTENDED_BANKS + 4]
             .copy_from_slice(&self.extended_banks.to_le_bytes());
         let (anti_rollback, tsme) = self.launch.unwrap_or_default();
@@ -226,6 +240,7 @@ impl Handoff {
             launch: (flags & LAUNCHED != 0).then(|| (u32_at(ANTI_ROLLBACK), u32_at(TSME))),
             mailbox_dead: flags & MAILBOX_DEAD != 0,
             dlme_extended: flags & DLME_EXTENDED != 0,
+            extend_unanswered: flags & EXTEND_UNANSWERED != 0,
             extended_banks: u32_at(EXTENDED_BANKS),
             counts: core::array::from_fn(|i| u32_at(COUNTS + 4 * i)),
         })
@@ -494,10 +509,9 @@ impl Params {
             None
         };
         let ivrs_sha256 = (page[IVRS_PRESENT] != 0).then(|| digest(IVRS_SHA256));
-        // The SLs and the DLME map the low 4 GiB, and the block is aligned
-        // as the guide's appendix E.1 asks of an MLE.
+        // The SLs and the DLME map the low 4 GiB.
         let (block, len) = (u64_at(DLME), u32_at(DLME_LEN));
-        if block == 0 || block % (64 << 20) != 0 || block + DLME_BLOCK_SIZE > 1 << 32 {
+        if block == 0 || block % DLME_ALIGN != 0 || block + DLME_BLOCK_SIZE > 1 << 32 {
             return Err(Invalid::Field("dlme"));
         }
         if len == 0 || len % 0x1000 != 0 || u64::from(len) + SIZE as u64 > DLME_BLOCK_SIZE {
@@ -611,6 +625,7 @@ mod tests {
             launch: Some((0x1234, 0x5678)),
             mailbox_dead: true,
             dlme_extended: true,
+            extend_unanswered: true,
             extended_banks: Bank::Sha256.bit(),
             counts: [1, 2, 3, 4, 5],
         };
@@ -648,7 +663,7 @@ mod tests {
         );
         // The mailbox moved above 4 GiB.
         assert_eq!(damaged(MAILBOX + 4, 1), Err(Invalid::Field("mailbox")));
-        // The DLME moved above 4 GiB, and off its 64 MiB boundary.
+        // The DLME moved above 4 GiB, and off its 2 MiB boundary.
         assert_eq!(damaged(DLME + 4, 1), Err(Invalid::Field("dlme")));
         assert_eq!(damaged(DLME + 2, 1), Err(Invalid::Field("dlme")));
         assert_eq!(damaged(DLME_LEN, 1), Err(Invalid::Field("dlme length")));

@@ -129,6 +129,15 @@ def patch_sl(efi: bytes, sl: bytes, field: str) -> bytes:
     return efi[:at] + value + efi[at + len(value) :]
 
 
+def patch_dlme(efi: bytes, dlme: bytes) -> bytes:
+    """`efi` with the last byte of each copy of the DLME it embeds flipped,
+    in the padding, so the DLME still runs but hashes differently."""
+    if dlme not in efi:
+        raise ValueError("the binary does not embed the DLME")
+    flipped = dlme[:-1] + bytes([dlme[-1] ^ 0xFF])
+    return efi.replace(dlme, flipped)
+
+
 def make_esp(
     scratch: Path, efi_binary: Path, config: str | None, launch: bool = False
 ) -> Path:

@@ -11,10 +11,13 @@ the log `isa-post-code` wrote, and the console for the DLME it hands off
 to.
 """
 
+from pathlib import Path
+
 import pytest
 from conftest import (
     DLME_REACHED,
     FOREIGN_SL,
+    REPO_ROOT,
     SESSION,
     launch_state,
     qemu_log,
@@ -22,12 +25,27 @@ from conftest import (
 )
 from machine import post_codes
 from test_launch import after_launch, checks
-from test_psp_launch import with_dlme
+from test_psp_launch import (
+    SIG_HEADER_LEN,
+    SIGNATURE_LEN,
+    TOKEN_LEN,
+    extend,
+    sha256,
+    with_dlme,
+)
 
 if FOREIGN_SL is None:
     pytest.skip("DRTM_TEST_FOREIGN_SL is not set", allow_module_level=True)
 
 BOOT = "foreign_amd_sl_boot"
+
+# The foreign build's own DLME, in the target directory the fixture names.
+FOREIGN_DLME = REPO_ROOT / "target" / "foreign-test" / "dlme.bin"
+
+# `AMD_SL_HDR_V1`'s GUID, which finds the SL in a PE file, and where the
+# `$AS1` header keeps its SecPatchLevel.
+SL_GUID = bytes.fromhex("da75c40ed0d35d48b6ae3cb20fb7ad3a")
+SEC_PATCH_LEVEL = 0x4C
 
 # The SL's own codes carry this prefix, the firmware's before them do not
 SL = 0xB000_0000
@@ -57,6 +75,19 @@ CLIENT = LAUNCH_AND_TMRS + SMM + TCG_LOGS
 EPYC = LAUNCH_AND_TMRS + TCG_LOGS
 
 
+def foreign_pcr18() -> str:
+    """SHA-256 PCR 18 after the foreign SL's `LAUNCH`: its key token, then
+    its `$AS1` header's SecPatchLevel."""
+    assert FOREIGN_SL is not None
+    data = Path(FOREIGN_SL).read_bytes()
+    sl = data[data.index(SL_GUID) - 4 :] if data.startswith(b"MZ") else data
+    block = -(-int.from_bytes(sl[2:4], "little") // 16) * 16
+    level = sl[block + SEC_PATCH_LEVEL : block + SEC_PATCH_LEVEL + 4]
+    at = block + SIG_HEADER_LEN + SIGNATURE_LEN
+    pcr = extend(bytes(32), sha256(sl[at : at + TOKEN_LEN]))
+    return extend(pcr, sha256(level)).hex()
+
+
 def sl_codes() -> list[int]:
     codes = post_codes(SESSION.boot_log_dir(BOOT) / "post-codes.txt")
     return [code & 0xFFFF for code in codes if code & 0xFFFF_0000 == SL]
@@ -71,12 +102,14 @@ def test_the_sl_hands_off_to_the_dlme(foreign_amd_sl_boot: str):
 
 
 def test_the_dlme_reports_the_launch(foreign_amd_sl_boot: str):
-    # PCR 18 is known from the token alone. PCR 17's last extend takes
-    # words LAUNCH returned to AMD's SL, which the DLME never sees.
+    # Both are info after a foreign SL. PCR 18 follows from the token and
+    # SecPatchLevel, and AMD's SLs extend nothing more into it.
     (service,) = checks(foreign_amd_sl_boot, "launch.psp_service")
+    assert service["fields"]["expected_pcr18"] == foreign_pcr18()
     (pcr18,) = checks(foreign_amd_sl_boot, "launch.dlme_pcr18")
-    assert pcr18["result"] == "pass"
-    assert pcr18["fields"]["pcr18"] == with_dlme(service["fields"]["expected_pcr18"])
+    assert pcr18["result"] == "info"
+    assert pcr18["fields"]["matches"] is True
+    assert pcr18["fields"]["pcr18"] == with_dlme(foreign_pcr18(), FOREIGN_DLME)
     (pcr17,) = checks(foreign_amd_sl_boot, "launch.dlme_pcr17")
     assert pcr17["result"] == "info"
     for identifier in ("launch.psp_tmr", "launch.psp_probe"):

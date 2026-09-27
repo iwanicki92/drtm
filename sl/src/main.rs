@@ -222,6 +222,18 @@ fn extend_dlme(out: &mut Out, params: &Params, tpm: &Tpm, measured: &Measured) -
     } else {
         ", the other active banks are not extended, since the SL hashes SHA-1 and SHA-256 alone"
     };
+    if count == 0 {
+        out.check(
+            Tag::Warn,
+            "launch.dlme_extend",
+            &fields,
+            format_args!(
+                "PCR 17 is not extended with the DLME, no SHA-1 or SHA-256 bank is active \
+                 and the SL hashes those alone"
+            ),
+        );
+        return 0;
+    }
     match pcr::extend17(tpm, params.family, &digests[..count]) {
         Ok(()) => {
             out.check(
