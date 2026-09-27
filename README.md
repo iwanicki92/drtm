@@ -84,6 +84,23 @@ the run could report it. Enabling both sinks is right only where the two are
 separate devices. See [docs/development.md](docs/development.md) for the
 rest.
 
+## Firmware scan
+
+The PSP DRTM service on some platforms takes only Secure Loaders signed with
+keys its DRTM TA lists, which `drtm`'s own key never is.
+[tools/fwscan](tools/fwscan/README.md) checks a firmware image for such a list
+before it is flashed:
+
+```sh
+uv run --project tools/fwscan fwscan IMAGE...
+```
+
+It reports `allowlist` when the TA compares the SL's key token against
+digests it carries, naming the keys it recognises, `encrypted` when the TA
+cannot be read, `inconclusive` for a plaintext TA without that check, and
+`no-drtm-ta`. The client firmware checked so far carries such a list, and
+server firmware ships its TA encrypted.
+
 ## More
 
 - [docs/design.md](docs/design.md): target scope, architecture, and DRTM
