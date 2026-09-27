@@ -10,20 +10,15 @@ build predicted, so a wrong prediction in either shows.
 """
 
 import hashlib
-import re
 
-from conftest import SL_PSP, launch_state, messages, qemu_log, qemu_traces, records
-from test_launch import after_launch, checks, measured_image
+from conftest import SL_PSP, launch_state, qemu_log, qemu_traces, records
+from test_launch import STACK_LIMIT, after_launch, checks, measured_image, stack_used
 
 # The signature block behind the measured image: the `$AS1` header, then
 # the signature, then the key token.
 SIG_HEADER_LEN = 0x100
 SIGNATURE_LEN = 0x200
 TOKEN_LEN = 0x440
-
-# What the SL's stack may reach before a test asks for a look: `sl.ld`'s
-# 6 KiB, less 1 KiB of headroom.
-STACK_LIMIT = 6144 - 1024
 
 # The mailbox steps after `LAUNCH`, in the guide's order.
 AFTER_LAUNCH = [
@@ -197,14 +192,7 @@ def test_a_failed_tmr_setup_still_launches(psp_tmr_timeout_boot: str):
 
 
 def test_the_sl_stack_has_headroom(psp_launch_boot: str):
-    (used,) = [
-        int(m.group(1))
-        for m in map(
-            re.compile(r"stack used: (\d+) bytes").fullmatch, messages(psp_launch_boot)
-        )
-        if m
-    ]
-    assert used <= STACK_LIMIT
+    assert stack_used(psp_launch_boot) <= STACK_LIMIT
 
 
 def test_another_splt_version_misses_pcr17(psp_splt_boot: str):

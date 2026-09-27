@@ -12,7 +12,19 @@ import hashlib
 import re
 from pathlib import Path
 
-from conftest import SL_CLASSIC, launch_state, qemu_log, qemu_traces, records, results
+from conftest import (
+    SL_CLASSIC,
+    launch_state,
+    messages,
+    qemu_log,
+    qemu_traces,
+    records,
+    results,
+)
+
+# What the SL's stack may reach before a test asks for a look: `sl.ld`'s
+# 6 KiB, less 1 KiB of headroom.
+STACK_LIMIT = 6144 - 1024
 
 
 def checks(capture: str, identifier: str) -> list[dict]:
@@ -38,6 +50,18 @@ def expected_pcr17(algorithm: str) -> str:
     shows."""
     digest = hashlib.new(algorithm, measured_image()).digest()
     return hashlib.new(algorithm, bytes(len(digest)) + digest).hexdigest()
+
+
+def stack_used(capture: str) -> int:
+    """The bytes of stack the SL reports it wrote to."""
+    (used,) = [
+        int(m.group(1))
+        for m in map(
+            re.compile(r"stack used: (\d+) bytes").fullmatch, messages(capture)
+        )
+        if m
+    ]
+    return used
 
 
 def after_launch(capture: str) -> list[dict]:
@@ -106,6 +130,14 @@ def test_auto_launches_classically_without_a_service(launch_boot: str):
     assert path["result"] == "info"
     (start,) = checks(launch_boot, "launch.start")
     assert start["fields"]["path"] == "classic"
+
+
+def test_the_classic_sl_stack_has_headroom(
+    launch_boot: str, launch_crb_boot: str, launch_psp_boot: str
+):
+    # Locality 2 through TIS, CRB, and refused while the service is on.
+    for capture in (launch_boot, launch_crb_boot, launch_psp_boot):
+        assert stack_used(capture) <= STACK_LIMIT
 
 
 def test_the_psp_service_holds_locality_2(launch_psp_boot: str):
