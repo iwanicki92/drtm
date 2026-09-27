@@ -18,9 +18,11 @@ import dataclasses
 import fnmatch
 import functools
 import json
+import os
 import re
 import subprocess
 import tempfile
+import time
 from collections.abc import Callable
 from pathlib import Path
 from types import FunctionType
@@ -39,10 +41,14 @@ from machine import (
     make_esp,
     options,
     patch_sl,
+    post_codes,
     unsupported_binary,
 )
 
 REPO_ROOT = Path(__file__).parent.parent
+# A signed SL built elsewhere, or a PE file carrying one, for the boots of
+# `test_foreign_sl_amd.py`, which are skipped without it.
+FOREIGN_SL = os.environ.get("DRTM_TEST_FOREIGN_SL")
 EFI_BINARY = REPO_ROOT / "target" / "x86_64-unknown-uefi" / "debug" / "drtm.efi"
 # The signed SLs the build embeds in the binary, one per launch path.
 SL_CLASSIC = REPO_ROOT / "target" / "sl-classic.bin"
@@ -63,6 +69,8 @@ CHECKS_COMPLETE = "drtm: checks complete"
 # parameters or panicking. Both forms carry the identifier as is.
 LAUNCH_HALTED = "launch.halted"
 LAUNCH_GATE = "launch.gate"
+# The preamble's last line before `SKINIT`, all a foreign SL's run prints.
+LAUNCH_SKINIT = "entering the trampoline"
 LAUNCH_STOPPED = [
     "launch.gate",
     "launch.params",
@@ -78,7 +86,7 @@ FULL_OUTPUT = "level=trace\nformat=json\n"
 
 # A value `level=` does not accept, on line 2 behind a comment so the reported
 # line number is not trivially 1.
-BAD_LEVEL = "# drtm.conf\nlevel=verbose\n"
+BAD_CONFIG = "# drtm.conf\nlevel=verbose\nlaunch=foreign\n"
 
 # Generous on purpose. Measured boot-to-marker is ~5s under TCG, but this
 # only has to be tight enough to catch a genuinely stuck guest. Being slow
@@ -93,12 +101,17 @@ BOOT_PROMPT_TIMEOUT = 60.0
 # The rest of a line whose start has already arrived.
 LINE_TIMEOUT = 10.0
 
+# How long a foreign SL gets to reach a code that ends its run. It reports
+# only on port 0x80, so nothing on the console marks the end.
+POST_CODE_TIMEOUT = 60.0
+
 # A build this long means something is wedged, not slow: a from-scratch
 # debug build of this crate is seconds.
 BUILD_TIMEOUT = 300.0
 
 
 _built_binary: Path | None = None
+_foreign_binaries: dict[Path, Path] = {}
 
 # What `query-amd-drtm` answered once each launch-machine boot had printed
 # its last record, by log directory. What the platform device saw of the
@@ -121,6 +134,38 @@ def built_efi_binary() -> Path:
     return _built_binary
 
 
+def foreign_efi_binary(sl: Path, name: str) -> Path:
+    """Builds `drtm.efi` with `sl` as its foreign SL, in a target directory
+    of its own called `name`, so no other build is redone, on first use."""
+    if sl not in _foreign_binaries:
+        target = REPO_ROOT / "target" / name
+        subprocess.run(
+            ["cargo", "build"],
+            cwd=REPO_ROOT,
+            check=True,
+            timeout=BUILD_TIMEOUT,
+            env={
+                **os.environ,
+                "DRTM_FOREIGN_SL": str(sl),
+                "CARGO_TARGET_DIR": str(target),
+            },
+        )
+        _foreign_binaries[sl] = target / "x86_64-unknown-uefi" / "debug" / "drtm.efi"
+    return _foreign_binaries[sl]
+
+
+def _wait_for_post_codes(
+    vm: QemuVm, log: Path, done: Callable[[list[int]], bool]
+) -> None:
+    """Waits until the codes in `log` satisfy `done`, QEMU exits, or
+    `POST_CODE_TIMEOUT` passes. Tests judge what arrived."""
+    deadline = time.monotonic() + POST_CODE_TIMEOUT
+    while time.monotonic() < deadline and vm.running:
+        if done(post_codes(log)):
+            return
+        time.sleep(0.2)
+
+
 def boot_and_capture(
     log_dir: Path,
     firmware: Path,
@@ -132,6 +177,8 @@ def boot_and_capture(
     launch: str | None = None,
     pcr_banks: tuple[str, ...] | None = None,
     sl_patch: str | None = None,
+    build: Callable[[], Path] | None = None,
+    post_codes_done: Callable[[list[int]], bool] | None = None,
     **machine,
 ) -> str:
     """Boots `drtm.efi` once and returns everything it printed.
@@ -154,10 +201,15 @@ def boot_and_capture(
     `LAUNCH_GATE` for a launch the gate blocks. `pcr_banks` gives the TPM
     other banks than the session's. `sl_patch` names a field of the signed
     PSP SL that `machine.patch_sl` changes in the ESP's copy of the binary.
+    `build` builds and names another binary to boot.
+
+    `post_codes_done` attaches `isa-post-code`, logging to `post-codes.txt`
+    in `log_dir`, and waits after `launch` until the codes logged so far
+    satisfy it.
     """
     marker = SUMMARY_RECORD if config and "format=json" in config else CHECKS_COMPLETE
     with tempfile.TemporaryDirectory(prefix="drtm-esp-") as scratch:
-        binary = built_efi_binary()
+        binary = built_efi_binary() if build is None else build()
         if sl_patch is not None:
             patched = Path(scratch) / "patched.efi"
             patched.write_bytes(
@@ -168,9 +220,15 @@ def boot_and_capture(
         settings = Settings.from_environment()
         if pcr_banks is not None:
             settings = dataclasses.replace(settings, banks=pcr_banks)
+        codes = log_dir / "post-codes.txt" if post_codes_done else None
         with QemuVm(
             log_dir,
-            options(esp, corrected_error_bank=corrected_error_bank, **machine),
+            options(
+                esp,
+                corrected_error_bank=corrected_error_bank,
+                post_codes=codes,
+                **machine,
+            ),
             firmware=firmware,
             tpm=tpm,
             save_firmware_to=save_firmware_to,
@@ -189,6 +247,8 @@ def boot_and_capture(
                 stops = [stop for stop in LAUNCH_STOPPED if stop != launch]
                 vm.expect(launch, BOOT_TIMEOUT, failures=stops)
                 vm.expect("\n", LINE_TIMEOUT)
+            if codes is not None and post_codes_done is not None:
+                _wait_for_post_codes(vm, codes, post_codes_done)
             if query_launch:
                 _LAUNCH_STATE[log_dir] = vm.wait_for_qmp().execute("query-amd-drtm")
             return vm.capture
@@ -321,14 +381,15 @@ def amd_iommu_enabled_boot() -> dict:
 
     The only configuration where `amd.iommu` can pass, and only our QEMU
     offers it. Its tests only read results, so the boot also carries a
-    `drtm.conf` naming a level that does not exist, a Secure Processor
-    device with the Turin ASP's device ID whose DRTM service is ready, and
-    the one MSR value naming the window the firmware actually mapped.
+    `drtm.conf` naming a level that does not exist and a launch this build
+    cannot make, a Secure Processor device with the Turin ASP's device ID
+    whose DRTM service is ready, and the one MSR value naming the window
+    the firmware actually mapped.
     """
     return {
         "cpu": MMCONFIG_AS_MAPPED,
         "iommu": "enabled",
-        "config": BAD_LEVEL,
+        "config": BAD_CONFIG,
         "psp": 0x156E,
     }
 
@@ -610,6 +671,36 @@ def launch_blocked_boot() -> dict:
     """Serial output of one boot on the launch machine with no TPM, so
     `tpm.present` fails and the gate refuses to launch."""
     return {"amd_drtm": True, "launch": LAUNCH_GATE, "query_launch": True}
+
+
+STANDIN_REACHED = 0xD7D70001
+"""What drtm's stand-in OS SL writes once AMD's SL has jumped to it. A
+fatal error in AMD's SL resets the machine instead, which ends the run."""
+
+
+def _amd_sl_done(codes: list[int]) -> bool:
+    return STANDIN_REACHED in codes
+
+
+@boot_configuration
+def foreign_amd_sl_boot() -> dict:
+    """Serial output of one `launch=foreign` boot of the SL
+    `DRTM_TEST_FOREIGN_SL` names, with the PSP DRTM service ready and the
+    POST codes logged until the SL's run ends. `client-smm` answers the two
+    SMM commands AMD's client SL sends, which server firmware refuses."""
+    sl = FOREIGN_SL
+    assert sl is not None
+    return {
+        **_psp_machine(**{"client-smm": "on"}),
+        "cpu": "EPYC-Genoa,mmio-conf-base=0xb0000021",
+        "amd_fch_pmio": True,
+        "strict": False,
+        "config": FULL_OUTPUT + "launch=foreign\n",
+        "launch": LAUNCH_SKINIT,
+        "build": lambda: foreign_efi_binary(Path(sl), "foreign-test"),
+        "post_codes_done": _amd_sl_done,
+        "query_launch": True,
+    }
 
 
 def _prepare(names: list[str]) -> None:

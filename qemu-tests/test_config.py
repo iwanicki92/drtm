@@ -33,10 +33,17 @@ def test_raising_the_level_prints_the_scan(default_boot: str):
 
 def test_an_unknown_level_is_reported_with_its_line(amd_iommu_enabled_boot: str):
     # The value and where it sits are what someone fixing the file needs.
-    ((tag, detail),) = results(amd_iommu_enabled_boot, "config")
+    (tag, detail), _ = results(amd_iommu_enabled_boot, "config")
     assert tag == "WARN"
     assert "line 2" in detail
     assert "verbose" in detail
+
+
+def test_launch_foreign_needs_a_build_that_embeds_one(amd_iommu_enabled_boot: str):
+    _, (tag, detail) = results(amd_iommu_enabled_boot, "config")
+    assert tag == "WARN"
+    assert "line 3" in detail
+    assert "DRTM_FOREIGN_SL" in detail
 
 
 def test_an_unknown_level_falls_back_to_the_default(amd_iommu_enabled_boot: str):

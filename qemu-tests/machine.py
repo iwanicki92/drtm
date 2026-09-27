@@ -71,6 +71,10 @@ PROBE_OPTIONS = [
     _amd_iommu(enabled=True, ivrs=False),
     "-device",
     "amd-psp",
+    "-device",
+    "isa-post-code",
+    "-device",
+    "amd-fch-pmio",
 ]
 PROBE_REJECTS = {"skinit": "it does not report the skinit CPUID bit"}
 
@@ -163,6 +167,8 @@ def options(
     psp_properties: dict[str, str | int] | None = None,
     vga_and_nic: bool = False,
     tpm_burst_limit: int | None = None,
+    post_codes: Path | None = None,
+    amd_fch_pmio: bool = False,
 ) -> list[str]:
     """The machine for one boot of the ESP, without the flash, the TPM or
     the console.
@@ -212,6 +218,13 @@ def options(
     `vga_and_nic` keeps QEMU's default display adapter and network card.
     They cost 1.3s of firmware initialisation each boot, so only the boot
     that wants a populated bus to scan asks for them.
+
+    `post_codes` attaches our QEMU's `isa-post-code`, which writes every
+    write to ports 0x80 to 0x83 to that file, one line each: the port, the
+    access size and the value, in hex.
+
+    `amd_fch_pmio` attaches our QEMU's `amd-fch-pmio`, the FCH register
+    AMD's SL reads for the ACPI PM timer's port.
 
     `corrected_error_bank` names a machine-check bank to hold a corrected
     error from reset on. The machine starts paused for it, and `inject`
@@ -276,9 +289,30 @@ def options(
             "-trace",
             "tpm_tis_burst_wait",
         ]
+    if post_codes is not None:
+        args += [
+            "-chardev",
+            f"file,id=post,path={post_codes}",
+            "-device",
+            "isa-post-code,chardev=post",
+        ]
+    if amd_fch_pmio:
+        args += ["-device", "amd-fch-pmio"]
     if corrected_error_bank is not None:
         args.append("-S")
     return args
+
+
+def post_codes(log: Path) -> list[int]:
+    """The values written to port 0x80 in the log `isa-post-code` wrote, in
+    order. Writes to 0x81 to 0x83 alone are left out."""
+    if not log.exists():
+        return []
+    return [
+        int(value, 16)
+        for port, _, value in (line.split() for line in log.read_text().splitlines())
+        if port == "0x80"
+    ]
 
 
 def inject_corrected_error(vm: qemu_vm.QemuVm, bank: int) -> None:
