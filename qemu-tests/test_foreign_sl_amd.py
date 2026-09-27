@@ -2,8 +2,9 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""`launch=foreign` with AMD's client SL, which `DRTM_TEST_FOREIGN_SL`
-names (see `docs/foreign-sl.md`). Skipped without it.
+"""`launch=foreign` with one of AMD's SLs, client or EPYC, which
+`DRTM_TEST_FOREIGN_SL` names (see `docs/foreign-sl.md`). Skipped without
+it.
 
 The SL reports only through POST codes on port 0x80, so these tests read
 the log `isa-post-code` wrote rather than the console.
@@ -33,19 +34,24 @@ SL = 0xB000_0000
 ANSWERED = 0x1A00
 FAILED = 0x1E00
 
-# The commands AMD's SL sends, in order, when every one succeeds
-COMMANDS = [
+# The commands AMD's SLs send, in order, when every one succeeds. The
+# client SL also hands the SMM supervisor over, which the EPYC one leaves.
+LAUNCH_AND_TMRS = [
     0x4,  # LAUNCH
     0xB,  # EXTEND_OSSL_DIGEST over the stand-in
     0x9,  # GET_TMR_DESCRIPTORS
     0x9,
     0x9,
     0x9,
+]
+SMM = [
     0xA,  # ALLOCATE_SHARED_MEMORY
     0x5,  # PROCESS_SMM
     0x6,  # GET_SMM_POLICY
-    0x7,  # GET_TCG_LOGS
 ]
+TCG_LOGS = [0x7]
+CLIENT = LAUNCH_AND_TMRS + SMM + TCG_LOGS
+EPYC = LAUNCH_AND_TMRS + TCG_LOGS
 
 
 def sl_codes() -> list[int]:
@@ -56,14 +62,14 @@ def sl_codes() -> list[int]:
 def test_the_sl_hands_off_to_the_stand_in(foreign_amd_sl_boot: str):
     codes = post_codes(SESSION.boot_log_dir(BOOT) / "post-codes.txt")
     assert codes[-1] == STANDIN_REACHED
-    assert sl_codes()[:2] == [0x1000, 0x1001]
+    assert 0x1001 in sl_codes()[:2]
 
 
 def test_every_psp_command_is_answered(foreign_amd_sl_boot: str):
     codes = sl_codes()
     assert not [code for code in codes if code & 0xFF00 == FAILED]
     answered = [code & 0xFF for code in codes if code & 0xFF00 == ANSWERED]
-    assert answered == COMMANDS
+    assert answered in (CLIENT, EPYC)
 
 
 def test_the_psp_verifies_its_signature(foreign_amd_sl_boot: str):
