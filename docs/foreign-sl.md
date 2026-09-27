@@ -69,6 +69,11 @@ block is where the header says, and prints the offset and key ID it found:
 DRTM_FOREIGN_SL=path/to/amddrtm.dll cargo build
 ```
 
+`DRTM_FOREIGN_SL_RESIGN=1` replaces the signature block with one made with
+`drtm`'s key (`DRTM_SL_KEY`, or the test key), keeping the header's
+`SecPatchLevel`. The code is AMD's and only the key differs, so a `LAUNCH`
+refused there but accepted with AMD's signature points at a key allowlist.
+
 Such a build accepts `launch=foreign` in `drtm.conf`. It takes the PSP path
 or blocks, since the SL issues `LAUNCH` itself. A build without the variable
 reports `launch=foreign` as a `config` warning and keeps the default.

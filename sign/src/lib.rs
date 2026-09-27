@@ -102,7 +102,7 @@ pub fn token(public: &RsaPublicKey) -> [u8; TOKEN_LEN] {
 }
 
 /// The signature header for a measured image `padded_len` bytes long.
-fn header(padded_len: usize, id: &[u8; 16]) -> [u8; HEADER_LEN] {
+fn header(padded_len: usize, id: &[u8; 16], sec_patch_level: u32) -> [u8; HEADER_LEN] {
     let signed = (padded_len + HEADER_LEN) as u32;
     let mut header = [0; HEADER_LEN];
     header[HDR_VERSION..HDR_VERSION + 4].copy_from_slice(TAG);
@@ -110,7 +110,7 @@ fn header(padded_len: usize, id: &[u8; 16]) -> [u8; HEADER_LEN] {
     header[HDR_SIG_OPTION..HDR_SIG_OPTION + 4].copy_from_slice(&1u32.to_le_bytes());
     header[HDR_SIG_PARAMETERS..HDR_SIG_PARAMETERS + 16].copy_from_slice(id);
     header[HDR_SEC_PATCH_LEVEL..HDR_SEC_PATCH_LEVEL + 4]
-        .copy_from_slice(&SEC_PATCH_LEVEL.to_le_bytes());
+        .copy_from_slice(&sec_patch_level.to_le_bytes());
     header[HDR_SIZE_IMAGE..HDR_SIZE_IMAGE + 4]
         .copy_from_slice(&(signed + SIGNATURE_LEN as u32).to_le_bytes());
     header
@@ -157,13 +157,18 @@ impl CryptoRng for ImageRng {}
 
 /// The block behind `measured`, which must already be padded to [`ALIGN`].
 pub fn sign(measured: &[u8], key: &Key) -> Vec<u8> {
+    sign_at_level(measured, key, SEC_PATCH_LEVEL)
+}
+
+/// [`sign`] with another `SecPatchLevel` in the header.
+pub fn sign_at_level(measured: &[u8], key: &Key, sec_patch_level: u32) -> Vec<u8> {
     assert!(
         measured.len().is_multiple_of(ALIGN),
         "the measured image is {:#x} bytes, not a multiple of {ALIGN}",
         measured.len()
     );
     let token = key.token();
-    let header = header(measured.len(), &key_id(&key.public()));
+    let header = header(measured.len(), &key_id(&key.public()), sec_patch_level);
     let mut signed = measured.to_vec();
     signed.extend_from_slice(&header);
     let mut rng = ImageRng {

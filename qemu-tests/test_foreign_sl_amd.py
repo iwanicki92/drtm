@@ -11,8 +11,6 @@ the log `isa-post-code` wrote, and the console for the DLME it hands off
 to.
 """
 
-from pathlib import Path
-
 import pytest
 from conftest import (
     DLME_REACHED,
@@ -39,12 +37,12 @@ if FOREIGN_SL is None:
 
 BOOT = "foreign_amd_sl_boot"
 
-# The foreign build's own DLME, in the target directory the fixture names.
+# The foreign build's own DLME and the SL it embeds, signed again where
+# `DRTM_FOREIGN_SL_RESIGN` asks, in the target directory the fixture names.
 FOREIGN_DLME = REPO_ROOT / "target" / "foreign-test" / "dlme.bin"
+FOREIGN_IMAGE = REPO_ROOT / "target" / "foreign-test" / "sl-foreign.bin"
 
-# `AMD_SL_HDR_V1`'s GUID, which finds the SL in a PE file, and where the
-# `$AS1` header keeps its SecPatchLevel.
-SL_GUID = bytes.fromhex("da75c40ed0d35d48b6ae3cb20fb7ad3a")
+# Where the `$AS1` header keeps its SecPatchLevel.
 SEC_PATCH_LEVEL = 0x4C
 
 # The SL's own codes carry this prefix, the firmware's before them do not
@@ -78,9 +76,7 @@ EPYC = LAUNCH_AND_TMRS + TCG_LOGS
 def foreign_pcr18() -> str:
     """SHA-256 PCR 18 after the foreign SL's `LAUNCH`: its key token, then
     its `$AS1` header's SecPatchLevel."""
-    assert FOREIGN_SL is not None
-    data = Path(FOREIGN_SL).read_bytes()
-    sl = data[data.index(SL_GUID) - 4 :] if data.startswith(b"MZ") else data
+    sl = FOREIGN_IMAGE.read_bytes()
     block = -(-int.from_bytes(sl[2:4], "little") // 16) * 16
     level = sl[block + SEC_PATCH_LEVEL : block + SEC_PATCH_LEVEL + 4]
     at = block + SIG_HEADER_LEN + SIGNATURE_LEN

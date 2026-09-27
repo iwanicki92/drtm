@@ -82,22 +82,28 @@ fn main() {
     }
     let (sha1, sha256) = classic.unwrap();
     rust += &build_dlme(&root, &out, &sha1, &sha256);
-    rust += &foreign(&out);
+    rust += &foreign(&root, &out, &key);
     fs::write(out.join("sl.rs"), rust).unwrap();
 }
 
 /// The Rust describing the SL `DRTM_FOREIGN_SL` names, a bare signed image
 /// or a PE file carrying one, as `FOREIGN`. `None` without the variable.
-fn foreign(out: &Path) -> String {
+/// `DRTM_FOREIGN_SL_RESIGN=1` signs it again with `key`.
+fn foreign(root: &Path, out: &Path, key: &sign::Key) -> String {
     println!("cargo:rerun-if-env-changed=DRTM_FOREIGN_SL");
+    println!("cargo:rerun-if-env-changed=DRTM_FOREIGN_SL_RESIGN");
     let Some(path) = env::var_os("DRTM_FOREIGN_SL").map(PathBuf::from) else {
         return "pub const FOREIGN: Option<Foreign> = None;\n".into();
     };
     println!("cargo:rerun-if-changed={}", path.display());
-    let found = fs::read(&path)
+    let mut found = fs::read(&path)
         .map_err(|e| e.to_string())
         .and_then(|input| sign::foreign::extract(&input))
         .unwrap_or_else(|e| panic!("the foreign SL {} is unusable: {e}", path.display()));
+    let resign = env::var_os("DRTM_FOREIGN_SL_RESIGN").is_some_and(|value| value == "1");
+    if resign {
+        found.resign(key);
+    }
     let measured = &found.image[..found.measured];
     let sha1 = extend::<Sha1>(measured);
     let sha256 = extend::<Sha256>(measured);
@@ -105,12 +111,18 @@ fn foreign(out: &Path) -> String {
     let pcr18 = sign::launch_pcr18(found.token(), found.sec_patch_level());
     let bytes = out.join("sl-foreign.bin");
     fs::write(&bytes, &found.image).unwrap();
+    fs::write(target_dir(root).join("sl-foreign.bin"), &found.image).unwrap();
     let key_id: String = found.key_id.iter().map(|b| format!("{b:02x}")).collect();
     println!(
-        "cargo:warning=embedding the foreign SL from {} at {:#x}, {:#x} bytes measured, key ID {key_id}",
+        "cargo:warning=embedding the foreign SL from {} at {:#x}, {:#x} bytes measured, key ID {key_id}{}",
         path.display(),
         found.offset,
-        found.measured
+        found.measured,
+        if resign {
+            ", signed again with drtm's key"
+        } else {
+            ""
+        }
     );
     format!(
         "pub const FOREIGN: Option<Foreign> = Some(Foreign {{

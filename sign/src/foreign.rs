@@ -7,7 +7,7 @@
 //! the signature block, or a PE file that carries one.
 
 use crate::{
-    ALIGN, BLOCK_LEN, HDR_VERSION, HEADER_LEN, SIGNATURE_LEN, TAG, TOKEN_KEY_ID, TOKEN_LEN,
+    ALIGN, BLOCK_LEN, HDR_VERSION, HEADER_LEN, Key, SIGNATURE_LEN, TAG, TOKEN_KEY_ID, TOKEN_LEN,
 };
 
 /// The GUID at offset 4 of `AMD_SL_HDR_V1` (AMD publication 58453, appendix
@@ -53,6 +53,15 @@ impl Foreign {
     pub fn sec_patch_level(&self) -> u32 {
         let at = self.image.len() - crate::BLOCK_LEN + crate::HDR_SEC_PATCH_LEVEL;
         u32::from_le_bytes(self.image[at..at + 4].try_into().unwrap())
+    }
+
+    /// Replaces the signature block with one made with `key`, keeping the
+    /// `SecPatchLevel`, so only the key and signature differ.
+    pub fn resign(&mut self, key: &Key) {
+        let block = self.image.len() - BLOCK_LEN;
+        let signed = crate::sign_at_level(&self.image[..block], key, self.sec_patch_level());
+        self.image[block..].copy_from_slice(&signed);
+        self.key_id = crate::key_id(&key.public());
     }
 }
 
@@ -168,6 +177,22 @@ mod tests {
         assert_eq!(found.key_id, crate::key_id(&key.public()));
         assert_eq!(found.token(), &key.token());
         assert_eq!(found.sec_patch_level(), crate::SEC_PATCH_LEVEL);
+    }
+
+    #[test]
+    fn resigns_with_another_key() {
+        // Another signer's block: its signature and token no longer match.
+        let mut image = signed(0x1230);
+        image[0x1230 + crate::HDR_SEC_PATCH_LEVEL] = 1;
+        image[0x1230 + HEADER_LEN..].fill(0x5a);
+        let mut found = extract(&image).unwrap();
+        let key = Key::from_pem(PEM).unwrap();
+        found.resign(&key);
+        assert_eq!(crate::verify(&found.image, &key.public()), Ok(()));
+        assert_eq!(found.key_id, crate::key_id(&key.public()));
+        assert_eq!(found.token(), &key.token());
+        assert_eq!(found.sec_patch_level(), 1);
+        assert_eq!(found.image[..0x1230], image[..0x1230]);
     }
 
     #[test]
