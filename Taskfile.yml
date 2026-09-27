@@ -25,6 +25,11 @@ tasks:
     cmds:
       - uv run --project qemu-tests pytest qemu-tests {{.CLI_ARGS}}
 
+  test-fwscan:
+    desc: Run the fwscan unit tests
+    cmds:
+      - uv run --project tools/fwscan pytest tools/fwscan {{.CLI_ARGS}}
+
   docs:
     desc: Regenerate offline dependency docs into docs/dependency-docs
     cmds:

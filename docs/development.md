@@ -258,5 +258,7 @@ pages, and adds a link back to that index on each crate's root page.
   `tests/` directory to avoid confusion between the two). The harness it
   boots with is the `drtmtest` package from the `drtm-tests` repository.
 - `scripts/`: standalone helper scripts, e.g. dependency doc generation.
+- `tools/fwscan/`: a host tool that looks for an SL key allowlist in a
+  firmware image's PSP DRTM TA (Python, uv, see its README).
 - `docs/`: this folder.
 - `Taskfile.yml`, `.pre-commit-config.yaml`: see above.

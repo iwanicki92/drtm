@@ -70,5 +70,6 @@ note before assuming defaults.
     config.
 - Run the host unit tests: `cargo test-host`, an alias for `cargo test`
     on the host target of the crates that can run there (`common`, `sign`).
-- `task build`/`task lint`/`task test`/`task test-host` (Taskfile.yml) wrap
-    the commands above.
+- Run the fwscan tests: `uv run --project tools/fwscan pytest tools/fwscan`.
+- `task build`/`task lint`/`task test`/`task test-host`/`task test-fwscan`
+    (Taskfile.yml) wrap the commands above.

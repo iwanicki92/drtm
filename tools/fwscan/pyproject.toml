@@ -1,0 +1,34 @@
+# SPDX-FileCopyrightText: 2026 iwanicki92 <iwanicki92@gmail.com>
+#
+# SPDX-License-Identifier: BSD-3-Clause
+
+[project]
+name = "fwscan"
+version = "0.1.0"
+description = "Look for an SL key allowlist in a firmware image's PSP DRTM TA"
+requires-python = ">=3.12"
+license = "BSD-3-Clause"
+dependencies = [
+    "capstone>=5.0",
+    "psptool",
+]
+
+[project.scripts]
+fwscan = "fwscan.cli:main"
+
+[dependency-groups]
+dev = ["pytest"]
+
+[tool.uv.sources]
+# GPL-3.0: fwscan runs its CLI as a separate program and never imports it.
+# The fork parses client ROMs that upstream 6112e48 does not. A tarball,
+# because a git source clones the private fixtures submodule too.
+psptool = { url = "https://github.com/iwanicki92/PSPTool/archive/015af60699ff266ea1ae9947576d2d590d683a21.tar.gz" }
+
+[tool.uv.extra-build-variables]
+# psptool takes its version from git, which a tarball does not carry.
+psptool = { SETUPTOOLS_SCM_PRETEND_VERSION = "3.6+fork.015af60" }
+
+[build-system]
+requires = ["uv_build>=0.9,<0.13"]
+build-backend = "uv_build"

@@ -46,9 +46,9 @@ repos:
     hooks:
       - id: ruff-check
         args: [--fix]
-        files: ^qemu-tests/
+        files: ^(qemu-tests|tools/fwscan)/
       - id: ruff-format
-        files: ^qemu-tests/
+        files: ^(qemu-tests|tools/fwscan)/
 
   - repo: https://github.com/astral-sh/ty-pre-commit
     rev: v0.0.65
@@ -56,6 +56,10 @@ repos:
       - id: ty
         args: [--project, qemu-tests]
         files: ^qemu-tests/
+      - id: ty
+        name: ty (fwscan)
+        args: [--project, tools/fwscan]
+        files: ^tools/fwscan/
 
   - repo: local
     hooks:
