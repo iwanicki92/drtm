@@ -9,7 +9,14 @@ which every level prints, carry the config states the others cannot:
 `tpm_crb_boot` has no file, `amd_iommu_enabled_boot` a bad one.
 """
 
+import os
+
+import pytest
 from conftest import CHECKS_COMPLETE, completed, results, verdicts
+
+# The suite's own `cargo build` inherits this, and a build that embeds a
+# foreign SL takes `launch=foreign`.
+FOREIGN_BUILD = "DRTM_FOREIGN_SL" in os.environ
 
 
 def test_without_a_config_the_scan_is_not_printed(tpm_crb_boot: str):
@@ -33,12 +40,13 @@ def test_raising_the_level_prints_the_scan(default_boot: str):
 
 def test_an_unknown_level_is_reported_with_its_line(amd_iommu_enabled_boot: str):
     # The value and where it sits are what someone fixing the file needs.
-    (tag, detail), _ = results(amd_iommu_enabled_boot, "config")
+    tag, detail = results(amd_iommu_enabled_boot, "config")[0]
     assert tag == "WARN"
     assert "line 2" in detail
     assert "verbose" in detail
 
 
+@pytest.mark.skipif(FOREIGN_BUILD, reason="this build embeds a foreign SL")
 def test_launch_foreign_needs_a_build_that_embeds_one(amd_iommu_enabled_boot: str):
     _, (tag, detail) = results(amd_iommu_enabled_boot, "config")
     assert tag == "WARN"
