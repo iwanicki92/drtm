@@ -213,6 +213,14 @@ the IVRS table out, which upstream writes whenever the device is present
 (`hw/i386/acpi-build.c`). The IOMMU still answers in configuration space,
 so this is a configured IOMMU no OS would find.
 
+**AMD's client SL can run.** Three opt-in pieces carry it to its hand-off,
+see `docs/foreign-sl.md`. `-device isa-post-code,chardev=` logs each write
+to ports `0x80` to `0x83` whole, which the machine otherwise discards.
+`-device amd-fch-pmio` answers the FCH's `AcpiPmTmrBlk` at `0xfed80364`
+with the ICH9 PM timer's port. `amd-psp,client-smm=on` answers the client
+only `PROCESS_SMM` and `GET_SMM_POLICY` with zero hashes and an empty
+policy, which the SL accepts and no firmware is known to return.
+
 ## What would still be needed
 
 Every precondition check reaches its outcomes, with three exceptions. Two

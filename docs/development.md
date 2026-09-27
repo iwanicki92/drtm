@@ -94,7 +94,7 @@ read at startup. It is optional: with no file the defaults apply.
 level=info
 # what it looks like: text or json
 format=text
-# whether and how the run ends in a launch: auto, psp, skinit or off
+# whether and how the run ends in a launch: auto, psp, skinit, foreign or off
 launch=auto
 ```
 
@@ -143,7 +143,8 @@ the PSP DRTM service where the platform offers it. With the defaults, a
 missing `drtm.conf` launches too. `launch=psp` insists on the PSP path and
 `launch=skinit` never takes it. `launch=off` stops after the summary, as a
 run did before the launch existed. See `docs/design.md` for what the gate
-blocks on and how the path is chosen.
+blocks on and how the path is chosen. `launch=foreign` exists only in a build
+made with `DRTM_FOREIGN_SL`, see `docs/foreign-sl.md`.
 
 A line that is not `key=value`, an unknown key and an unusable value are
 each reported as a `config` warning naming the line, and the default is kept.

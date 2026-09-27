@@ -62,7 +62,7 @@ kept.
 |----------|--------------------------------------------------|---------|
 | `level`  | `off`, `error`, `warn`, `info`, `debug`, `trace` | `info`  |
 | `format` | `text`, `json`                                   | `text`  |
-| `launch` | `auto`, `psp`, `skinit`, `off`                   | `auto`  |
+| `launch` | `auto`, `psp`, `skinit`, `foreign`, `off`        | `auto`  |
 
 The first two can be built in, for a binary copied to an ESP with no
 `drtm.conf` beside it, along with where records go. A `drtm.conf` on the
@@ -83,6 +83,12 @@ An unusable value for either variable fails the build, since nothing later in
 the run could report it. Enabling both sinks is right only where the two are
 separate devices. See [docs/development.md](docs/development.md) for the
 rest.
+
+`launch=foreign` needs a debug build made with `DRTM_FOREIGN_SL` naming a
+Secure Loader signed by someone else, such as AMD's client SL from Lenovo's
+Windows "AMD DRTM Boot Driver" package. It launches that SL in place of
+`drtm`'s own, which then reports only through POST codes. See
+[docs/foreign-sl.md](docs/foreign-sl.md).
 
 ## Firmware scan
 
@@ -108,6 +114,8 @@ server firmware ships its TA encrypted.
 - [docs/testing.md](docs/testing.md): how the QEMU test suite works and why.
 - [docs/development.md](docs/development.md): toolchain setup and repo
     layout.
+- [docs/foreign-sl.md](docs/foreign-sl.md): launching AMD's client SL, and
+    what it expects from the OS loader.
 
 ## License
 
