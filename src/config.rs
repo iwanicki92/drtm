@@ -78,6 +78,9 @@ pub enum Launch {
     Psp,
     /// The classic `SKINIT` launch.
     Skinit,
+    /// The foreign SL a debug build embeds, through the PSP DRTM service or
+    /// not at all.
+    Foreign,
     /// The checks and the dump only.
     Off,
 }
@@ -99,6 +102,7 @@ enum Problem {
     BadLevel { line: usize, value: String },
     BadFormat { line: usize, value: String },
     BadLaunch { line: usize, value: String },
+    NoForeign { line: usize },
 }
 
 impl fmt::Display for Problem {
@@ -120,9 +124,14 @@ impl fmt::Display for Problem {
             Self::BadLaunch { line, value } => {
                 write!(
                     f,
-                    "line {line}: launch {value:?} is not auto, psp, skinit or off"
+                    "line {line}: launch {value:?} is not auto, psp, skinit, \
+                     foreign or off"
                 )
             }
+            Self::NoForeign { line } => write!(
+                f,
+                "line {line}: launch=foreign needs a build with DRTM_FOREIGN_SL set"
+            ),
         }
     }
 }
@@ -187,6 +196,8 @@ impl Config {
                     "auto" => self.launch = Launch::Auto,
                     "psp" => self.launch = Launch::Psp,
                     "skinit" => self.launch = Launch::Skinit,
+                    "foreign" if crate::launch::HAS_FOREIGN => self.launch = Launch::Foreign,
+                    "foreign" => self.problems.push(Problem::NoForeign { line: line_number }),
                     "off" => self.launch = Launch::Off,
                     _ => self.problems.push(Problem::BadLaunch {
                         line: line_number,

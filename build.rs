@@ -9,7 +9,9 @@
 //! Writes `sl-classic.bin` and `sl-psp.bin`, each the measured image and its
 //! signature block, and `sl.rs` into `OUT_DIR` for `src/launch` to embed,
 //! and copies both images to `target/` for the QEMU tests. `DRTM_SL_KEY` names a PKCS#8 PEM key to
-//! sign with in place of the test key in `keys/test/`.
+//! sign with in place of the test key in `keys/test/`. `DRTM_FOREIGN_SL`
+//! names a signed SL built elsewhere, which a debug build then embeds as
+//! well, for `launch=foreign`.
 
 use std::env;
 use std::fs;
@@ -54,7 +56,54 @@ fn main() {
     for (feature, name) in [("classic", "CLASSIC"), ("psp", "PSP")] {
         rust += &build_image(&root, &out, &key, feature, name);
     }
+    rust += &foreign(&out);
     fs::write(out.join("sl.rs"), rust).unwrap();
+}
+
+/// The Rust describing the SL `DRTM_FOREIGN_SL` names, a bare signed image
+/// or a PE file carrying one, as `FOREIGN`. `None` without the variable.
+fn foreign(out: &Path) -> String {
+    println!("cargo:rerun-if-env-changed=DRTM_FOREIGN_SL");
+    let Some(path) = env::var_os("DRTM_FOREIGN_SL").map(PathBuf::from) else {
+        return "pub const FOREIGN: Option<Foreign> = None;\n".into();
+    };
+    println!("cargo:rerun-if-changed={}", path.display());
+    let found = fs::read(&path)
+        .map_err(|e| e.to_string())
+        .and_then(|input| sign::foreign::extract(&input))
+        .unwrap_or_else(|e| panic!("the foreign SL {} is unusable: {e}", path.display()));
+    let measured = &found.image[..found.measured];
+    let sha1 = extend::<Sha1>(measured);
+    let sha256 = extend::<Sha256>(measured);
+    let pcr17 = sign::launch_pcr17(sha256.as_slice().try_into().unwrap());
+    let pcr18 = sign::launch_pcr18(found.token());
+    let bytes = out.join("sl-foreign.bin");
+    fs::write(&bytes, &found.image).unwrap();
+    let key_id: String = found.key_id.iter().map(|b| format!("{b:02x}")).collect();
+    println!(
+        "cargo:warning=embedding the foreign SL from {} at {:#x}, {:#x} bytes measured, key ID {key_id}",
+        path.display(),
+        found.offset,
+        found.measured
+    );
+    format!(
+        "pub const FOREIGN: Option<Foreign> = Some(Foreign {{
+    image: Image {{
+        bytes: include_bytes!({bytes:?}),
+        measured: {:#x},
+        params_offset: 0,
+        params_size: 0,
+        expected_sha1: {sha1:?},
+        expected_sha256: {sha256:?},
+    }},
+    key_id: {:?},
+    parameters: {:?},
+    pcr17: {pcr17:?},
+    pcr18: {pcr18:?},
+}});
+",
+        found.measured, found.key_id, found.parameters
+    )
 }
 
 /// Builds, flattens and signs the SL with `feature`, writes it to

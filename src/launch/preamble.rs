@@ -31,7 +31,8 @@ use uefi::proto::security::MemoryProtection;
 
 use super::gate::Sinks;
 use super::psp::{self, Service};
-use super::{image, pit, trampoline};
+use super::standin::{self, Regions};
+use super::{Foreign, image, pit, trampoline};
 use crate::amd::aspt;
 use crate::config::Config;
 use crate::tpm::{self, Probe};
@@ -93,16 +94,34 @@ fn allocate(memory: MemoryType, pages: usize) -> Option<*mut u8> {
         .map(|block| block.as_ptr())
 }
 
-/// A 64 KiB block on a 64 MiB boundary below 4 GiB, the first one free.
-fn allocate_aligned() -> Option<*mut u8> {
+/// `size` bytes on a 64 MiB boundary below 4 GiB, the first one free.
+fn allocate_aligned(size: usize) -> Option<*mut u8> {
     (1..(1u64 << 32) / MLE_ALIGN).find_map(|slot| {
         boot::allocate_pages(
             AllocateType::Address(slot * MLE_ALIGN),
             MemoryType::LOADER_DATA,
-            SLB_SIZE / PAGE,
+            size / PAGE,
         )
         .ok()
         .map(|block| block.as_ptr())
+    })
+}
+
+/// The stand-in OS SL's block, the AP startup area below 1 MiB and the
+/// foreign SL's heap.
+fn allocate_standin() -> Option<Regions> {
+    let block = allocate_aligned(standin::BLOCK_SIZE)?;
+    let ap_startup = boot::allocate_pages(
+        AllocateType::MaxAddress(0xF_FFFF),
+        MemoryType::LOADER_DATA,
+        standin::AP_STARTUP_SIZE / PAGE,
+    )
+    .ok()?;
+    let reserved = allocate(MemoryType::LOADER_DATA, standin::RESERVED_SIZE / PAGE)?;
+    Some(Regions {
+        block: block as u64,
+        ap_startup: ap_startup.as_ptr() as u32,
+        reserved: reserved as u64,
     })
 }
 
@@ -216,9 +235,16 @@ fn setup_tmr(out: &mut Out, service: &Service) {
     );
 }
 
-/// Prepares and issues `SKINIT`. Returns only where something before
-/// `ExitBootServices()` failed, which it reports.
-pub fn launch(config: &Config, sinks: Sinks, service: Option<Service>, tsc_per_ms: u64) {
+/// Prepares and issues `SKINIT`, into `foreign` where given and drtm's own
+/// SL otherwise. Returns only where something before `ExitBootServices()`
+/// failed, which it reports.
+pub fn launch(
+    config: &Config,
+    sinks: Sinks,
+    service: Option<Service>,
+    foreign: Option<&Foreign>,
+    tsc_per_ms: u64,
+) {
     let fail = |detail: &str| {
         check::after_summary(
             Tag::Fail,
@@ -233,8 +259,12 @@ pub fn launch(config: &Config, sinks: Sinks, service: Option<Service>, tsc_per_m
     };
     // The PSP path puts the SLB and the copy the SL extends on 64 MiB
     // boundaries where they are free. Without a copy the SLB is extended.
-    let aligned = service.as_ref().and_then(|_| allocate_aligned());
-    let copy = service.as_ref().and_then(|_| allocate_aligned());
+    // A foreign SL gets no copy, since nothing tells it where one is.
+    let aligned = service.as_ref().and_then(|_| allocate_aligned(SLB_SIZE));
+    let copy = service
+        .as_ref()
+        .filter(|_| foreign.is_none())
+        .and_then(|_| allocate_aligned(SLB_SIZE));
     let (Some(block), Some(page)) = (
         aligned.or_else(|| allocate(MemoryType::LOADER_DATA, SLB_PAGES)),
         allocate(MemoryType::LOADER_CODE, 1),
@@ -250,11 +280,24 @@ pub fn launch(config: &Config, sinks: Sinks, service: Option<Service>, tsc_per_m
         return;
     }
     let slb = (block as usize).next_multiple_of(SLB_ALIGN) as *mut u8;
-    let image = if service.is_some() {
-        &image::PSP
-    } else {
-        &image::CLASSIC
+    let standin = match foreign.and_then(|foreign| foreign.parameters) {
+        None => None,
+        Some(at) => match allocate_standin() {
+            Some(regions) => Some((at, regions)),
+            None => {
+                fail("no memory for the foreign SL's OS SL block, AP startup area or heap");
+                return;
+            }
+        },
     };
+    let image = match (foreign, &service) {
+        (Some(foreign), _) => &foreign.image,
+        (None, Some(_)) => &image::PSP,
+        (None, None) => &image::CLASSIC,
+    };
+    let (pcr17, pcr18) = foreign.map_or((image::PSP_PCR17, image::PSP_PCR18), |foreign| {
+        (foreign.pcr17, foreign.pcr18)
+    });
 
     let params = Params {
         format: config.format,
@@ -286,8 +329,8 @@ pub fn launch(config: &Config, sinks: Sinks, service: Option<Service>, tsc_per_m
             capability: service.capability,
             tmr_base: psp::TMR_BASE,
             tmr_size: psp::TMR_SIZE,
-            pcr17: image::PSP_PCR17,
-            pcr18: image::PSP_PCR18,
+            pcr17,
+            pcr18,
             extend_copy: copy.map_or(0, |copy| copy as u64),
         }),
         pit: service.as_ref().and_then(|_| pit::find()),
@@ -297,17 +340,26 @@ pub fn launch(config: &Config, sinks: Sinks, service: Option<Service>, tsc_per_m
         },
     };
     // Safety: `slb` is 64 KiB inside the block just allocated, `copy` a
-    // 64 KiB block of its own, and `page` a page of loader code below
-    // 4 GiB, none used by anything else.
+    // 64 KiB block of its own, the stand-in's block its own allocation of
+    // `standin::BLOCK_SIZE`, and `page` a page of loader code below 4 GiB,
+    // none used by anything else.
     unsafe {
         ptr::write_bytes(slb, 0, SLB_SIZE);
         ptr::copy_nonoverlapping(image.bytes.as_ptr(), slb, image.bytes.len());
-        let page_bytes = params.encode();
-        ptr::copy_nonoverlapping(
-            page_bytes.as_ptr(),
-            slb.add(image.params_offset),
-            params::SIZE,
-        );
+        // A foreign SL keeps its parameters in its own image, and the zeroed
+        // tail is its scratch space.
+        if let Some((at, regions)) = &standin {
+            standin::install(regions.block as *mut u8);
+            let page_bytes = standin::parameters(regions);
+            ptr::copy_nonoverlapping(page_bytes.as_ptr(), slb.add(*at), standin::PARAMETERS_LEN);
+        } else if foreign.is_none() {
+            let page_bytes = params.encode();
+            ptr::copy_nonoverlapping(
+                page_bytes.as_ptr(),
+                slb.add(image.params_offset),
+                params::SIZE,
+            );
+        }
         if let Some(copy) = copy {
             ptr::copy_nonoverlapping(slb, copy, image.params_offset + params::SIZE);
         }
@@ -328,11 +380,32 @@ pub fn launch(config: &Config, sinks: Sinks, service: Option<Service>, tsc_per_m
             slb as u64, image.measured
         ),
     );
+    if let Some((at, regions)) = &standin {
+        check::after_summary(
+            Tag::Info,
+            "launch.foreign_parameters",
+            &[
+                ("at", Value::Hex(slb as u64 + *at as u64)),
+                ("os_sl_block", Value::Hex(regions.block)),
+                ("ap_startup", Value::Hex(regions.ap_startup.into())),
+                ("reserved", Value::Hex(regions.reserved)),
+                ("reached", Value::Hex(standin::REACHED.into())),
+            ],
+            format_args!(
+                "AmdSlInputParameters at {:#x} name a stand-in OS SL at {:#x}, \
+                 which writes {:#x} to port 0x80 if the SL jumps to it",
+                slb as u64 + *at as u64,
+                regions.block,
+                standin::REACHED
+            ),
+        );
+    }
     if let Some(psp) = &params.psp {
         let pit = params.pit;
-        let extended = match psp.extend_copy {
-            0 => String::from("the SLB"),
-            at => format!("a copy of it at {at:#x}"),
+        let extended = match (foreign, psp.extend_copy) {
+            (Some(_), _) => String::from("whatever the foreign SL asks for"),
+            (None, 0) => String::from("the SLB"),
+            (None, at) => format!("a copy of it at {at:#x}"),
         };
         check::after_summary(
             Tag::Info,

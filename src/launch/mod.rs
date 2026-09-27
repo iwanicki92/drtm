@@ -9,6 +9,7 @@ mod gate;
 mod pit;
 mod preamble;
 mod psp;
+mod standin;
 mod trampoline;
 
 use common::record::{Tag, Value};
@@ -31,10 +32,29 @@ pub struct Image {
     pub expected_sha256: [u8; 32],
 }
 
-/// The SL built for each path, `CLASSIC` and `PSP`, and the PCRs the PSP
-/// service's `LAUNCH` should leave.
+/// A signed SL built elsewhere, which `launch=foreign` places in the SLB
+/// without drtm's parameter page. One whose header carries AMD's GUID gets
+/// its `AmdSlInputParameters` and a stand-in OS SL instead. It reports
+/// only through POST codes.
+pub struct Foreign {
+    pub image: Image,
+    /// The key its token names.
+    pub key_id: [u8; 16],
+    /// Where in the SLB its `AmdSlInputParameters` go, when it takes them.
+    pub parameters: Option<usize>,
+    /// SHA-256 PCR 17, all but the last extend, and PCR 18 after its
+    /// `LAUNCH`.
+    pub pcr17: [u8; 32],
+    pub pcr18: [u8; 32],
+}
+
+/// Whether this build embeds a foreign SL for `launch=foreign`.
+pub const HAS_FOREIGN: bool = image::FOREIGN.is_some();
+
+/// The SL built for each path, `CLASSIC` and `PSP`, the PCRs the PSP
+/// service's `LAUNCH` should leave, and `FOREIGN` where the build has one.
 mod image {
-    use super::Image;
+    use super::{Foreign, Image};
 
     include!(concat!(env!("OUT_DIR"), "/sl.rs"));
 }
@@ -50,11 +70,15 @@ pub fn run(config: &Config, cpu: &Cpu, devices: &Devices) {
     };
     let tsc_per_ms = preamble::calibrate_tsc();
 
+    let foreign = match config.launch {
+        Launch::Foreign => image::FOREIGN.as_ref(),
+        _ => None,
+    };
     let service = match config.launch {
         Launch::Skinit => None,
         _ => match psp::prepare(devices, tsc_per_ms) {
             Ok(service) => Some(service),
-            Err(why) if config.launch == Launch::Psp => {
+            Err(why) if matches!(config.launch, Launch::Psp | Launch::Foreign) => {
                 gate::block(&why);
                 return;
             }
@@ -70,15 +94,31 @@ pub fn run(config: &Config, cpu: &Cpu, devices: &Devices) {
         },
     };
     let (path, why) = match (&service, config.launch) {
+        (Some(_), Launch::Foreign) => (
+            "foreign",
+            "the foreign SL through the PSP DRTM service, which reports only \
+             through port 0x80 and does not return",
+        ),
         (Some(_), _) => ("psp", "through the PSP DRTM service"),
         (None, Launch::Skinit) => ("classic", "classic SKINIT, as launch=skinit asks"),
         (None, _) => ("classic", "classic SKINIT"),
     };
-    check::after_summary(
-        Tag::Info,
-        "launch.start",
-        &[("path", Value::Text(format_args!("{path}")))],
-        format_args!("launching {why}, the SL writes to {}", sinks.source()),
-    );
-    preamble::launch(config, sinks, service, tsc_per_ms);
+    match foreign {
+        Some(foreign) => check::after_summary(
+            Tag::Info,
+            "launch.start",
+            &[
+                ("path", Value::Text(format_args!("{path}"))),
+                ("key_id", Value::Bytes(&foreign.key_id)),
+            ],
+            format_args!("launching {why}"),
+        ),
+        None => check::after_summary(
+            Tag::Info,
+            "launch.start",
+            &[("path", Value::Text(format_args!("{path}")))],
+            format_args!("launching {why}, the SL writes to {}", sinks.source()),
+        ),
+    }
+    preamble::launch(config, sinks, service, foreign, tsc_per_ms);
 }
