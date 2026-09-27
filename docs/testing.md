@@ -321,8 +321,8 @@ platform's patch level. The tests recompute PCR 17 and 18 from the measured part
 of `target/sl-psp.bin` and its key token rather than trusting what drtm
 printed.
 
-`test_foreign_sl_amd.py` runs only when `DRTM_TEST_FOREIGN_SL` names AMD's
-client SL. It builds a second binary embedding it, boots it with
+`test_foreign_sl_amd.py` runs only when `DRTM_TEST_FOREIGN_SL` names one of
+AMD's SLs. It builds a second binary embedding it, boots it with
 `launch=foreign`, and reads the POST codes `isa-post-code` logged to
 `post-codes.txt` in the boot's log directory, since that SL writes nothing
 else. What the boot needs from QEMU is in `docs/foreign-sl.md`.

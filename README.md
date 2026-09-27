@@ -85,8 +85,8 @@ separate devices. See [docs/development.md](docs/development.md) for the
 rest.
 
 `launch=foreign` needs a debug build made with `DRTM_FOREIGN_SL` naming a
-Secure Loader signed by someone else, such as AMD's client SL from Lenovo's
-Windows "AMD DRTM Boot Driver" package. It launches that SL in place of
+Secure Loader signed by someone else, such as AMD's client or EPYC SL from
+Lenovo's Windows "AMD DRTM Boot Driver" packages. It launches that SL in place of
 `drtm`'s own, which then reports only through POST codes. See
 [docs/foreign-sl.md](docs/foreign-sl.md).
 
@@ -114,7 +114,7 @@ server firmware ships its TA encrypted.
 - [docs/testing.md](docs/testing.md): how the QEMU test suite works and why.
 - [docs/development.md](docs/development.md): toolchain setup and repo
     layout.
-- [docs/foreign-sl.md](docs/foreign-sl.md): launching AMD's client SL, and
+- [docs/foreign-sl.md](docs/foreign-sl.md): launching AMD's own SLs, and
     what it expects from the OS loader.
 
 ## License

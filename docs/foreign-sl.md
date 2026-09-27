@@ -8,16 +8,23 @@ SPDX-License-Identifier: BSD-3-Clause
 
 A debug build of `drtm` can embed a Secure Loader signed by someone else and
 launch it through the PSP DRTM service in place of its own. The point is AMD's
-own client SL. Client PSP firmware takes only SLs signed with keys its DRTM TA
-lists, which `drtm`'s key never is, so on a client machine that SL is the only
-one known to launch. It shows whether the platform's DRTM works at all,
+own SLs, one for clients and one for EPYC, both signed with the same AMD key.
+Client PSP firmware takes only SLs signed with keys its DRTM TA lists, which
+`drtm`'s key never is, so on a client machine AMD's SL is the only one known
+to launch. On either kind it shows whether the platform's DRTM works at all,
 separately from anything `drtm` does.
 
-## Where AMD's SL comes from
+## Where AMD's SLs come from
+
+Neither is part of any BIOS image. The firmware only carries the DRTM TA with
+its list of accepted keys. Both SLs ship inside Windows drivers, as
+`amddrtm.dll`.
+
+### Client
 
 Lenovo publishes it inside the Windows driver package "AMD DRTM Boot Driver
 for Windows", for the ThinkPad L14 Gen 5 (types 21L5, 21L6) and L16 Gen 1
-(types 21L7, 21L8):
+(types 21L7, 21L8). The driver binds `ACPI\DRTM0001`.
 
 - Package: `r2idt05w.exe`, version 1.0.19.4, SHA-256
     `db09603d000e2eb8bbb55c7bba4103cbcccb713e640ea713dd3935cf865f680b`.
@@ -27,12 +34,29 @@ for Windows", for the ThinkPad L14 Gen 5 (types 21L5, 21L6) and L16 Gen 1
 - The key ID in its token: `024ca9a5c32f41008aa8dd84c88b8dfc`.
 
 The package is an Inno Setup installer. `innoextract r2idt05w.exe` unpacks
-`amddrtm.dll` without running anything. The SL is not part of any BIOS image.
-The firmware only carries the DRTM TA with its list of accepted keys.
+`amddrtm.dll` without running anything.
 
 Other Lenovo AMD client packages carry the same key but not always the same
 SL. The 1.0.19.x DLLs for other models have the same layout with a different
 body, and 1.0.16.1 has a shorter one (`0x8800` bytes measured).
+
+### EPYC
+
+The "AMD EPYC DRTM Boot Driver" binds `ACPI\DRTM0002`, the server DRTM
+device. Lenovo publishes it for ThinkSystem servers as plain zips in its
+Windows Server driver repository (`windows-server.lenovo.com`), versions
+1.10.1.0 to 1.10.4.9. The newest:
+
+- Package: `sysboard_chipset.sp6t-amddrtm-1.10.4.9-016.zip`, SHA-256
+    `b7b26857090b418df715ae3f9baaf306a5dd9d94601a8ad8428bb27f5a231da1`.
+- The DLL inside it: `amddrtm.dll`, SHA-256
+    `e4e468994b7e9e3bd0775004b99767cfccccdb6d578455d60a478120b74e60ee`.
+- The SL in the DLL: offset `0x34c0`, `0x9270` bytes measured.
+- The key ID in its token: the client SL's, `024ca9a5c32f41008aa8dd84c88b8dfc`.
+
+From 1.10.4.1 on, the SL leaves SMM alone. Its `$AS1` header also gives
+`SizeFWSigned` as the image alone, where its signature covers the image and
+the header, as every other SL's does.
 
 ## Building and running
 
@@ -116,12 +140,13 @@ A fatal error does not write a POST code. The SL stores its `0xdeadNNNN`
 code at `0xfed10060` and resets the machine through port `0xcf9`. So a
 reboot right after `0xb0001a04` means `LAUNCH` was refused.
 
-The commands it sends, in order: `LAUNCH`, `EXTEND_OSSL_DIGEST`,
+The commands the client SL sends, in order: `LAUNCH`, `EXTEND_OSSL_DIGEST`,
 `GET_TMR_DESCRIPTORS` four times, `ALLOCATE_SHARED_MEMORY`, `PROCESS_SMM`,
 `GET_SMM_POLICY`, `GET_TCG_LOGS`. `PROCESS_SMM` and `GET_SMM_POLICY` are
 client only (58453, appendix H.2). Server firmware refuses them and the SL
 treats that as fatal, so it cannot complete on a server even where the
-firmware accepts its key.
+firmware accepts its key. The EPYC SL sends the same commands without
+`ALLOCATE_SHARED_MEMORY`, `PROCESS_SMM` and `GET_SMM_POLICY`.
 
 ## Under QEMU
 
@@ -133,9 +158,11 @@ DRTM_TEST_FOREIGN_SL=path/to/amddrtm.dll \
     uv run --project qemu-tests pytest qemu-tests/test_foreign_sl_amd.py
 ```
 
-The tests check the stand-in was reached, every command was answered in the
-order above, and the PSP model verified the signature. The boot needs four
-things from our QEMU beyond a PSP launch:
+The tests check the stand-in was reached, every command was answered in
+either SL's order above, and the PSP model verified the signature. Under
+QEMU the client SL 1.0.19.4 and the EPYC SLs 1.10.4.1 to 1.10.4.9 all reach
+the stand-in. The EPYC 1.10.1.0 and 1.10.2.0 do not, and why is not known.
+The boot needs four things from our QEMU beyond a PSP launch:
 
 - `isa-post-code`, which logs every write to ports `0x80` to `0x83` whole,
     since the SL writes dwords.
@@ -145,4 +172,5 @@ things from our QEMU beyond a PSP launch:
     through `MSR_AMD64_MMIO_CONF_BASE`, which firmware always sets.
 - `client-smm=on` on `amd-psp`, which answers `PROCESS_SMM` and
     `GET_SMM_POLICY` with zero hashes and an empty policy. That is only what
-    the SL accepts, not what client firmware returns.
+    the client SL accepts, not what client firmware returns. The EPYC SL
+    never sends them.
