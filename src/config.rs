@@ -68,6 +68,27 @@ const fn default_format() -> Format {
     }
 }
 
+/// The launch when nothing asks for another: `auto`, or what
+/// `DRTM_LAUNCH` names at build time. A `launch=` in `drtm.conf` still wins.
+const DEFAULT_LAUNCH: Launch = default_launch();
+
+/// Reads `DRTM_LAUNCH`, taking the same names `launch=` takes, and failing
+/// the build on anything else, or on `foreign` in a build without one.
+const fn default_launch() -> Launch {
+    let Some(name) = option_env!("DRTM_LAUNCH") else {
+        return Launch::Auto;
+    };
+    match name.as_bytes() {
+        b"auto" => Launch::Auto,
+        b"psp" => Launch::Psp,
+        b"skinit" => Launch::Skinit,
+        b"foreign" if crate::launch::HAS_FOREIGN => Launch::Foreign,
+        b"foreign" => panic!("DRTM_LAUNCH=foreign needs DRTM_FOREIGN_SL"),
+        b"off" => Launch::Off,
+        _ => panic!("DRTM_LAUNCH must be one of auto, psp, skinit, foreign, off"),
+    }
+}
+
 /// Whether a run ends in a launch once the checks allow one, and which.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Launch {
@@ -143,7 +164,7 @@ impl Config {
         let mut config = Self {
             level: DEFAULT_LEVEL,
             format: DEFAULT_FORMAT,
-            launch: Launch::Auto,
+            launch: DEFAULT_LAUNCH,
             problems: Vec::new(),
         };
         let mut buffer = [0; MAX_SIZE + 1];

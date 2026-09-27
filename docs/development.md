@@ -73,17 +73,18 @@ would then show every line twice. The QEMU suite only ever builds the
 default, so the other two combinations are checked by `cargo build` and
 nothing else.
 
-`DRTM_LOG_LEVEL` and `DRTM_LOG_FORMAT` set what a run starts at, for a binary
-copied to an ESP with no `drtm.conf` beside it:
+`DRTM_LOG_LEVEL`, `DRTM_LOG_FORMAT` and `DRTM_LAUNCH` set what a run starts
+at, for a binary copied to an ESP with no `drtm.conf` beside it:
 
 ```sh
-DRTM_LOG_LEVEL=trace DRTM_LOG_FORMAT=json cargo build
+DRTM_LOG_LEVEL=trace DRTM_LOG_FORMAT=json DRTM_LAUNCH=psp cargo build
 ```
 
 Each takes the same names its `drtm.conf` key does. An unusable value fails
-the build, since nothing later in the run could report it, and cargo rebuilds
-when a variable changes, so switching back is a plain `cargo build`. A
-`drtm.conf` on the machine still overrides whatever was built in.
+the build, as does `DRTM_LAUNCH=foreign` without `DRTM_FOREIGN_SL`, since
+nothing later in the run could report it. Cargo rebuilds when a variable
+changes, so switching back is a plain `cargo build`. A `drtm.conf` on the
+machine still overrides whatever was built in.
 
 ## Runtime configuration
 

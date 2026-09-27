@@ -65,14 +65,15 @@ kept.
 | `format` | `text`, `json`                                   | `text`  |
 | `launch` | `auto`, `psp`, `skinit`, `foreign`, `off`        | `auto`  |
 
-The first two can be built in, for a binary copied to an ESP with no
+All three can be built in, for a binary copied to an ESP with no
 `drtm.conf` beside it, along with where records go. A `drtm.conf` on the
-machine still wins over either.
+machine still wins over any of them.
 
 | Setting                        | Values                    | Default |
 |--------------------------------|---------------------------|---------|
 | `DRTM_LOG_LEVEL`               | the names `level=` takes  | `info`  |
 | `DRTM_LOG_FORMAT`              | the names `format=` takes | `text`  |
+| `DRTM_LAUNCH`                  | the names `launch=` takes | `auto`  |
 | `sink-serial` (cargo feature)  | on, off                   | on      |
 | `sink-console` (cargo feature) | on, off                   | off     |
 
@@ -80,9 +81,9 @@ machine still wins over either.
 DRTM_LOG_LEVEL=trace DRTM_LOG_FORMAT=json task build -- --features sink-console
 ```
 
-An unusable value for either variable fails the build, since nothing later in
-the run could report it. Enabling both sinks is right only where the two are
-separate devices. See [docs/development.md](docs/development.md) for the
+An unusable value for any of the variables fails the build, since nothing
+later in the run could report it. Enabling both sinks is right only where the
+two are separate devices. See [docs/development.md](docs/development.md) for the
 rest.
 
 `launch=foreign` needs a debug build made with `DRTM_FOREIGN_SL` naming a
