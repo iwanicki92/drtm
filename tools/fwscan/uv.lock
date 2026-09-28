@@ -181,7 +181,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "capstone", specifier = ">=5.0" },
-    { name = "psptool", url = "https://github.com/iwanicki92/PSPTool/archive/46ceb0a8a661c4460fb1917c3c8e46c62313b67d.tar.gz" },
+    { name = "psptool", url = "https://github.com/iwanicki92/PSPTool/archive/8a4695cb2e299745b095312b4cf4f914b4ca3630.tar.gz" },
 ]
 
 [package.metadata.requires-dev]
@@ -228,13 +228,13 @@ wheels = [
 
 [[package]]
 name = "psptool"
-version = "3.6+fork.46ceb0a"
-source = { url = "https://github.com/iwanicki92/PSPTool/archive/46ceb0a8a661c4460fb1917c3c8e46c62313b67d.tar.gz" }
+version = "3.6+fork.8a4695c"
+source = { url = "https://github.com/iwanicki92/PSPTool/archive/8a4695cb2e299745b095312b4cf4f914b4ca3630.tar.gz" }
 dependencies = [
     { name = "cryptography" },
     { name = "prettytable" },
 ]
-sdist = { hash = "sha256:6ab1b998ec6c333f1e766dad333b30e2452ba1ef497183bf59077a35960175e6" }
+sdist = { hash = "sha256:512c4a78bbcab9e6b3d4230231fce0d0b0f43ebcbb852ff0e02b8ff47581eefb" }
 
 [package.metadata]
 requires-dist = [
