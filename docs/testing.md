@@ -313,13 +313,14 @@ through a TPM 1.2, one through a CRB TPM that fails `tpm.locality` and launches
 anyway, and one the gate blocks. Those in `test_psp_launch.py` take the PSP
 path: one where every step passes and the probe sees the TMR block the PIT's
 interrupt, one with another SPLT version, one whose service is not ready so
-`auto` falls back, two that `launch=psp` blocks, one whose `TMR_SETUP` and one
-whose `LAUNCH` times out, one without an IVRS, and five whose `LAUNCH` the
-service refuses. Four of those patch a field of the signed image inside the
-ESP's copy of `drtm.efi`, through `machine.patch_sl`, and one raises the
-platform's patch level. The tests recompute PCR 17 and 18 from the measured part
-of `target/sl-psp.bin`, its key token and `target/dlme.bin` rather than
-trusting what drtm printed.
+`auto` falls back, two that `launch=psp` blocks, one whose `TMR_SETUP`, one
+whose `LAUNCH` and one whose extend times out, one built with a longer
+`DRTM_EXTEND_TIMEOUT_MS` that waits the same extend out, one without an
+IVRS, and five whose `LAUNCH` the service refuses. Four of those patch a
+field of the signed image inside the ESP's copy of `drtm.efi`, through
+`machine.patch_sl`, and one raises the platform's patch level. The tests
+recompute PCR 17 and 18 from the measured part of `target/sl-psp.bin`, its
+key token and `target/dlme.bin` rather than trusting what drtm printed.
 
 `test_foreign_sl_amd.py` runs only when `DRTM_TEST_FOREIGN_SL` names one of
 AMD's SLs. It builds a second binary embedding it, boots it with

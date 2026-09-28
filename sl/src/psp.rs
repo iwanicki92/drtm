@@ -12,6 +12,7 @@
 
 use core::slice;
 
+use common::clock;
 use common::out::Out;
 use common::params::{Family, Params, Psp};
 use common::psp::{self, Answer, Command, Mailbox};
@@ -52,6 +53,8 @@ struct Session<'a> {
     mailbox: Mailbox,
     /// The command that timed out, after which nothing more is sent.
     dead: Option<Command>,
+    /// How long the last command sent took to answer or time out.
+    elapsed_ms: u64,
     launched: bool,
     tpm: Tpm,
     held: bool,
@@ -94,7 +97,10 @@ impl Session<'_> {
         };
         self.out
             .debug(format_args!("{name} sent, waiting up to {timeout} ms"));
-        match self.mailbox.command(command, 0, arguments, timeout) {
+        let start = clock::tsc();
+        let sent = self.mailbox.command(command, 0, arguments, timeout);
+        self.elapsed_ms = clock::ms_since(start, self.params.tsc_per_ms);
+        match sent {
             Ok(answer) => {
                 self.out.debug(format_args!(
                     "{name} answers {} ({:#x}), C2PMSG_93 to 95 {:#010x} {:#010x} {:#010x}",
@@ -110,19 +116,7 @@ impl Session<'_> {
             Err(error) => {
                 self.dead = Some(command);
                 let register = self.mailbox.register();
-                self.out.check(
-                    Tag::Fail,
-                    id,
-                    &[
-                        ("command", Value::Text(format_args!("{name}"))),
-                        ("c2pmsg_72", Value::Hex(register.into())),
-                    ],
-                    format_args!(
-                        "{name} got no answer in {timeout} ms ({}, C2PMSG_72 \
-                         {register:#010x}), nothing more is sent",
-                        error.name()
-                    ),
-                );
+                unanswered(self.out, id, command, error, register, self.elapsed_ms);
                 None
             }
         }
@@ -163,6 +157,8 @@ impl Session<'_> {
 
     /// A status after a failed `LAUNCH`, which the guide's appendix A says
     /// each command answers, reported as a fact.
+    #[cold]
+    #[inline(never)]
     fn declined(&mut self, id: &str, command: Command, answer: &Answer, expected: u16) {
         let status = answer.status;
         self.out.check(
@@ -171,6 +167,7 @@ impl Session<'_> {
             &[
                 ("status", Value::Hex(status.into())),
                 ("expected", Value::Hex(expected.into())),
+                ("elapsed_ms", Value::Count(self.elapsed_ms)),
             ],
             format_args!(
                 "{} after the failed LAUNCH answers {}, appendix A gives {}",
@@ -186,6 +183,40 @@ impl Session<'_> {
     }
 }
 
+/// A command that got no answer within its time, which ends the mailbox
+/// steps. Out of line, so its record adds nothing to `run`'s frame.
+#[cold]
+#[inline(never)]
+fn unanswered(
+    out: &mut Out,
+    id: &str,
+    command: Command,
+    error: psp::Error,
+    register: u32,
+    ms: u64,
+) {
+    let name = command.name();
+    let timeout = if command == Command::ExtendOsslDigest {
+        psp::EXTEND_TIMEOUT_MS
+    } else {
+        psp::TIMEOUT_MS
+    };
+    out.check(
+        Tag::Fail,
+        id,
+        &[
+            ("command", Value::Text(format_args!("{name}"))),
+            ("c2pmsg_72", Value::Hex(register.into())),
+            ("elapsed_ms", Value::Count(ms)),
+        ],
+        format_args!(
+            "{name} got no answer in {timeout} ms ({}, C2PMSG_72 {register:#010x}, \
+             {ms} ms waited), nothing more is sent",
+            error.name()
+        ),
+    );
+}
+
 /// Runs the PSP path, from `LAUNCH` to handing the TPM back, and returns
 /// what the DLME is to know.
 pub fn run(out: &mut Out, params: &Params, psp: &Psp, slb: u32) -> (Handoff, Measured) {
@@ -198,6 +229,7 @@ pub fn run(out: &mut Out, params: &Params, psp: &Psp, slb: u32) -> (Handoff, Mea
         psp,
         mailbox,
         dead: None,
+        elapsed_ms: 0,
         launched: false,
         tpm: tpm(params, 0),
         held: false,
@@ -497,8 +529,9 @@ fn extend(s: &mut Session, measured: &Measured) -> bool {
         return false;
     }
     let status = answer.status;
+    let ms = s.elapsed_ms;
     let digest = measured.sha256;
-    let fields = |pcr17: &'static [u8]| -> [(&str, Value<'_>); 7] {
+    let fields = |pcr17: &'static [u8]| -> [(&str, Value<'_>); 8] {
         [
             ("base", Value::Hex(base)),
             ("size", Value::Hex(len.into())),
@@ -506,6 +539,7 @@ fn extend(s: &mut Session, measured: &Measured) -> bool {
             ("matches_build", Value::Flag(measured.matches)),
             ("digest", Value::Bytes(&measured.sha256)),
             ("status", Value::Hex(status.into())),
+            ("elapsed_ms", Value::Count(ms)),
             ("pcr17", Value::Bytes(pcr17)),
         ]
     };
@@ -520,7 +554,8 @@ fn extend(s: &mut Session, measured: &Measured) -> bool {
             "launch.psp_extend",
             &fields(&[]),
             format_args!(
-                "EXTEND_OSSL_DIGEST of the DLME, {len:#x} bytes at {base:#x}, answers {}{unaligned}",
+                "EXTEND_OSSL_DIGEST of the DLME, {len:#x} bytes at {base:#x}, answers {} \
+                 in {ms} ms{unaligned}",
                 psp::status_name(answer.status)
             ),
         );
@@ -531,7 +566,7 @@ fn extend(s: &mut Session, measured: &Measured) -> bool {
             Tag::Fail,
             "launch.psp_extend",
             &fields(&[]),
-            format_args!("EXTEND_OSSL_DIGEST answered, the PCRs did not read"),
+            format_args!("EXTEND_OSSL_DIGEST answered in {ms} ms, the PCRs did not read"),
         );
         return true;
     };
@@ -543,14 +578,14 @@ fn extend(s: &mut Session, measured: &Measured) -> bool {
     let ok = after[0].as_bytes() == expect(before[0].as_bytes())
         && after[1].as_bytes() == expect(before[1].as_bytes());
     let mut fields = fields(&[]);
-    fields[6].1 = Value::Bytes(after[0].as_bytes());
+    fields[7].1 = Value::Bytes(after[0].as_bytes());
     s.out.check(
         if ok { Tag::Pass } else { Tag::Fail },
         "launch.psp_extend",
         &fields,
         format_args!(
-            "EXTEND_OSSL_DIGEST of the DLME, {len:#x} bytes at {base:#x}, {} PCR 17 \
-             and 18 with it, then AMDSL{unaligned}",
+            "EXTEND_OSSL_DIGEST of the DLME, {len:#x} bytes at {base:#x}, answered in \
+             {ms} ms and {} PCR 17 and 18 with it, then AMDSL{unaligned}",
             if ok { "extended" } else { "did not extend" }
         ),
     );

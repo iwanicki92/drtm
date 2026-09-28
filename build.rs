@@ -64,6 +64,8 @@ fn main() {
         println!("cargo:rerun-if-changed={path}");
     }
     println!("cargo:rerun-if-env-changed=DRTM_SL_KEY");
+    // Read by `common` in the SL builds, which inherit it.
+    println!("cargo:rerun-if-env-changed=DRTM_EXTEND_TIMEOUT_MS");
     let key_path = env::var_os("DRTM_SL_KEY").map_or_else(|| root.join(TEST_KEY), PathBuf::from);
     println!("cargo:rerun-if-changed={}", key_path.display());
     let key = fs::read_to_string(&key_path)

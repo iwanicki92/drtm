@@ -66,14 +66,16 @@ kept.
 | `launch` | `auto`, `psp`, `skinit`, `foreign`, `off`        | `auto`  |
 
 All three can be built in, for a binary copied to an ESP with no
-`drtm.conf` beside it, along with where records go. A `drtm.conf` on the
-machine still wins over any of them.
+`drtm.conf` beside it, along with where records go and how long the PSP
+Secure Loader waits for `EXTEND_OSSL_DIGEST`. A `drtm.conf` on the machine
+still wins over any of the three.
 
 | Setting                        | Values                    | Default |
 |--------------------------------|---------------------------|---------|
 | `DRTM_LOG_LEVEL`               | the names `level=` takes  | `info`  |
 | `DRTM_LOG_FORMAT`              | the names `format=` takes | `text`  |
 | `DRTM_LAUNCH`                  | the names `launch=` takes | `auto`  |
+| `DRTM_EXTEND_TIMEOUT_MS`       | milliseconds, above 0     | `10000` |
 | `sink-serial` (cargo feature)  | on, off                   | on      |
 | `sink-console` (cargo feature) | on, off                   | off     |
 

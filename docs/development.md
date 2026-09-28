@@ -80,11 +80,19 @@ at, for a binary copied to an ESP with no `drtm.conf` beside it:
 DRTM_LOG_LEVEL=trace DRTM_LOG_FORMAT=json DRTM_LAUNCH=psp cargo build
 ```
 
-Each takes the same names its `drtm.conf` key does. An unusable value fails
-the build, as does `DRTM_LAUNCH=foreign` without `DRTM_FOREIGN_SL`, since
-nothing later in the run could report it. Cargo rebuilds when a variable
-changes, so switching back is a plain `cargo build`. A `drtm.conf` on the
-machine still overrides whatever was built in.
+Each takes the same names its `drtm.conf` key does.
+`DRTM_EXTEND_TIMEOUT_MS`, which has no key, sets how many milliseconds the
+PSP Secure Loader waits for `EXTEND_OSSL_DIGEST`, 10000 unless given:
+
+```sh
+DRTM_EXTEND_TIMEOUT_MS=180000 cargo build
+```
+
+An unusable value fails the build, as does `DRTM_LAUNCH=foreign` without
+`DRTM_FOREIGN_SL`, since nothing later in the run could report it. Cargo
+rebuilds when a variable changes, so switching back is a plain
+`cargo build`. A `drtm.conf` on the machine still overrides whatever was
+built in.
 
 ## Runtime configuration
 

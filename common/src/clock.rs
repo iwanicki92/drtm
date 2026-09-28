@@ -13,6 +13,11 @@ pub fn tsc() -> u64 {
     unsafe { _rdtsc() }
 }
 
+/// Whole milliseconds since the counter read `start`.
+pub fn ms_since(start: u64, tsc_per_ms: u64) -> u64 {
+    tsc().saturating_sub(start) / tsc_per_ms.max(1)
+}
+
 /// A point in time `ms` milliseconds from its creation.
 pub struct Deadline(u64);
 

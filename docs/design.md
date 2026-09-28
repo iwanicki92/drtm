@@ -193,9 +193,11 @@ path that value extended with the DLME's digest.
 ### The PSP path in the Secure Loader
 
 After `SKINIT` the Secure Loader drives the mailbox itself, with a 5 s
-timeout per command and 10 s for the extend, and says at `debug` which
-command it waits for. A timeout reports what `C2PMSG_72` holds and skips
-the mailbox steps after it, and the TPM steps still run. After each command
+timeout per command and 10 s for the extend, or what
+`DRTM_EXTEND_TIMEOUT_MS` gave the build, and says at `debug` which command
+it waits for. A timeout reports what `C2PMSG_72` holds and how long the wait
+took (`elapsed_ms`), and skips the mailbox steps after it, and the TPM
+steps still run. After each command
 it reports whether it still holds locality 2 (`launch.psp_seize`) and asks
 for it again if not. In the guide's order:
 
@@ -206,8 +208,9 @@ for it again if not. In the guide's order:
 1. Locality 2, which the launch unlocks, and the SHA-256 PCRs against the
     build's predictions.
 1. `EXTEND_OSSL_DIGEST` over the DLME, which is the guide's MLE here,
-    checked against the PCRs read before it. A DLME that is not the one
-    the build made is not sent.
+    checked against the PCRs read before it, with how long it took to
+    answer (`elapsed_ms`). A DLME that is not the one the build made is not
+    sent.
 1. `GET_TMR_DESCRIPTORS`, `ALLOCATE_SHARED_MEMORY`, `GET_TCG_LOGS` and
     `GET_IVRS_TABLE_INFO`. The log is parsed and replayed against PCR 17
     and 18, and the IVRS compared with the one ACPI holds.

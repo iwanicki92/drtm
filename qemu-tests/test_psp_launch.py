@@ -12,7 +12,15 @@ build predicted, so a wrong prediction in either shows.
 import hashlib
 from pathlib import Path
 
-from conftest import DLME, SL_PSP, launch_state, qemu_log, qemu_traces, records
+from conftest import (
+    DLME,
+    LONG_EXTEND_MS,
+    SL_PSP,
+    launch_state,
+    qemu_log,
+    qemu_traces,
+    records,
+)
 from test_launch import STACK_LIMIT, after_launch, checks, measured_image, stack_used
 
 # The signature block behind the measured image: the `$AS1` header, then
@@ -137,6 +145,8 @@ def test_the_extend_measures_the_dlme(psp_launch_boot: str):
         True,
         True,
     )
+    assert 0 <= extend["fields"]["elapsed_ms"] < 10000
+    assert f"answered in {extend['fields']['elapsed_ms']} ms" in extend["detail"]
 
 
 def test_the_dlme_judges_the_final_pcrs(psp_launch_boot: str):
@@ -275,13 +285,29 @@ def test_an_extend_timeout_leaves_the_pcrs_unjudged(psp_extend_timeout_boot: str
     # The late extend may still have measured the DLME, so the DLME judges
     # neither PCR, and sends nothing to the dead mailbox.
     assert result(psp_extend_timeout_boot, "launch.psp_launch") == "pass"
-    assert result(psp_extend_timeout_boot, "launch.psp_extend") == "fail"
+    (extend,) = checks(psp_extend_timeout_boot, "launch.psp_extend")
+    assert extend["result"] == "fail"
+    assert extend["fields"]["elapsed_ms"] >= 10000
+    assert "got no answer in 10000 ms" in extend["detail"]
     for step in AFTER_LAUNCH[1:]:
         assert result(psp_extend_timeout_boot, step) == "skip", step
     for pcr in ("launch.dlme_pcr17", "launch.dlme_pcr18"):
         (found,) = checks(psp_extend_timeout_boot, pcr)
         assert found["result"] == "skip", pcr
         assert "EXTEND_OSSL_DIGEST got no answer" in found["detail"], pcr
+
+
+def test_a_built_in_extend_timeout_waits_out_a_slow_extend(
+    psp_long_extend_boot: str,
+):
+    # The same 11 s extend as above, which a build waiting longer takes.
+    (extend,) = checks(psp_long_extend_boot, "launch.psp_extend")
+    assert extend["result"] == "pass"
+    assert 10000 <= extend["fields"]["elapsed_ms"] < LONG_EXTEND_MS
+    for step in AFTER_LAUNCH[1:]:
+        assert result(psp_long_extend_boot, step) != "skip", step
+    assert result(psp_long_extend_boot, "launch.dlme_pcr17") == "pass"
+    assert result(psp_long_extend_boot, "launch.dlme_pcr18") == "pass"
 
 
 def test_a_changed_dlme_is_neither_extended_nor_run(psp_bad_dlme_boot: str):

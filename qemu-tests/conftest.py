@@ -111,7 +111,10 @@ BUILD_TIMEOUT = 300.0
 
 
 _built_binary: Path | None = None
-_foreign_binaries: dict[Path, Path] = {}
+_variant_binaries: dict[str, Path] = {}
+
+# The extend timeout `psp_long_extend_boot` builds in.
+LONG_EXTEND_MS = 15000
 
 # What `query-amd-drtm` answered once each launch-machine boot had printed
 # its last record, by log directory. What the platform device saw of the
@@ -134,24 +137,26 @@ def built_efi_binary() -> Path:
     return _built_binary
 
 
-def foreign_efi_binary(sl: Path, name: str) -> Path:
-    """Builds `drtm.efi` with `sl` as its foreign SL, in a target directory
-    of its own called `name`, so no other build is redone, on first use."""
-    if sl not in _foreign_binaries:
+def variant_efi_binary(name: str, **env: str) -> Path:
+    """Builds `drtm.efi` with the build-time variables `env`, in a target
+    directory of its own called `name`, so no other build is redone, on
+    first use."""
+    if name not in _variant_binaries:
         target = REPO_ROOT / "target" / name
         subprocess.run(
             ["cargo", "build"],
             cwd=REPO_ROOT,
             check=True,
             timeout=BUILD_TIMEOUT,
-            env={
-                **os.environ,
-                "DRTM_FOREIGN_SL": str(sl),
-                "CARGO_TARGET_DIR": str(target),
-            },
+            env={**os.environ, **env, "CARGO_TARGET_DIR": str(target)},
         )
-        _foreign_binaries[sl] = target / "x86_64-unknown-uefi" / "debug" / "drtm.efi"
-    return _foreign_binaries[sl]
+        _variant_binaries[name] = target / "x86_64-unknown-uefi" / "debug" / "drtm.efi"
+    return _variant_binaries[name]
+
+
+def foreign_efi_binary(sl: Path, name: str) -> Path:
+    """Builds `drtm.efi` with `sl` as its foreign SL, in `target/name`."""
+    return variant_efi_binary(name, DRTM_FOREIGN_SL=str(sl))
 
 
 def _wait_for_post_codes(
@@ -554,6 +559,19 @@ def psp_extend_timeout_boot() -> dict:
     return {
         **_psp_machine(**{"command-delay": 11000, "delayed-command": 0xB}),
         "launch": LAUNCH_HALTED,
+    }
+
+
+@boot_configuration
+def psp_long_extend_boot() -> dict:
+    """Serial output of one PSP launch whose `EXTEND_OSSL_DIGEST` answers
+    after 11 s, from a build that waits 15 s for it."""
+    return {
+        **_psp_machine(**{"command-delay": 11000, "delayed-command": 0xB}),
+        "launch": LAUNCH_HALTED,
+        "build": lambda: variant_efi_binary(
+            "extend-timeout-test", DRTM_EXTEND_TIMEOUT_MS=str(LONG_EXTEND_MS)
+        ),
     }
 
 

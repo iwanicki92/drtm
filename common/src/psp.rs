@@ -24,11 +24,46 @@ const INDEX_SHIFT: u32 = 24;
 const COMMAND_SHIFT: u32 = 16;
 const STATUS_MASK: u32 = 0xFFFF;
 
-/// How long a command may take: the 5 s GRUB and SKL allow, and 10 s for
-/// the extend, which hashed at about 85 KB/s on hardware. The SL's range
-/// of under 64 KiB should take well under a second.
+/// How long a command may take: the 5 s GRUB and SKL allow, and for the
+/// extend 10 s or what `DRTM_EXTEND_TIMEOUT_MS` gives at build time.
 pub const TIMEOUT_MS: u64 = 5000;
-pub const EXTEND_TIMEOUT_MS: u64 = 10_000;
+pub const EXTEND_TIMEOUT_MS: u64 = extend_timeout();
+
+/// Reads `DRTM_EXTEND_TIMEOUT_MS`, failing the build on anything but a
+/// positive whole number of milliseconds.
+const fn extend_timeout() -> u64 {
+    let Some(text) = option_env!("DRTM_EXTEND_TIMEOUT_MS") else {
+        return 10_000;
+    };
+    match milliseconds(text.as_bytes()) {
+        Some(ms) => ms,
+        None => panic!("DRTM_EXTEND_TIMEOUT_MS must be a positive number of milliseconds"),
+    }
+}
+
+/// `text` as a positive decimal number that fits a `u64`.
+const fn milliseconds(text: &[u8]) -> Option<u64> {
+    if text.is_empty() {
+        return None;
+    }
+    let mut ms: u64 = 0;
+    let mut i = 0;
+    while i < text.len() {
+        let digit = text[i];
+        if !digit.is_ascii_digit() {
+            return None;
+        }
+        ms = match ms.checked_mul(10) {
+            Some(ms) => match ms.checked_add((digit - b'0') as u64) {
+                Some(ms) => ms,
+                None => return None,
+            },
+            None => return None,
+        };
+        i += 1;
+    }
+    if ms == 0 { None } else { Some(ms) }
+}
 
 /// The event data `EXTEND_OSSL_DIGEST` logs and extends after the range.
 pub const EXTEND_MARKER: &[u8] = b"AMDSL";
@@ -282,6 +317,23 @@ mod tests {
         assert_eq!(status_name(0xE), "DRTM_EXTEND_OSSL_DIGEST_FAILED");
         assert_eq!(status_name(0x10), "DRTM_GET_IVRS_TABLE_FAILED");
         assert_eq!(status_name(0x5), "an undefined status");
+    }
+
+    #[test]
+    fn parses_milliseconds() {
+        assert_eq!(milliseconds(b"180000"), Some(180_000));
+        assert_eq!(milliseconds(b"1"), Some(1));
+        assert_eq!(milliseconds(b"18446744073709551615"), Some(u64::MAX));
+        for bad in [
+            &b""[..],
+            b"0",
+            b"-1",
+            b"10 s",
+            b"1e3",
+            b"18446744073709551616",
+        ] {
+            assert_eq!(milliseconds(bad), None);
+        }
     }
 
     #[test]
