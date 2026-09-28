@@ -17,6 +17,7 @@ class Verdict(IntEnum):
     """Per TA and per image, the exit status is the worst over all images."""
 
     NO_DRTM_TA = 0
+    NO_ALLOWLIST = 2
     ENCRYPTED = 3
     INCONCLUSIVE = 4
     ALLOWLIST = 5
@@ -30,6 +31,10 @@ EXIT_ERROR = 1
 
 MEANING = {
     Verdict.NO_DRTM_TA: "no DRTM TA (PSP entry type 0x47) in the image",
+    Verdict.NO_ALLOWLIST: (
+        "the DRTM TA only compares digests of keys it quite likely checks "
+        "outside the SL key path, so no SL key allowlist was found"
+    ),
     Verdict.ENCRYPTED: "the DRTM TA is encrypted, its key checks cannot be read",
     Verdict.INCONCLUSIVE: "plaintext DRTM TA, but no key allowlist code found in it",
     Verdict.ALLOWLIST: (
@@ -61,8 +66,18 @@ def scan_ta(ta: psp.Ta, known: list[keys.Key]) -> dict:
                 "keys": [k.name for k in known if k.matches(digest.value)],
             }
         )
-    report["verdict"] = Verdict.ALLOWLIST if report["digests"] else Verdict.INCONCLUSIVE
+    report["verdict"] = verdict(report["digests"], known)
     return report
+
+
+def verdict(digests: list[dict], known: list[keys.Key]) -> Verdict:
+    """A digest counts unless all its keys are known to be checked off the SL path."""
+    if not digests:
+        return Verdict.INCONCLUSIVE
+    off_sl = {k.name for k in known if not k.sl}
+    if all(d["keys"] and set(d["keys"]) <= off_sl for d in digests):
+        return Verdict.NO_ALLOWLIST
+    return Verdict.ALLOWLIST
 
 
 def scan(path: Path, psptool: str, known: list[keys.Key], hid: bool) -> dict:
@@ -114,8 +129,9 @@ def main(argv: list[str] | None = None) -> int:
         prog="fwscan",
         description=(
             "Look for an SL key allowlist in the PSP DRTM TA of each firmware "
-            "image. Exit status: 0 no DRTM TA, 3 encrypted, 4 inconclusive, "
-            "5 allowlist (the worst over all images), 1 on an error."
+            "image. Exit status: 0 no DRTM TA, 2 no allowlist, 3 encrypted, "
+            "4 inconclusive, 5 allowlist (the worst over all images), 1 on an "
+            "error."
         ),
     )
     parser.add_argument("images", nargs="+", type=Path, metavar="IMAGE")

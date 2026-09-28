@@ -22,6 +22,8 @@ class Key:
     name: str
     sha256: bytes
     sha384: bytes
+    # False for a key the TA checks on another path than the SL key token's.
+    sl: bool = True
 
     def matches(self, digest: bytes) -> bool:
         return digest in (self.sha256, self.sha384)
@@ -57,8 +59,9 @@ KNOWN = (
         ),
     ),
     # Signs the SMI entry code in the SMM supervisor package of HP, Lenovo
-    # and Dell BIOS images. The TA checks it on a path of its own, likely
-    # not the SL key's. Key ID D2DBD452602D43638A7D4F5F87D8C124.
+    # and Dell BIOS images. The TA quite likely checks it on the SMM
+    # supervisor path, not the SL key's. Key ID
+    # D2DBD452602D43638A7D4F5F87D8C124.
     Key(
         "D2DBD452 AMD key",
         bytes.fromhex(
@@ -68,6 +71,7 @@ KNOWN = (
             "4c8a4b8c19902428353d303106b3b7507da1d4f4a13845f85ac171600d1d0201"
             "608d86d739a4e503b2cc3974d1ee9e48"
         ),
+        sl=False,
     ),
     # testPublicKey.bin in TrenchBoot's secure-kernel-loader, AMD's
     # development key, key ID 93E543343B4146FF968AA24DF512029A.

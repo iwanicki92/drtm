@@ -7,11 +7,12 @@ import json
 
 from fwscan import keys
 from fwscan.cli import Verdict, main
-from synthetic import SHA256, drtm_directory, fake_psptool, header, ta_code
+from synthetic import SHA256, SHA384, drtm_directory, fake_psptool, header, ta_code
 from test_keys import TOKEN, signed_sl
 
 TA_AT = 0x2000
 WINDOWS_SHA256 = keys.KNOWN[0].sha256
+D2DBD452_SHA384 = keys.KNOWN[1].sha384
 
 
 def firmware(tmp_path, ta: bytes | None):
@@ -38,6 +39,21 @@ def test_allowlist_names_the_listed_keys(tmp_path, capsys):
     assert "sha256 8de6f196fe89b6b5... Windows AMD SL key" in out
     assert "Windows AMD SL key: listed" in out
     assert "SKL test key: not listed" in out
+
+
+def test_smm_supervisor_digest_alone_is_no_allowlist(tmp_path, capsys):
+    image, psptool = firmware(tmp_path, ta_code(SHA384, D2DBD452_SHA384))
+    status, out = run(capsys, image, "--psptool", psptool, "--no-hid")
+    assert status == Verdict.NO_ALLOWLIST
+    assert f"{image}: no-allowlist" in out
+    assert "sha384 4c8a4b8c19902428... D2DBD452 AMD key" in out
+
+
+def test_unknown_digest_counts_as_allowlist(tmp_path, capsys):
+    image, psptool = firmware(tmp_path, ta_code(SHA384, bytes(range(0x30))))
+    status, out = run(capsys, image, "--psptool", psptool, "--no-hid")
+    assert status == Verdict.ALLOWLIST
+    assert "unknown key" in out
 
 
 def test_sl_file_adds_a_key(tmp_path, capsys):

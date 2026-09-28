@@ -29,6 +29,7 @@ Verdicts, the exit status being the worst over all images:
 | Exit | Verdict        | Meaning                                                  |
 | ---- | -------------- | -------------------------------------------------------- |
 | 0    | `no-drtm-ta`   | no DRTM TA in the image                                  |
+| 2    | `no-allowlist` | the TA only compares digests of non-SL keys              |
 | 3    | `encrypted`    | the TA is encrypted, its key checks cannot be read       |
 | 4    | `inconclusive` | plaintext TA, but no allowlist code found in it          |
 | 5    | `allowlist`    | the TA only takes SL keys whose token digest it lists    |
@@ -60,6 +61,13 @@ Older TAs load both constants as a `movw` and `movt` pair, and some set r1
 to 0x440 just before the algorithm load. fwscan finds the sequence in
 either form with capstone and reads the digest the pointer points at, so
 digests of unknown keys are found as well.
+
+Not every such compare is about the SL. The SHA-384 of AMD key
+`D2DBD452...`, found in every TA from 4.11.0.19 on, sits on a separate
+path that quite likely checks the SMM supervisor package in the BIOS,
+whose SMI entry code that key signs. fwscan names it but does not count it
+as an allowlist entry, so a TA with only that digest is `no-allowlist`. A
+digest of an unknown key still counts.
 
 ## psptool
 
