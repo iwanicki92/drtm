@@ -56,6 +56,19 @@ KNOWN = (
             "753a9ecc98e4d7f7cccb5e5909bf2359"
         ),
     ),
+    # Signs the SMI entry code in the SMM supervisor package of HP, Lenovo
+    # and Dell BIOS images. The TA checks it on a path of its own, likely
+    # not the SL key's. Key ID D2DBD452602D43638A7D4F5F87D8C124.
+    Key(
+        "D2DBD452 AMD key",
+        bytes.fromhex(
+            "054012d15f91c3dc2aa0534a2723bf8eef27ac63cd0a0e78082948819024d407"
+        ),
+        bytes.fromhex(
+            "4c8a4b8c19902428353d303106b3b7507da1d4f4a13845f85ac171600d1d0201"
+            "608d86d739a4e503b2cc3974d1ee9e48"
+        ),
+    ),
     # testPublicKey.bin in TrenchBoot's secure-kernel-loader, AMD's
     # development key, key ID 93E543343B4146FF968AA24DF512029A.
     Key(

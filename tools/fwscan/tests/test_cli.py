@@ -88,7 +88,11 @@ def test_json_and_worst_verdict_over_images(tmp_path, capsys):
             "keys": ["Windows AMD SL key"],
         }
     ]
-    assert report["keys"] == {"Windows AMD SL key": True, "SKL test key": False}
+    assert report["keys"] == {
+        "Windows AMD SL key": True,
+        "D2DBD452 AMD key": False,
+        "SKL test key": False,
+    }
 
 
 def test_psptool_failure_is_an_error(tmp_path, capsys):
