@@ -340,24 +340,18 @@ fn judge_psp(
 }
 
 /// `TMR_RELEASE`, the last command of a launch, and a device write that
-/// shows the TMR blocked before it and not after.
+/// shows the TMR blocked before it and not after. A refused `LAUNCH` still
+/// leaves the TMR the preamble set up, so it is released then too.
 fn release(out: &mut Out, params: &Params, handoff: &Handoff) {
     let Some(psp) = params.psp else {
         return;
     };
-    let unsent = if handoff.mailbox_dead {
-        Some("the mailbox stopped answering in the SL")
-    } else if handoff.from == Sender::Psp && handoff.launch.is_none() {
-        Some("LAUNCH did not succeed")
-    } else {
-        None
-    };
-    if let Some(why) = unsent {
+    if handoff.mailbox_dead {
         out.check(
             Tag::Skip,
             "launch.psp_tmr",
             &[],
-            format_args!("TMR_RELEASE not sent, {why}"),
+            format_args!("TMR_RELEASE not sent, the mailbox stopped answering in the SL"),
         );
         return;
     }

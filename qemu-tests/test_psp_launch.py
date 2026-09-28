@@ -331,11 +331,16 @@ def refused(capture: str, boot: str, reason: str) -> None:
         assert declined["result"] == "info", step
         fields = declined["fields"]
         assert fields["status"] == fields["expected"], step
-    # The DLME expects nothing of a refused LAUNCH, and has no TMR to free.
+    # The DLME expects nothing of a refused LAUNCH, and still frees the TMR
+    # the preamble set up, which blocked the probe until then.
     assert result(capture, "launch.dlme_pcr17") == "skip"
     assert result(capture, "launch.dlme_pcr18") == "skip"
-    assert result(capture, "launch.psp_tmr") == "skip"
-    assert not checks(capture, "launch.psp_probe")
+    (release,) = checks(capture, "launch.psp_tmr")
+    assert release["result"] == "pass"
+    assert release["fields"]["status"] == "0x0"
+    (probe,) = checks(capture, "launch.psp_probe")
+    assert (probe["fields"]["before"], probe["fields"]["after"]) == (False, True)
+    assert probe["result"] == "pass"
 
 
 def test_a_flipped_signature_byte_is_refused(psp_bad_signature_boot: str):

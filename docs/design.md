@@ -237,8 +237,9 @@ skipped where `LAUNCH` failed or the extend got no answer, which may still
 have measured the DLME. Then it sends `TMR_RELEASE` with a probe around
 it: the PIT's interrupt, which the IO-APIC delivers as a device write into
 the `0xFEE` window, must stay out of the local APIC's IRR under the TMR
-and arrive once it is gone. A failed `LAUNCH` or a mailbox that stopped
-answering in the Secure Loader skips it. After drtm's Secure Loaders the
+and arrive once it is gone. A refused `LAUNCH` still leaves the TMR the
+preamble set up, so both run after one too. A mailbox that stopped
+answering in the Secure Loader skips them. After drtm's Secure Loaders the
 summary starts from their tally, so it counts the whole launch, and
 `launch.halted` follows it. The machine needs a power cycle before the next
 attempt, since a reset would boot drtm from the same media and launch
