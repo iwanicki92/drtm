@@ -16,6 +16,9 @@ TEE digest, then compares the result byte by byte with a stored digest:
     ...
     cmp   rI, #0x20 or #0x30
 
+Older TAs (4.11.0.2F and before) build both constants with a `mov` or
+`movw` of the low half and a `movt` of the high half instead of `ldr`, and
+some set r1 to 0x440 a few instructions before the algorithm load.
 The digests follow from the code, not from a list of known hashes.
 """
 
@@ -65,21 +68,76 @@ def literal(insn: capstone.CsInsn, ta: bytes) -> int | None:
     return int.from_bytes(ta[offset : offset + 4], "little")
 
 
+def immediate(
+    insn: capstone.CsInsn, mnemonics: tuple[str, ...]
+) -> tuple[int, int] | None:
+    """`(register, value)` for `insn rX, #imm` with one of `mnemonics`."""
+    if insn.mnemonic not in mnemonics or len(insn.operands) != 2:
+        return None
+    dst, src = insn.operands
+    if dst.type != arm.ARM_OP_REG or src.type != arm.ARM_OP_IMM:
+        return None
+    return dst.reg, src.imm
+
+
+class Constants:
+    """Words loaded into registers, by `ldr` or by a low half plus `movt`."""
+
+    def __init__(self, ta: bytes) -> None:
+        self.ta = ta
+        self.low: dict[int, int] = {}
+
+    def feed(self, insn: capstone.CsInsn) -> int | None:
+        """The word `insn` completes loading, if any."""
+        value = literal(insn, self.ta)
+        if value is not None:
+            return value
+        low = immediate(insn, ("mov", "movs", "mov.w", "movw"))
+        if low is not None:
+            self.low[low[0]] = low[1] & 0xFFFF
+            return None
+        high = immediate(insn, ("movt",))
+        if high is not None and high[0] in self.low:
+            return high[1] << 16 | self.low.pop(high[0])
+        return None
+
+
 def compares_length(insn: capstone.CsInsn, length: int) -> bool:
     return insn.mnemonic in ("cmp", "cmp.w") and insn.op_str.endswith(f", #{length:#x}")
 
 
-def pattern_at(md: capstone.Cs, ta: bytes, start: int, length: int) -> int | None:
-    """Offset of the stored digest if the pattern follows `start`."""
+def sets_token_length(insn: capstone.CsInsn) -> bool:
+    return insn.mnemonic in ("mov.w", "movw") and insn.op_str == "r1, #0x440"
+
+
+# How many bytes before the algorithm load r1 may be set to 0x440.
+BACK = 0x40
+
+
+def token_length_before(md: capstone.Cs, ta: bytes, start: int) -> bool:
+    for at in range(max(0, start - BACK), start, 2):
+        insn = next(md.disasm(ta[at : at + 4], LOAD_ADDRESS + at, 1), None)
+        if insn is not None and sets_token_length(insn) and at + insn.size <= start:
+            return True
+    return False
+
+
+def pattern_at(
+    md: capstone.Cs, ta: bytes, start: int, length: int, hashed: bool = False
+) -> int | None:
+    """Offset of the stored digest if the pattern follows `start`.
+
+    `hashed` says r1 was already set to the token length before `start`.
+    """
     code = ta[start : start + 4 * WINDOW]
-    hashed = False
     stored = None
+    constants = Constants(ta)
     for insn in md.disasm(code, LOAD_ADDRESS + start, WINDOW):
         if not hashed:
-            if insn.mnemonic in ("mov.w", "movw") and insn.op_str == "r1, #0x440":
+            if sets_token_length(insn):
                 hashed = True
         elif stored is None:
-            value = literal(insn, ta)
+            value = constants.feed(insn)
             if value is not None:
                 offset = value - LOAD_ADDRESS
                 if not 0 <= offset <= len(ta) - length:
@@ -90,19 +148,36 @@ def pattern_at(md: capstone.Cs, ta: bytes, start: int, length: int) -> int | Non
     return None
 
 
+# How far past the low half the `movt` of an algorithm may lie.
+HIGH_WINDOW = 4
+
+
+def algorithm_at(md: capstone.Cs, ta: bytes, start: int) -> tuple[int, int] | None:
+    """`(algorithm, offset past its load)` if a TEE digest ID loads at `start`."""
+    code = ta[start : start + 4 * (HIGH_WINDOW + 1)]
+    constants = Constants(ta)
+    for n, insn in enumerate(md.disasm(code, LOAD_ADDRESS + start, HIGH_WINDOW + 1)):
+        value = constants.feed(insn)
+        if value is not None:
+            end = insn.address + insn.size - LOAD_ADDRESS
+            return (value, end) if value in ALGORITHMS else None
+        # Only the first instruction may start the load.
+        if n == 0 and not constants.low:
+            return None
+    return None
+
+
 def find(ta: bytes) -> list[Digest]:
     """The digests a plaintext TA (header included) checks tokens against."""
     md = disassembler()
     found: dict[tuple[str, bytes], Digest] = {}
     for start in range(0, len(ta) - 1, 2):
-        insn = next(md.disasm(ta[start : start + 4], LOAD_ADDRESS + start, 1), None)
-        if insn is None:
+        loaded = algorithm_at(md, ta, start)
+        if loaded is None:
             continue
-        algorithm = ALGORITHMS.get(literal(insn, ta) or 0)
-        if algorithm is None:
-            continue
-        name, length = algorithm
-        offset = pattern_at(md, ta, start + insn.size, length)
+        name, length = ALGORITHMS[loaded[0]]
+        before = token_length_before(md, ta, start)
+        offset = pattern_at(md, ta, loaded[1], length, before)
         if offset is not None:
             value = ta[offset : offset + length]
             found.setdefault((name, value), Digest(name, value, offset))

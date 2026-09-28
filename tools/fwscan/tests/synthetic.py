@@ -40,6 +40,20 @@ def ldr_literal(rt: int, at: int, target: int) -> bytes:
     return (0x4800 | rt << 8 | imm // 4).to_bytes(2, "little")
 
 
+def mov16(rd: int, value: int, top: bool = False) -> bytes:
+    """Thumb-2 `movw rd, #value`, or `movt` with `top`."""
+    hw1 = 0xF240 | top << 7 | (value >> 11 & 1) << 10 | value >> 12
+    hw2 = (value >> 8 & 7) << 12 | rd << 8 | value & 0xFF
+    return hw1.to_bytes(2, "little") + hw2.to_bytes(2, "little")
+
+
+def load(rt: int, at: int, target: int, value: int, halves: bool) -> bytes:
+    """Load `value` into `rt`, from the pool word at `target` or in halves."""
+    if halves:
+        return mov16(rt, value & 0xFFFF) + NOP + mov16(rt, value >> 16, top=True)
+    return ldr_literal(rt, at, target)
+
+
 def cmp_r0(value: int) -> bytes:
     return bytes([value, 0x28])
 
@@ -50,22 +64,30 @@ def ta_code(
     length: int | None = None,
     pointer: int | None = None,
     token_len: bytes = MOV_R1_0x440,
+    halves: bool = False,
+    length_first: bool = False,
 ) -> bytes:
     """A plaintext TA whose code compares a token digest with `digest`.
 
     `length` is the compare loop's bound, `pointer` the stored digest's
-    address, both taken from `digest` unless given.
+    address, both taken from `digest` unless given. With `halves` both
+    constants load as `movw` plus `movt`, as older TAs do. With
+    `length_first` r1 is set to the token length before the algorithm load.
     """
     code_at = psp.HEADER_LEN
     pool = 0x140
     digest_at = 0x150
-    code = ldr_literal(0, code_at, pool)
-    code += token_len + BL + CMP_R0_0
-    code += ldr_literal(1, code_at + len(code), pool + 4)
-    code += MOVS_R0_0 + MOVS_R2_0 + cmp_r0(length or len(digest)) + LOOP
-    body = code + NOP * ((pool - code_at - len(code)) // 2)
     if pointer is None:
         pointer = allowlist.LOAD_ADDRESS + digest_at
+    if length_first:
+        code = token_len + load(0, code_at + len(token_len), pool, algorithm, halves)
+        code += BL + CMP_R0_0
+    else:
+        code = load(0, code_at, pool, algorithm, halves)
+        code += token_len + BL + CMP_R0_0
+    code += load(1, code_at + len(code), pool + 4, pointer, halves)
+    code += MOVS_R0_0 + MOVS_R2_0 + cmp_r0(length or len(digest)) + LOOP
+    body = code + NOP * ((pool - code_at - len(code)) // 2)
     body += algorithm.to_bytes(4, "little") + pointer.to_bytes(4, "little")
     body = body.ljust(digest_at - code_at, b"\0") + digest
     return header() + body.ljust(0x100, b"\0")

@@ -56,8 +56,10 @@ ldr   rP, =stored digest
 cmp   rI, #0x20                 ; compare loop, #0x30 for SHA-384
 ```
 
-fwscan finds that sequence with capstone and reads the digest the literal
-points at, so digests of unknown keys are found as well.
+Older TAs load both constants as a `movw` and `movt` pair, and some set r1
+to 0x440 just before the algorithm load. fwscan finds the sequence in
+either form with capstone and reads the digest the pointer points at, so
+digests of unknown keys are found as well.
 
 ## psptool
 

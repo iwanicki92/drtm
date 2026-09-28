@@ -19,6 +19,22 @@ def test_sha384_digest_is_found():
     assert digest == allowlist.Digest("sha384", DIGEST_384, 0x150)
 
 
+def test_constants_built_from_halves_are_followed():
+    [digest] = allowlist.find(ta_code(SHA384, DIGEST_384, halves=True))
+    assert digest == allowlist.Digest("sha384", DIGEST_384, 0x150)
+
+
+def test_halves_pointer_outside_the_ta_is_ignored():
+    assert (
+        allowlist.find(ta_code(SHA256, DIGEST_256, pointer=0x1000, halves=True)) == []
+    )
+
+
+def test_token_length_set_before_the_algorithm_is_found():
+    [digest] = allowlist.find(ta_code(SHA384, DIGEST_384, length_first=True))
+    assert digest == allowlist.Digest("sha384", DIGEST_384, 0x150)
+
+
 def test_loop_bound_must_match_the_algorithm():
     assert allowlist.find(ta_code(SHA256, DIGEST_256, length=0x30)) == []
 
