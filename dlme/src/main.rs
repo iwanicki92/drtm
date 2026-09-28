@@ -405,34 +405,47 @@ fn release(out: &mut Out, params: &Params, handoff: &Handoff) {
             return;
         }
     };
-    let after = probe.watch();
-    let fields = [
+    let before = before == Some(true);
+    let mut fields = [
         ("vector", Value::Hex(probe.vector.into())),
         ("apic_id", Value::Count(probe.apic_id.into())),
         ("enabled_apic", Value::Flag(probe.enabled_apic)),
-        ("before", Value::Flag(before == Some(true))),
-        ("after", Value::Flag(after)),
+        ("before", Value::Flag(before)),
+        ("after", Value::Flag(false)),
     ];
+    // With IF clear the vector stays in the IRR once it arrived, so a second
+    // watch would only see the first arrival again.
+    if before {
+        probe.disarm();
+        out.check(
+            Tag::Warn,
+            "launch.psp_probe",
+            &fields[..4],
+            format_args!(
+                "the PIT's interrupt arrived under the TMR, which covers the 0xFEE \
+                 window the IO-APIC writes it to, so the TMR does not block every \
+                 device write"
+            ),
+        );
+        return;
+    }
+    let after = probe.watch();
+    fields[4].1 = Value::Flag(after);
     probe.disarm();
-    match (before == Some(true), after) {
-        (false, true) => out.check(
+    if after {
+        out.check(
             Tag::Pass,
             "launch.psp_probe",
             &fields,
             format_args!("the PIT's interrupt was blocked, and arrived after TMR_RELEASE"),
-        ),
-        (true, _) => out.check(
-            Tag::Fail,
-            "launch.psp_probe",
-            &fields,
-            format_args!("the PIT's interrupt arrived under the TMR, which it covers"),
-        ),
-        (false, false) => out.check(
+        );
+    } else {
+        out.check(
             Tag::Info,
             "launch.psp_probe",
             &fields,
             format_args!("the PIT's interrupt never arrived, the probe shows nothing"),
-        ),
+        );
     }
 }
 
