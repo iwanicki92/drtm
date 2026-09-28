@@ -23,11 +23,11 @@ dev = ["pytest"]
 # GPL-3.0: fwscan runs its CLI as a separate program and never imports it.
 # The fork parses client ROMs that upstream 6112e48 does not. A tarball,
 # because a git source clones the private fixtures submodule too.
-psptool = { url = "https://github.com/iwanicki92/PSPTool/archive/015af60699ff266ea1ae9947576d2d590d683a21.tar.gz" }
+psptool = { url = "https://github.com/iwanicki92/PSPTool/archive/66ef5aa94f8d44321d305de59da4275f4cd79d05.tar.gz" }
 
 [tool.uv.extra-build-variables]
 # psptool takes its version from git, which a tarball does not carry.
-psptool = { SETUPTOOLS_SCM_PRETEND_VERSION = "3.6+fork.015af60" }
+psptool = { SETUPTOOLS_SCM_PRETEND_VERSION = "3.6+fork.66ef5aa" }
 
 [build-system]
 requires = ["uv_build>=0.9,<0.13"]
