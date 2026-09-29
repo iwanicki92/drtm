@@ -40,7 +40,7 @@ Other Lenovo AMD client packages carry the same key but not always the same
 SL. The 1.0.19.x DLLs for other models have the same layout with a different
 body, and 1.0.16.1 has a shorter one (`0x8800` bytes measured).
 
-### EPYC
+### Server
 
 The "AMD EPYC DRTM Boot Driver" binds `ACPI\DRTM0002`, the server DRTM
 device. Lenovo publishes it for ThinkSystem servers as plain zips in its
