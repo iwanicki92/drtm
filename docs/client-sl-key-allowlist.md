@@ -6,12 +6,12 @@ SPDX-License-Identifier: BSD-3-Clause
 
 # Client SL key allowlist
 
-On client AMD platforms the PSP DRTM service checks which key signed the
-Secure Loader. Firmware whose DRTM TA is version 4.11.0.33 or later most
-likely accepts only SLs signed with the key of AMD's Windows SL, so `drtm`'s SL
-is expected to be refused there. This document explains the check, lists the TA
-versions and says how to check a firmware image. Every release checked is
-listed in [releases][releases].
+On client AMD platforms the [PSP DRTM service][glossary] checks which key signed
+the [Secure Loader][glossary] (SL). Firmware whose [DRTM TA][glossary] is
+version 4.11.0.33 or later most likely accepts only SLs signed with the key of
+AMD's Windows SL, so `drtm`'s SL is expected to be refused there. This document
+explains the check, lists the TA versions and says how to check a firmware
+image. Every release checked is listed in [releases][releases].
 
 The idea of checking which firmware versions make this key check comes from the
 talk [A Practical Security Assessment of DRTM on AMD-based Systems][talk] by
@@ -21,29 +21,31 @@ check on client firmware.
 ## What the allowlist is
 
 The PSP runs its DRTM service as a trusted application, the DRTM TA (PSP
-directory entry type `0x47`). When the host launches an SL, the TA hashes
-the `0x440`-byte key token of the key that signed it. Newer TAs then compare
-that digest with one they carry in their code: the SHA-256 of the token of
-the key that signs AMD's Windows SL (key ID
-`024ca9a5c32f41008aa8dd84c88b8dfc`, see [foreign SL][foreign-sl]). A key
-with any other token, such as `drtm`'s, would fail the compare.
+directory entry type `0x47`). When the host launches an SL, the TA hashes the
+`0x440`-byte [key token][glossary] of the key that signed it. Newer TAs then
+compare that digest with one they carry in their code: the SHA-256 of the token
+of the key that signs AMD's Windows SL (key ID
+`024ca9a5c32f41008aa8dd84c88b8dfc`, see [foreign SL][foreign-sl]). A key with
+any other token, such as `drtm`'s, would fail the compare.
 
 Server firmware's TA is encrypted, so this compare can't be read there, and
 firmware differs. Some Turin firmware launches an SL signed with `drtm`'s key.
 Other Turin firmware checks the key: it refuses `drtm`'s SL but launches AMD's.
 
 TAs also carry a second digest, the SHA-384 of the token of another key,
-`D2DBD452...`. It is compared on a separate code path and is not an SL key: that
-key signs the SMI entry code of the SMM supervisor package that many client BIOS
-images carry ([IOActive][ioactive] identifies the file that holds this code). So
-it is quite likely the TA's check of that package. It does not restrict the SL.
+`D2DBD452...`. That key is not an SL key: it signs the SMI entry code of the SMM
+supervisor package that many client BIOS images carry ([IOActive][ioactive]
+identifies the file that holds this code). The TA compares this digest on a
+separate code path, which is quite likely its check of that package. This digest
+does not restrict the SL.
 
 ## The two keys
 
 A key token holds a public key in AMD's own format: `0x440` bytes with the key
 ID, the modulus and the exponent. Both digests are taken over the whole token,
-and [fwscan] recognises both keys by them. The TA carries one digest of each key,
-marked below, and the other digests are there to identify a key from either hash.
+and [fwscan] recognises both keys by them. The TA carries one digest of each
+key, marked below, and the other digests are there to identify a key from either
+hash.
 
 | Field         | Windows SL key                                                                                     | SMM supervisor key                                                                                                |
 |---------------|----------------------------------------------------------------------------------------------------|-------------------------------------------------------------------------------------------------------------------|
@@ -61,31 +63,29 @@ AMD's driver package and the digests in the TA. The Authenticode signature on
 
 ## TA versions
 
-| DRTM TA                | SL key token digest                | `D2DBD452` digest | fwscan verdict |
-| ---------------------- | ---------------------------------- | ----------------- | -------------- |
-| 0.7.0.1, 4.11.0.14     | not compared                       | no                | `inconclusive` |
-| 4.11.0.19 to 4.11.0.30 | not compared                       | yes               | `no-allowlist` |
-| 4.11.0.33 to 4.11.0.39 | compared with the Windows SL key's | yes               | `allowlist`    |
-| 4.2D.0.33 to 4.2D.0.41 | compared with the Windows SL key's | yes               | `allowlist`    |
+| DRTM TA                | SL key token digest                     | `D2DBD452` digest | fwscan verdict |
+| ---------------------- | --------------------------------------- | ----------------- | -------------- |
+| 0.7.0.1, 4.11.0.14     | not compared                            | no                | `inconclusive` |
+| 4.11.0.19 to 4.11.0.30 | not compared                            | yes               | `no-allowlist` |
+| 4.11.0.33 to 4.11.0.39 | compared with the Windows SL key digest | yes               | `allowlist`    |
+| 4.2D.0.33 to 4.2D.0.41 | compared with the Windows SL key digest | yes               | `allowlist`    |
 
-"Not compared" comes from reading the code of 0.7.0.1, 4.11.0.14 and
-4.11.0.2F: the TA hashes the token, keeps the digest and goes on with the
-launch. In the other versions up to 4.11.0.30, fwscan finds the `D2DBD452`
-compare but none for the SL key token. No verdict has been tried on
-hardware.
+"Not compared" comes from reading the code of 0.7.0.1, 4.11.0.14 and 4.11.0.2F:
+the TA hashes the token, keeps the digest and goes on with the launch. In the
+other versions up to 4.11.0.30, fwscan finds the `D2DBD452` compare but none for
+the SL key token. No verdict has been tried on hardware.
 
 In the [client firmware survey](#coverage), the Windows SL key is the only entry
 in every allowlist found, and no DRTM TA is encrypted.
 
 ## What it means for `drtm`
 
-- `allowlist`: the TA most likely has an SL key allowlist, so `drtm`'s own
-    SL is expected to be refused. A debug build can still launch AMD's
-    client SL to check that the platform's DRTM works at all, see
-    [foreign SL][foreign-sl].
-- `no-allowlist` and `inconclusive`: nothing found in the TA restricts the
-    SL key, so `drtm`'s own SL is quite likely accepted. Most of these are
-    older releases of models whose later releases carry the allowlist, and
+- `allowlist`: the TA most likely has an SL key allowlist, so `drtm`'s own SL is
+    expected to be refused. A debug build can still launch AMD's client SL to
+    check that the platform's DRTM works at all, see [foreign SL][foreign-sl].
+- `no-allowlist` and `inconclusive`: nothing found in the TA restricts the SL
+    key, so `drtm`'s own SL is quite likely accepted. Most of these are older
+    releases of models whose later releases carry the allowlist, and
     anti-rollback may block a downgrade to them (not checked).
 - `encrypted`: the TA can't be read, so only a launch shows whether the firmware
     checks the key.
@@ -99,16 +99,17 @@ the survey, [releases][releases] already has the answer.
 
 ## Coverage
 
-The survey took public BIOS releases for client AMD platforms from the
-Lenovo, HP and Dell download catalogs, from LVFS, from ASUS and for a few
-MSI boards, and ran fwscan over them. That is 820 distinct releases under
-about 190 model names, as of 2026-09-29. Most are business laptops, with
-some business desktops. Retail desktop boards are covered by two ASUS and
-three MSI boards, and consumer laptops only where their vendor publishes on
-LVFS. The DRTM TA quite likely comes with AMD's AGESA, so boards of other
-vendors on the same AGESA release should carry the same TA. The ASUS and MSI
-B550 boards agree: both gain the allowlist in mid-2023.
+The survey took public BIOS releases for client AMD platforms from the Lenovo,
+HP and Dell download catalogs, from LVFS, from ASUS and for a few MSI boards,
+and ran fwscan over them. That is 820 distinct releases under about 190 model
+names, as of 2026-09-29. Most are business laptops, with some business desktops.
+Retail desktop boards are covered by two ASUS and three MSI boards, and consumer
+laptops only where their vendor publishes on LVFS. The DRTM TA quite likely
+comes with AMD's AGESA, so boards of other vendors on the same AGESA release
+should carry the same TA. The ASUS and MSI B550 boards agree: both gain the
+allowlist in mid-2023.
 
+[glossary]: design.md#glossary
 [releases]: client-sl-key-allowlist/releases.md
 [foreign-sl]: foreign-sl.md
 [fwscan]: ../tools/fwscan/README.md

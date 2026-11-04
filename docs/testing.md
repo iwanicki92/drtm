@@ -50,8 +50,8 @@ so every launch boot needs our build, and so do these check outcomes:
     where they are.
 - `amd.drtm_device` finding anything needs the SSDT that describes it.
 - `amd.iommu_table` warning needs an IOMMU with no IVRS table.
-- `amd.northbridge` finding a function needs the northbridge the launch machine
-    adds.
+- `amd.northbridge` finding a function needs the northbridge the
+    [launch machine][glossary] adds.
 - `amd.vm_cr` warning about `R_INIT` needs the `VM_CR` register.
 
 What those patches do, and what is still missing, is in
@@ -256,8 +256,8 @@ Every boot here runs with `launch=off` unless it asks for a launch, and
 `make_esp` writes that setting into its `drtm.conf`. So the checks run on a
 platform that could launch and is not asked to.
 
-The launch boots read on past the checks' summary to the DLME's `launch.halted`.
-The boots in `test_launch.py` cover:
+The launch boots read on past the checks' summary to the [DLME][glossary]'s
+`launch.halted`. The boots in `test_launch.py` cover:
 
 - a TIS TPM that must measure the image in SHA-1 and SHA-256
 - the PSP DRTM service holding localities 1 to 4
@@ -268,8 +268,9 @@ The boots in `test_launch.py` cover:
 
 The boots in `test_psp_launch.py` take the PSP path and cover:
 
-- every step passing, with the probe seeing the TMR block the PIT's interrupt
-- another SPLT version
+- every step passing, with the probe seeing the [TMR][glossary] block the PIT's
+    interrupt
+- another [SPLT][glossary] version
 - a service that is not ready, so `auto` falls back
 - two launches that `launch=psp` blocks
 - a timeout in each of `TMR_SETUP`, `LAUNCH` and `EXTEND_OSSL_DIGEST`
@@ -397,3 +398,5 @@ query the VM. The console is exposed as a raw TCP socket (`-serial tcp:...`, not
 `telnet:...`), to avoid depending on Python's removed `telnetlib`, which RF's
 own `Telnet` library needs. See `drtmtest.qemu_vm` in the `drtm-tests`
 repository, which also carries the QMP client and its Apache-2.0 attribution.
+
+[glossary]: design.md#glossary

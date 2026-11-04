@@ -66,13 +66,13 @@ script does not.
 ## Crates
 
 The repository is a Cargo workspace. The root package is `drtm`, the EFI binary,
-and the workspace's only default member, so a plain `cargo build` or `cargo
-clippy` builds that and nothing else.
+and the workspace's only default member, so a plain `cargo build` or
+`cargo clippy` builds that and nothing else.
 
-`sl` is the Secure Loader, which runs after `SKINIT`. `build.rs` builds it
-twice, once per launch path, through its `classic` and `psp` features. `dlme` is
-the DLME the Secure Loader hands off to, and `build.rs` builds it once. Both are
-built for `x86_64-unknown-none` and embedded in `drtm.efi`.
+`sl` is the [Secure Loader][glossary], which runs after `SKINIT`. `build.rs`
+builds it twice, once per launch path, through its `classic` and `psp` features.
+`dlme` is the DLME the Secure Loader hands off to, and `build.rs` builds it
+once. Both are built for `x86_64-unknown-none` and embedded in `drtm.efi`.
 
 `common` holds what `drtm`, `sl` and `dlme` share, such as the record format and
 the TPM commands, and needs neither UEFI nor a particular processor mode. Its
@@ -107,7 +107,7 @@ DRTM service, with the key `keys/test/README.md` describes.
 
 Log records go to the serial device by default, because that is what an operator
 running this by hand is usually watching. The `sink-console` feature adds the
-UEFI text console as a second output, called a sink. With
+UEFI text console as a second output, called a [sink][glossary]. With
 `--no-default-features` the console replaces the serial device. To build each
 combination, run:
 
@@ -139,9 +139,9 @@ DRTM_EXTEND_TIMEOUT_MS=180000 cargo build
 
 An unusable value fails the build, as does `DRTM_LAUNCH=foreign` without
 `DRTM_FOREIGN_SL`, since nothing later in the run could report it. Cargo
-rebuilds when a variable changes, so to return to the defaults, run `cargo
-build` with the variable unset. A `drtm.conf` on the machine still overrides
-whatever was built in.
+rebuilds when a variable changes, so to return to the defaults, run
+`cargo build` with the variable unset. A `drtm.conf` on the machine still
+overrides whatever was built in.
 
 ## Runtime configuration
 
@@ -281,3 +281,5 @@ HTML for `drtm`'s dependencies into `docs/dependency-docs` (gitignored, since
 it's generated and can be rebuilt any time). It also builds an `index.html`
 linking to each documented crate, styled to match rustdoc's own pages, and adds
 a link back to that index on each crate's root page.
+
+[glossary]: design.md#glossary
