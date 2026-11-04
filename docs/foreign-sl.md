@@ -230,9 +230,9 @@ report: PCR 18 against a value the tests compute from the SL, `TMR_RELEASE`,
 the probe, the TMR and log the SL left, and a passing summary. A boot that
 never reaches the DLME is still judged by its POST codes. Under QEMU, on the
 `EPYC-Genoa` CPU these tests use, the client SL 1.0.19.4 and the EPYC SLs 1.10.4.1
-to 1.10.4.9 all pass. The EPYC 1.10.1.0 most likely fails because it reads the
-PSP's base address from MSR `0xc00110a2`, which our QEMU does not model. Why the
-EPYC 1.10.2.0 stops short of the DLME is not known.
+to 1.10.4.9 all pass. The EPYC 1.10.1.0 doesn't list that CPU, and on the CPUs it
+lists it stops at `0xb0001a09`, short of the DLME. The EPYC 1.10.2.0 usually stops
+at `0xb0001002`, also short of the DLME. Why those two stop is not known.
 The boot needs four things from our QEMU beyond a PSP launch:
 
 - `isa-post-code`, which logs every write to ports `0x80` to `0x83` whole,
