@@ -14,16 +14,10 @@ wheels = [
 [[package]]
 name = "drtm-tests"
 version = "0.1.0"
-source = { editable = "../../drtm-tests" }
+source = { git = "https://github.com/iwanicki92/drtm-tests?rev=493b0226f1d09d6bfa5b2daacbd7a4bf3d467ee0#493b0226f1d09d6bfa5b2daacbd7a4bf3d467ee0" }
 dependencies = [
     { name = "pytest" },
     { name = "pytest-timeout" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "pytest" },
-    { name = "pytest-timeout", specifier = ">=2.4.0" },
 ]
 
 [[package]]
@@ -102,7 +96,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "drtm-tests", editable = "../../drtm-tests" },
+    { name = "drtm-tests", git = "https://github.com/iwanicki92/drtm-tests?rev=493b0226f1d09d6bfa5b2daacbd7a4bf3d467ee0" },
     { name = "pytest" },
     { name = "pytest-timeout", specifier = ">=2.4.0" },
 ]

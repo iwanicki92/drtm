@@ -15,14 +15,8 @@ are supported, to prove the UEFI application itself boots and runs correctly.
 dependencies are managed by [uv](https://docs.astral.sh/uv/) via
 `qemu-tests/pyproject.toml`, no separate venv setup needed. The QEMU
 harness itself, the `drtmtest` package, lives in the
-[`drtm-tests`](https://github.com/iwanicki92/drtm-tests) repository. The suite
-takes it from a checkout beside this one, so clone it there first:
-
-```sh
-git clone https://github.com/iwanicki92/drtm-tests ../drtm-tests
-```
-
-To run the suite:
+[`drtm-tests`](https://github.com/iwanicki92/drtm-tests) repository, and `uv`
+fetches the commit pinned in that file.
 
 ```sh
 task test
@@ -31,6 +25,13 @@ uv run --project qemu-tests pytest qemu-tests
 ```
 
 `uv` creates and reuses `qemu-tests/.venv` on its own.
+
+To try harness changes before pinning them, add your checkout of `drtm-tests` to
+the command:
+
+```sh
+uv run --project qemu-tests --with-editable ../drtm-tests pytest qemu-tests
+```
 
 The first run downloads Dasharo's QEMU Q35 firmware image into
 `qemu-tests/dl-cache/` (a few MB, gitignored, cached after that).

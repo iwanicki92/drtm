@@ -35,8 +35,6 @@ out.
 - For the test suite:
     - [our QEMU build](docs/testing.md#the-qemu-build), since a distribution
         QEMU can't run it
-    - a checkout of [`drtm-tests`](https://github.com/iwanicki92/drtm-tests)
-        beside this repository
     - `swtpm`, which backs the emulated TPM the TPM-detection tests need
     - [uv](https://docs.astral.sh/uv/)
 

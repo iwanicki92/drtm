@@ -14,10 +14,9 @@ dependencies = [
 ]
 
 [tool.uv.sources]
-# The QEMU harness lives in drtm-tests, taken from a checkout beside this
-# repository. TODO: point this at the git remote once drtm-tests has one,
-# so a clone of drtm alone can run the suite.
-drtm-tests = { path = "../../drtm-tests", editable = true }
+# The QEMU harness lives in drtm-tests. See docs/testing.md to run against a
+# local checkout.
+drtm-tests = { git = "https://github.com/iwanicki92/drtm-tests", rev = "493b0226f1d09d6bfa5b2daacbd7a4bf3d467ee0" }
 
 [tool.pytest.ini_options]
 # Backstop for hangs the harness's own timeouts don't cover, e.g. a blocked
