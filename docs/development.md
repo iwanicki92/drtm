@@ -29,6 +29,38 @@ System packages needed alongside it:
   and their virtual environment, see `docs/testing.md`.
 - `swtpm` and [our QEMU build](testing.md#the-qemu-build): for the test suite.
 
+## Building
+
+```sh
+cargo build
+```
+
+Produces `target/x86_64-unknown-uefi/debug/drtm.efi`. The target is fixed in
+`.cargo/config.toml`, so no `--target` flag is needed. `build.rs` first builds
+the Secure Loader twice with its own `sl` profile into a target directory
+under `OUT_DIR`, once per launch path, then the DLME with the same profile.
+It flattens each build into the image that is measured, fails the build on
+anything the SLB or the DLME's block does not allow, and computes the PCR
+values the launch should leave. It also copies the images to
+`target/sl-classic.bin`, `target/sl-psp.bin` and `target/dlme.bin`, where
+the QEMU tests recompute those values.
+
+## Task runner
+
+Build, lint, and test are wrapped in a [Taskfile](https://taskfile.dev/)
+(install `task` via its own instructions):
+
+```sh
+task build
+task lint
+task test
+```
+
+These just wrap the commands below, so using them directly works too.
+Arguments after `--` reach the wrapped command, as in
+`task build -- --features sink-console` or `task lint -- cargo-clippy`.
+`docs` takes none, because its script does not.
+
 ## Crates
 
 The repository is a Cargo workspace. The root package is `drtm`, the EFI
@@ -55,6 +87,22 @@ cargo test-host
 default target is UEFI and a bare `cargo test` would build for it. It also
 runs the tests of `sign`, which `build.rs` uses to sign the Secure Loader
 for the PSP DRTM service, with the key `keys/test/README.md` describes.
+
+## Layout
+
+- `src/`: the Rust binary. `src/launch/` is the gate and the preamble.
+- `sl/`: the Secure Loader, with its linker script `sl.ld`.
+- `dlme/`: the DLME every launch hands off to, with its linker script
+  `dlme.ld`.
+- `common/`: what `drtm`, the Secure Loader and the DLME share.
+- `qemu-tests/`: the pytest-based QEMU test suite (kept out of Cargo's own
+  `tests/` directory to avoid confusion between the two). The harness it
+  boots with is the `drtmtest` package from the `drtm-tests` repository.
+- `scripts/`: standalone helper scripts, e.g. dependency doc generation.
+- `tools/fwscan/`: a host tool that looks for an SL key allowlist in a
+  firmware image's PSP DRTM TA (Python, uv, see its README).
+- `docs/`: this folder.
+- `Taskfile.yml`, `.pre-commit-config.yaml`: see above.
 
 ## Build features
 
@@ -191,38 +239,6 @@ Nothing is rendered for a person, since hexadecimal digits cost half what a
 hexdump does on the wire. A script turning a capture back into hexdumps can
 be written the day someone needs to read one by eye.
 
-## Task runner
-
-Build, lint, and test are wrapped in a [Taskfile](https://taskfile.dev/)
-(install `task` via its own instructions):
-
-```sh
-task build
-task lint
-task test
-```
-
-These just wrap the commands below, so using them directly works too.
-Arguments after `--` reach the wrapped command, as in
-`task build -- --features sink-console` or `task lint -- cargo-clippy`.
-`docs` takes none, because its script does not.
-
-## Building
-
-```sh
-cargo build
-```
-
-Produces `target/x86_64-unknown-uefi/debug/drtm.efi`. The target is fixed in
-`.cargo/config.toml`, so no `--target` flag is needed. `build.rs` first builds
-the Secure Loader twice with its own `sl` profile into a target directory
-under `OUT_DIR`, once per launch path, then the DLME with the same profile.
-It flattens each build into the image that is measured, fails the build on
-anything the SLB or the DLME's block does not allow, and computes the PCR
-values the launch should leave. It also copies the images to
-`target/sl-classic.bin`, `target/sl-psp.bin` and `target/dlme.bin`, where
-the QEMU tests recompute those values.
-
 ## Linting
 
 Formatting and linting (Rust, Python, Markdown, spelling, license headers,
@@ -261,19 +277,3 @@ HTML for `drtm`'s dependencies into `docs/dependency-docs` (gitignored,
 since it's generated and can be rebuilt any time). It also builds an
 `index.html` linking to each documented crate, styled to match rustdoc's own
 pages, and adds a link back to that index on each crate's root page.
-
-## Layout
-
-- `src/`: the Rust binary. `src/launch/` is the gate and the preamble.
-- `sl/`: the Secure Loader, with its linker script `sl.ld`.
-- `dlme/`: the DLME every launch hands off to, with its linker script
-  `dlme.ld`.
-- `common/`: what `drtm`, the Secure Loader and the DLME share.
-- `qemu-tests/`: the pytest-based QEMU test suite (kept out of Cargo's own
-  `tests/` directory to avoid confusion between the two). The harness it
-  boots with is the `drtmtest` package from the `drtm-tests` repository.
-- `scripts/`: standalone helper scripts, e.g. dependency doc generation.
-- `tools/fwscan/`: a host tool that looks for an SL key allowlist in a
-  firmware image's PSP DRTM TA (Python, uv, see its README).
-- `docs/`: this folder.
-- `Taskfile.yml`, `.pre-commit-config.yaml`: see above.

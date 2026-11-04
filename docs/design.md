@@ -71,6 +71,22 @@ Loader has it check the image's signature and extend the DRTM PCRs. The DLME
 then has it release the TMR. Together they issue every command the guide lists,
 except the client-only `PROCESS_SMM` and `GET_SMM_POLICY`.
 
+### The gate
+
+After the checks' summary, the gate reads back what they reported and blocks
+only where a launch is impossible or unsafe: a CPU that is not AMD or
+`amd.skinit` not passing, `cpu.machine_check`, `cpu.bsp`, `amd.slb` or
+`tpm.present` failing, no 1 GiB pages for the Secure Loader's page tables,
+and no UART it could write to. Any other failure is launched through. A TPM
+with locality 0 alone fails `tpm.locality` and still launches, so the run
+shows on the machine at hand what a launch there measures. A blocked launch
+prints one `launch.gate` record and stops. With `launch=psp` it also blocks
+where the PSP path is not available.
+
+The Secure Loader and the DLME write to the UART the ACPI SPCR table names,
+or else to COM1 at `0x3F8`, where UEFI offers a serial device or a 16550
+answers there.
+
 ### Choosing the path
 
 `launch=auto`, the default, takes the PSP path when all of these hold, and
@@ -96,22 +112,6 @@ reports how `LAUNCH` answers.
 
 A debug build can also launch a Secure Loader signed by someone else, which
 hands off to the same DLME. See [foreign-sl.md](foreign-sl.md).
-
-### The gate
-
-After the checks' summary, the gate reads back what they reported and blocks
-only where a launch is impossible or unsafe: a CPU that is not AMD or
-`amd.skinit` not passing, `cpu.machine_check`, `cpu.bsp`, `amd.slb` or
-`tpm.present` failing, no 1 GiB pages for the Secure Loader's page tables,
-and no UART it could write to. Any other failure is launched through. A TPM
-with locality 0 alone fails `tpm.locality` and still launches, so the run
-shows on the machine at hand what a launch there measures. A blocked launch
-prints one `launch.gate` record and stops. With `launch=psp` it also blocks
-where the PSP path is not available.
-
-The Secure Loader and the DLME write to the UART the ACPI SPCR table names,
-or else to COM1 at `0x3F8`, where UEFI offers a serial device or a 16550
-answers there.
 
 ### The preamble
 
@@ -147,6 +147,22 @@ path):
     4 GiB, leaves long mode, writes one `S` to the UART and executes
     `SKINIT`.
 
+### The signed image
+
+The service takes an image followed by a signature block: an `$AS1`
+header at the measured length, an RSA-4096 PSS signature with SHA-384 over
+the image and that header, and the key token the service checks it with.
+`build.rs` signs the Secure Loader through the `sign` crate with
+`keys/test/sl-test-key.pem`, a key published on purpose, or with the one
+`DRTM_SL_KEY` names. It also predicts what the service leaves in PCR 17,
+the `SKINIT` value extended with the SPLT version (the Secure Loader adds
+the fuse words it learns from `LAUNCH`), and in PCR 18, the key token and
+the SecPatchLevel the `$AS1` header gives.
+
+`build.rs` computes the expected PCR 17 values as `SKINIT` leaves them: the
+reset value, zero, extended with the image's digest, and on the classic
+path that value extended with the DLME's digest.
+
 ### The Secure Loader
 
 `sl/` is linked by `sl/sl.ld`. The image opens with AMD's header and keeps
@@ -179,16 +195,6 @@ extends PCR 17 with it in those banks where they are active
 record says so. Nothing guards the block against device writes between the
 hash and the jump on this path, where the PSP paths have TMR 0 over it.
 
-Both paths end in the handoff. Where the DLME's SHA-256 is the one the
-build computed, the Secure Loader writes its tally and what the DLME needs
-to know into the DLME's page, leaves long mode as the trampoline does, and
-jumps to the DLME's entry in flat 32-bit protected mode with paging off.
-Otherwise it reports `launch.handoff`, prints the summary and halts.
-
-`build.rs` computes the expected PCR 17 values as `SKINIT` leaves them: the
-reset value, zero, extended with the image's digest, and on the classic
-path that value extended with the DLME's digest.
-
 ### The PSP path in the Secure Loader
 
 After `SKINIT` the Secure Loader drives the mailbox itself, with a 5 s
@@ -216,6 +222,12 @@ for it again if not. In the guide's order:
 1. `TPM_LOCALITY_ACCESS`, after which locality 2 must be refused.
 
 `TMR_RELEASE` is left to the DLME, as it would be to an OS.
+
+Both paths end in the handoff. Where the DLME's SHA-256 is the one the
+build computed, the Secure Loader writes its tally and what the DLME needs
+to know into the DLME's page, leaves long mode as the trampoline does, and
+jumps to the DLME's entry in flat 32-bit protected mode with paging off.
+Otherwise it reports `launch.handoff`, prints the summary and halts.
 
 ### The DLME
 
@@ -248,15 +260,3 @@ summary starts from their tally, so it counts the whole launch, and
 `launch.halted` follows it. The machine needs a power cycle before the next
 attempt, since a reset would boot drtm from the same media and launch
 again.
-
-### The signed image
-
-The service takes an image followed by a signature block: an `$AS1`
-header at the measured length, an RSA-4096 PSS signature with SHA-384 over
-the image and that header, and the key token the service checks it with.
-`build.rs` signs the Secure Loader through the `sign` crate with
-`keys/test/sl-test-key.pem`, a key published on purpose, or with the one
-`DRTM_SL_KEY` names. It also predicts what the service leaves in PCR 17,
-the `SKINIT` value extended with the SPLT version (the Secure Loader adds
-the fuse words it learns from `LAUNCH`), and in PCR 18, the key token and
-the SecPatchLevel the `$AS1` header gives.
