@@ -8,10 +8,10 @@ SPDX-License-Identifier: BSD-3-Clause
 
 On client AMD platforms the PSP DRTM service checks which key signed the
 Secure Loader. Firmware whose DRTM TA is version 4.11.0.33 or later most
-likely accepts only SLs signed with AMD's own key, so `drtm`'s SL is expected
-to be refused there. This document explains the check, lists the TA versions
-and says how to check a firmware image. Every release checked is listed in
-[releases][releases].
+likely accepts only SLs signed with the key of AMD's Windows SL, so `drtm`'s SL
+is expected to be refused there. This document explains the check, lists the TA
+versions and says how to check a firmware image. Every release checked is
+listed in [releases][releases].
 
 The idea of checking which firmware versions make this key check comes from the
 talk [A Practical Security Assessment of DRTM on AMD-based Systems][talk] by
@@ -32,11 +32,32 @@ Server firmware's TA is encrypted, so this compare can't be read there, and
 firmware differs. Some Turin firmware launches an SL signed with `drtm`'s key.
 Other Turin firmware checks the key: it refuses `drtm`'s SL but launches AMD's.
 
-TAs also carry a second digest, the SHA-384 of AMD key `D2DBD452...`. It is
-compared on a separate code path and is not an SL key: that key signs the
-SMI entry code of the SMM supervisor package that many client BIOS images
-carry. So it is quite likely the TA's check of that package. It does not
-restrict the SL.
+TAs also carry a second digest, the SHA-384 of the token of another key,
+`D2DBD452...`. It is compared on a separate code path and is not an SL key: that
+key signs the SMI entry code of the SMM supervisor package that many client BIOS
+images carry ([IOActive][ioactive] identifies the file that holds this code). So
+it is quite likely the TA's check of that package. It does not restrict the SL.
+
+## The two keys
+
+A key token holds a public key in AMD's own format: `0x440` bytes with the key
+ID, the modulus and the exponent. Both digests are taken over the whole token,
+and [fwscan] recognises both keys by them. The TA carries one digest of each key,
+marked below, and the other digests are there to identify a key from either hash.
+
+| Field         | Windows SL key                                                                                     | SMM supervisor key                                                                                                |
+|---------------|----------------------------------------------------------------------------------------------------|-------------------------------------------------------------------------------------------------------------------|
+| Key ID        | `024ca9a5c32f41008aa8dd84c88b8dfc`                                                                 | `d2dbd452602d43638a7d4f5f87d8c124`                                                                                |
+| Key           | RSA-4096, exponent `0x10001`                                                                       | RSA-4096, exponent `0x10001`                                                                                      |
+| Token SHA-256 | `8de6f196fe89b6b5dedede3822168ae42b4dadbff28128351784f2b6ac39784e` (in the TA)                     | `054012d15f91c3dc2aa0534a2723bf8eef27ac63cd0a0e78082948819024d407`                                                |
+| Token SHA-384 | `9a0fe23fd62242bf65bd45d486ad60de3e9a192d300acbd5668346d9de0ab2d9753a9ecc98e4d7f7cccb5e5909bf2359` | `4c8a4b8c19902428353d303106b3b7507da1d4f4a13845f85ac171600d1d0201608d86d739a4e503b2cc3974d1ee9e48` (in the TA)    |
+| Found in      | the `$AS1` signature block of AMD's SLs in `amddrtm.dll`                                           | entry `0xC3` of a `$PSP` directory in FFS file `83E1F409-21A3-491D-A415-B163A153776D` (`SmmSupervisorBinRelease`) |
+
+No certificate for either key has been found. A token has no subject, issuer or
+validity fields, its certifying key ID is all zero in both, and nothing in those
+packages certifies either key. So calling them AMD's rests on where they appear:
+AMD's driver package and the digests in the TA. The Authenticode signature on
+`amddrtm.dll` comes from Microsoft and uses a separate key.
 
 ## TA versions
 
@@ -91,5 +112,6 @@ B550 boards agree: both gain the allowlist in mid-2023.
 [releases]: client-sl-key-allowlist/releases.md
 [foreign-sl]: foreign-sl.md
 [fwscan]: ../tools/fwscan/README.md
+[ioactive]: https://www.ioactive.com/tales-from-the-call-gate-an-smm-supervisor-vulnerability/
 [talk]: https://cfp.3mdeb.com/bsmconf/talk/ZJWHCU/
 [talk-slides]: https://cfp.3mdeb.com/media/bsmconf/submissions/ZJWHCU/resources/20260924-drtm-on-amd-slides_5B8J8mF.pdf
