@@ -17,16 +17,20 @@ it worked.
 
 ## Status
 
-A UEFI binary that checks whether an AMD platform meets the preconditions of
-a dynamic launch, dumps the platform state behind them, and then launches
-through `SKINIT` into its own Secure Loader, through AMD's PSP DRTM service
-where the platform offers it. The Secure Loader reads the DRTM PCRs, reports
-whether the TPM and the service measured it, and hands off to drtm's own
-DLME, which judges the PCRs its measurement left and halts the machine,
-which then needs a power cycle. `launch=` in `drtm.conf` picks the path: `auto`
-(the default), `psp`, `skinit`, or `off` to stop a run after the checks.
-See [docs/design.md](docs/design.md) for how it works and what it leaves
-out.
+`drtm` is a UEFI binary that checks whether an AMD platform meets the
+preconditions of a dynamic launch, and can dump the platform state those checks
+read. It then launches its own [Secure Loader][glossary] with the `SKINIT`
+instruction. Where the platform offers AMD's [PSP DRTM service][glossary], the
+launch also uses that service.
+
+The Secure Loader reads the DRTM PCRs and reports whether the TPM and the
+service measured it. It then hands off to `drtm`'s own [DLME][glossary], which
+compares the PCRs with the values its measurement should leave and halts the
+machine. The machine then needs a power cycle.
+
+`launch=` in `drtm.conf` picks the path: `auto` (the default), `psp`, `skinit`,
+or `off` to stop a run after the checks. See [docs/design.md](docs/design.md)
+for how it works and what it leaves out.
 
 ## Requirements
 
@@ -59,8 +63,7 @@ task docs    # scripts/gen-dependency-docs.sh -> docs/dependency-docs
 
 `drtm.conf` sits beside the binary on the ESP and is read at startup. It is
 optional: with no file the defaults apply. One `key=value` per line, `#`
-starting a comment, and anything wrong in it is reported and the default
-kept.
+starting a comment, and anything wrong in it is reported and the default kept.
 
 | Key      | Values                                           | Default |
 |----------|--------------------------------------------------|---------|
@@ -68,10 +71,12 @@ kept.
 | `format` | `text`, `json`                                   | `text`  |
 | `launch` | `auto`, `psp`, `skinit`, `foreign`, `off`        | `auto`  |
 
-All three can be built in, for a binary copied to an ESP with no
-`drtm.conf` beside it, along with where records go and how long the PSP
-Secure Loader waits for `EXTEND_OSSL_DIGEST`. A `drtm.conf` on the machine
-still wins over any of the three.
+The three keys can also be set at build time, for a binary copied to an ESP with
+no `drtm.conf` beside it. A `drtm.conf` on the machine overrides them. Two more
+settings exist only at build time: where log records go, and how long the Secure
+Loader on the PSP path waits for an answer to `EXTEND_OSSL_DIGEST`, the service
+command that measures the DLME. The table below lists the environment variables
+and cargo features for all of them.
 
 | Setting                        | Values                    | Default |
 |--------------------------------|---------------------------|---------|
@@ -86,24 +91,25 @@ still wins over any of the three.
 DRTM_LOG_LEVEL=trace DRTM_LOG_FORMAT=json task build -- --features sink-console
 ```
 
-An unusable value for any of the variables fails the build, since nothing
-later in the run could report it. Enabling both sinks is right only where the
-two are separate devices. See [docs/development.md](docs/development.md) for the
-rest.
+An unusable value for any of the environment variables fails the build, because
+a bad built-in value could not be reported later in the run. The `sink-*`
+features choose where log records go. Enable both only if the serial port and
+the UEFI text console are separate devices, otherwise every line prints twice.
+See [docs/development.md](docs/development.md) for the rest.
 
-`launch=foreign` needs a debug build made with `DRTM_FOREIGN_SL` naming a
-Secure Loader signed by someone else, such as AMD's client or EPYC SL from
-Lenovo's Windows "AMD DRTM Boot Driver" packages. It launches that SL in place of
+`launch=foreign` needs a debug build made with `DRTM_FOREIGN_SL` set to a Secure
+Loader signed by someone else, such as AMD's client or EPYC SL from Lenovo's
+Windows "AMD DRTM Boot Driver" packages. It launches that SL in place of
 `drtm`'s own. That SL reports only through POST codes, until it hands off to
 `drtm`'s DLME, which reports as usual. See
 [docs/foreign-sl.md](docs/foreign-sl.md).
 
 ## Firmware scan
 
-The PSP DRTM service on some platforms takes only Secure Loaders signed with
-keys its DRTM TA lists, which `drtm`'s own key never is.
-[tools/fwscan](tools/fwscan/README.md) checks a firmware image for such a list
-before it is flashed:
+On some platforms the PSP DRTM service accepts a Secure Loader only if its
+signing key is on a list in the [DRTM TA][glossary]. `drtm`'s own key is never
+on that list. [tools/fwscan](tools/fwscan/README.md) checks a firmware image for
+such a list before it is flashed:
 
 ```sh
 uv run --project tools/fwscan fwscan IMAGE...
@@ -111,8 +117,8 @@ uv run --project tools/fwscan fwscan IMAGE...
 
 It gives each image one of these verdicts:
 
-- `allowlist`: the TA compares the SL's key token against digests it carries.
-    The report names the keys it recognises.
+- `allowlist`: the TA compares the SL's [key token][glossary] with digests
+    stored in it. The report gives the keys it recognises.
 - `no-allowlist`: the TA compares only digests of other keys.
 - `encrypted`: the TA cannot be read.
 - `inconclusive`: the TA is plaintext, but no such compare was found in it.
@@ -125,25 +131,23 @@ does refuse `drtm`'s key.
 
 ## More
 
-- [docs/design.md](docs/design.md): target scope, architecture, and DRTM
-    launch design decisions.
+- [docs/design.md](docs/design.md): target scope, architecture, and DRTM launch
+    design decisions.
 - [docs/testing.md](docs/testing.md): how the QEMU test suite works and why.
-- [docs/development.md](docs/development.md): toolchain setup and repo
-    layout.
-- [docs/foreign-sl.md](docs/foreign-sl.md): launching AMD's own SLs, and
-    what it expects from the OS loader.
+- [docs/development.md](docs/development.md): toolchain setup and repo layout.
+- [docs/foreign-sl.md](docs/foreign-sl.md): launching AMD's own SLs, and what it
+    expects from the OS loader.
 
 ## Acknowledgements
 
-Two ideas in `drtm` come from the talk
-[A Practical Security Assessment of DRTM on AMD-based Systems][talk] by
-Christian Werling and Julian Prein at the Boot Security Mastery Conference 2026
-([slides][talk-slides]):
+Two ideas in `drtm` come from the talk [A Practical Security Assessment of DRTM
+on AMD-based Systems][talk] by Christian Werling and Julian Prein at the Boot
+Security Mastery Conference 2026 ([slides][talk-slides]):
 
-- Using AMD's Windows Secure Loader as a shim. Newer client firmware most
-    likely launches only SLs signed with a key on its built-in list. AMD's
-    SL is signed with a listed key and `drtm`'s own SL is not, so `drtm`
-    launches AMD's SL, which then jumps to `drtm`'s code. See
+- Using AMD's Windows Secure Loader as a shim. Newer client firmware most likely
+    launches only SLs signed with a key on its built-in list. AMD's SL is signed
+    with a listed key and `drtm`'s own SL is not, so `drtm` launches AMD's SL,
+    which then jumps to `drtm`'s code. See
     [docs/foreign-sl.md](docs/foreign-sl.md).
 - Checking which firmware versions accept only Secure Loaders signed with a
     listed key. See
@@ -153,5 +157,6 @@ Christian Werling and Julian Prein at the Boot Security Mastery Conference 2026
 
 BSD-3-Clause, see [LICENSE](LICENSE).
 
+[glossary]: docs/design.md#glossary
 [talk]: https://cfp.3mdeb.com/bsmconf/talk/ZJWHCU/
 [talk-slides]: https://cfp.3mdeb.com/media/bsmconf/submissions/ZJWHCU/resources/20260924-drtm-on-amd-slides_5B8J8mF.pdf
