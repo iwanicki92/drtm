@@ -67,10 +67,15 @@ the header, as every other SL's does.
 
 ## Building and running
 
-`DRTM_FOREIGN_SL` names either the DLL or a bare image (the measured bytes
-then the `$AS1` signature block). The build finds the image by the GUID in
-`AMD_SL_HDR_V1` (AMD publication 58453, appendix B.3), checks the signature
-block is where the header says, and prints the offset and key ID it found:
+`DRTM_FOREIGN_SL` gives the path to either the DLL or a bare image (the measured
+bytes then the `$AS1` signature block). In a DLL, the build finds the SL by
+searching for the fixed GUID in its header, a format that AMD publication 58453
+calls `AMD_SL_HDR_V1` (appendix B.3).
+
+The SL's header gives the length of its measured bytes, and the signature block
+must come right after them, so the build fails if it isn't there. A successful
+build prints where the SL starts in the file and the ID of the key that signed
+it. To build with the DLL, run:
 
 ```sh
 DRTM_FOREIGN_SL=path/to/amddrtm.dll cargo build
@@ -114,16 +119,16 @@ by CPUID, comparing with the same values as the list its header points at from
 | `0x20` | 8    | `OsSlImageSize`        | the DLME's measured length          |
 | `0x28` | 8    | `OsSlParametersOffset` | the end of the DLME's scratch       |
 | `0x30` | 8    | `OsSlParametersSize`   | the rest of the block               |
-| `0x38` | 4    | `ApStartupBase`        | 16 KiB below 1 MiB                  |
+| `0x38` | 4    | `ApStartupBase`        | a 16 KiB area anywhere below 1 MiB  |
 | `0x3c` | 4    | `ApStartupSize`        | 16 KiB                              |
-| `0x40` | 8    | `AmdSlRsvdMemBase`     | 2 MiB for its heap and page tables  |
+| `0x40` | 8    | `AmdSlRsvdMemBase`     | its heap, page tables and stacks    |
 | `0x48` | 4    | `AmdSlRsvdMemSize`     | 2 MiB                               |
 
 None of these may overlap the SLB, and after `LAUNCH` the SL requires each to
 lie inside a TMR. It measures the OS SL image with `EXTEND_OSSL_DIGEST`,
 which wants the block 64 MiB aligned. It fills the parameters area with a
-header of its own and the tables it names, described below, and then jumps
-to the OS SL.
+header of its own and the tables that header points to, as described below.
+Then it jumps to the OS SL.
 
 The OS SL image carries an `OS_SL_DESCRIPTOR_V1` the SL finds by its GUID,
 `e5c70468-8342-1a1d-d0cc-d39812881d48` in memory order:
