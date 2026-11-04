@@ -13,7 +13,7 @@ including [its launches](#drtm-under-qemu).
 
 `cargo` must be on `PATH` (the test fixture builds the binary itself). Test
 dependencies are managed by [uv](https://docs.astral.sh/uv/) via
-`qemu-tests/pyproject.toml`, no separate venv setup needed. The QEMU
+`qemu-tests/pyproject.toml`, so no separate venv setup is needed. The QEMU
 harness itself, the `drtmtest` package, lives in the
 [`drtm-tests`](https://github.com/iwanicki92/drtm-tests) repository, and `uv`
 fetches the commit pinned in that file.
@@ -79,45 +79,53 @@ distribution QEMU fails once rather than in every boot fixture.
 
 ## What tests assert on
 
-Every check reports an identifier, a tag and a detail text, which the text form
-prints as `[TAG] <identifier>: <detail>` and the JSON form as a record's fields.
-The identifier is a stable dotted name with the area first (`cpu.bsp`,
-`amd.iommu`) and the tag is one of five. `PASS`, `FAIL` and `WARN` are verdicts,
-`SKIP` means the check did not run, and `INFO` is for a check that reports a
-platform fact without gating anything. `src/check.rs` holds the macros that
-produce them.
+Every check reports an identifier, a tag and a detail text. The text form prints
+them as `[TAG] <identifier>: <detail>`, and the JSON form prints them as a
+record's fields. The identifier is a stable dotted name with the area first,
+such as `cpu.bsp` or `amd.iommu`. The tag is one of five:
 
-Tests key on the tag and the identifier, through `results` and `verdicts` in
-`conftest.py`, so rewording a check's detail text is not a test failure. A
-test that needs a value the check computed, such as the SLB address or the
-machine-check bank count, reads it with `fields`. An
-identifier that reports nothing yields an empty list, which is how a skipped
-phase or a vendor gate is asserted.
+- `PASS`, `FAIL` and `WARN` are verdicts.
+- `SKIP` means the check did not run.
+- `INFO` is for a check that reports a platform fact without gating anything.
 
-`conftest.py` reads results through `results` and `verdicts`, which take
-either form, so a fixture can change form without its tests changing.
-`fields` reads the values a check named, which is how a test asserting on an
-address or a count avoids a regular expression over the detail text.
-`records` parses a JSON-mode capture and refuses a `drtm:` line that is not a
-usable record, since firmware shares this UART but never writes that prefix.
-`dumped` takes one kind of platform dump record, such as `device` or `msr`,
-with no prose fallback, since the dump has no prose form.
+`src/check.rs` holds the macros that produce them.
+
+Tests key on the tag and the identifier, so rewording a check's detail text is
+not a test failure. An identifier that reports nothing yields an empty list,
+which is how a test asserts a skipped phase or a vendor gate.
+
+`conftest.py` has helper functions for reading a boot's output:
+
+- `results` and `verdicts` parse check results from either form, so a fixture
+    can change form without its tests changing.
+- `fields` reads the values a check reported, such as the SLB address or the
+    machine-check bank count, so a test needs no regular expression over the
+    detail text.
+- `records` parses a JSON capture and refuses a `drtm:` line that is not a
+    usable record, since firmware shares this UART but never writes that prefix.
+- `dumped` returns one kind of platform dump record, such as `device` or `msr`.
+    It has no text fallback because the dump has no text form.
 
 ## How the VM is set up
 
-Booting takes around 5 seconds, so tests do not boot QEMU themselves. Each
-configuration in `qemu-tests/conftest.py` carries a `@boot_configuration`
-decorator, which turns it into a session fixture of the same name yielding
-that boot's serial output as a string. A configuration needing different
-QEMU arguments is a new function returning them, rather than the existing
-ones growing parameters. Tests sharing a boot fail together if it does.
+Booting takes around 5 seconds, so tests do not boot QEMU themselves. A boot
+configuration is a function in `qemu-tests/conftest.py` that returns the
+settings for one boot. Its `@boot_configuration` decorator turns it into a
+session fixture with the same name, and the fixture yields that boot's serial
+output as a string. To test other QEMU arguments, add a new function instead of
+adding parameters to an existing one. Tests that share a boot fail together if
+it fails.
 
-Collection starts those boots rather than the fixtures doing it: once the
-tests to run are known, every configuration among them is submitted to a
-pool of `os.cpu_count()` threads, in the order the tests ask for them, and
-the fixture then waits on its result. So a session's wall time tracks the
-slowest batch rather than the number of configurations, and `-k` or a single
-test file still boots only what it names.
+The boots start during pytest's collection phase, not in the fixtures. Once
+pytest knows which tests will run, the suite submits the configurations those
+tests use to a pool of `os.cpu_count()` threads, in the order the tests ask for
+them. Each fixture then waits for its boot to finish. So a session's wall time
+depends on the slowest group of parallel boots rather than on the number of
+configurations, and `-k` or a single test file still boots only what those tests
+use.
+
+The table below lists the configurations. "Window" means the MMCONFIG window
+that `MSR 0xC0010058` reports.
 
 | Fixture                    | Configuration                                                                 | `drtm.conf`                  |
 |----------------------------|-------------------------------------------------------------------------------|------------------------------|
@@ -132,138 +140,161 @@ test file still boots only what it names.
 | `amd_drtm_boot`            | `amd-drtm=on` strict, two processors, TIS TPM                                 | `level=trace`, `format=json` |
 | `unlisted_psp_boot`        | `amd-psp` with an ID no loader's table lists, `VM_CR` as a launch leaves it   | `level=trace`, `format=json` |
 
-`level=verbose` is not a level, and that boot carries it on purpose.
+`level=verbose` is deliberately invalid: `test_config.py` uses that boot to
+check that `drtm` refuses the value and keeps running.
 
-`default_boot` is also the only one keeping QEMU's display adapter and
-network card. Initialising them [costs time](#boot-time) and no test asserts on
-either, but it is the boot the scan tests read and they want a populated bus.
+`default_boot` is the only boot that keeps QEMU's display adapter and network
+card. Initialising them [costs time](#boot-time) and no test asserts on either,
+but the scan tests read this boot and they want a populated bus.
 
-The CPU model decides the vendor string, and that selects which checks run
-at all: `default_boot` is AMD so every check runs, while `intel_cpu_boot`
-covers the path where the AMD checks are skipped and the vendor-independent
-ones still run. Both TPM interfaces are tested because the check reports
-them differently, and an earlier bug got CRB wrong while passing on TIS.
+The CPU model decides the vendor string, which selects the checks that run.
+`default_boot` is AMD, so every check runs. `intel_cpu_boot` covers the path
+where the AMD checks are skipped and the vendor-independent ones still run. Both
+TPM interfaces are tested because the check reports them differently, and an
+earlier bug got CRB wrong while passing on TIS.
 
-Several boots exist only to reach a second outcome of one check.
-`default_boot` asks for `+skinit` and `amd_iommu_boot` does not, so the
-`SKINIT` check is exercised both ways at no cost, and `amd_iommu_boot` also
-leaves the configuration window disabled, which is where that check's third
-outcome comes from. It also carries a second root bridge, as a server has,
-so the scan is held to reading each function once. The enabled IOMMU boot
-differs in the capability, adds a Secure Processor whose DRTM service is
-ready, and is the one boot whose MSR names the window the firmware mapped,
-so the MCFG check agrees there and warns everywhere else.
-`mmconfig_above_4gib_boot` moves the window, and reports CPUID family 1Ah,
-which is the one family the platform dump reads AMD's own MSRs on. `EPYC`,
-which the other AMD check boots use, is family 17h, where that list is refused.
-Its `VM_CR`
-starts locked with SVM still enabled, as that family's firmware leaves it,
-which is the one place the check reports a lock. It carries a Secure
-Processor whose DRTM service is not ready too, which is the form that
-prints the mailbox address as a field rather than in a sentence, and it is
-the one boot publishing the DRTM ACPI device.
-`machine_check_error_boot` starts QEMU paused and logs a corrected error in
-bank 1 through its `mce` monitor command before the firmware runs. It also
-carries an enabled IOMMU that ACPI leaves out, and a Secure Processor with
-no ASPT, since its tests only read results.
-`amd_drtm_boot` is the machine a launch runs on, and the one boot held to
-more than its serial output. The platform device runs strict, so a broken
-launch rule would stop the VM as a panic and fail the boot, QEMU's guest
-error log is kept and asserted empty, and `query-amd-drtm` is asked once
-the run completes, through `launch_state`, to confirm the checks launched
-nothing and armed nothing. It has a second processor and a TIS TPM, so the
-processor list and the BSP check are read with an AP present.
-`unlisted_psp_boot` carries the one Secure Processor found by class rather
-than by ID, and starts with the three `VM_CR` bits `SKINIT` sets still in
-place, so it is where the check warns about `R_INIT`.
+Several boots exist only to reach another outcome of one check:
 
-For each boot, `qemu-tests/machine.py` builds a scratch ESP (under the
-system temp dir, removed on exit) holding `EFI/BOOT/BOOTX64.EFI`, a copy
-of the built `drtm.efi`, placed where UEFI's removable-media boot path
-picks it up automatically, so it needs no boot entry or bootloader, and
-the boot's `drtm.conf` beside it. The same module turns a configuration's
-keyword arguments into the QEMU options for that boot: the machine, the
-CPU model and the devices only our build has.
+- `default_boot` asks for `+skinit` and `amd_iommu_boot` does not, so
+    `amd.skinit` is exercised both ways at no cost.
+- `amd_iommu_boot` also leaves the MMCONFIG window disabled, which gives
+    `amd.mmconfig` its third outcome. It has a second root bridge, as a server
+    has, so the scan must read each function only once.
+- `amd_iommu_enabled_boot` reports the IOMMU capability as enabled and adds a
+    Secure Processor whose DRTM service is ready. It is the only check boot
+    whose `MSR 0xC0010058` gives the window the firmware mapped, so
+    `amd.mmconfig_table` agrees on this boot and warns on the others.
+- `mmconfig_above_4gib_boot` moves the window and reports CPUID family 1Ah. That
+    is the only family whose MSR list the platform dump reads, because a missing
+    MSR raises `#GP` and only that family's PPR documents the list. The other
+    AMD check boots use `EPYC`, family 17h, where the dump reads none of them.
+    This boot's `VM_CR` starts locked with SVM still enabled, as that family's
+    firmware leaves it, which is the only place `amd.vm_cr` reports a lock. Its
+    Secure Processor's DRTM service is not ready, and the tests read the mailbox
+    address from the `fields` of `amd.psp_drtm`. It is also the only boot that
+    publishes the DRTM ACPI device.
+- `machine_check_error_boot` starts QEMU paused and logs a corrected error in
+    bank 1 through its `mce` monitor command before the firmware runs. Its tests
+    read only check results, so the same boot also covers an enabled IOMMU
+    missing from ACPI and a Secure Processor with no ASPT.
+- `amd_drtm_boot` is the machine a launch runs on, and the only boot held to
+    more than its serial output. Its platform device runs with `strict=on`, so a
+    broken launch rule stops the VM as a panic and fails the boot. QEMU's guest
+    error log must be empty. Once the run completes, `launch_state` asks
+    `query-amd-drtm` to confirm the checks launched nothing and armed nothing.
+    The boot has a second processor and a TIS TPM, so the processor list and the
+    BSP check are read with an AP present.
+- `unlisted_psp_boot` has the only Secure Processor found by class rather than
+    by ID. It starts with the three `VM_CR` bits `SKINIT` sets still in place,
+    so it is the boot where `amd.vm_cr` warns about `R_INIT`.
 
-The binary reads `drtm.conf` from beside itself on the ESP, so `make_esp`
-writes one into the scratch ESP. Most boots raise the level to `trace` and
-ask for `format=json`, which is what the platform dump takes and what lets
-the assertions key on record fields rather than wording. Two boots only
-read results, which print at any level, so they carry the other config
-states: `tpm_crb_boot` sets nothing but `launch=off`, and
-`amd_iommu_enabled_boot` sets an unusable level, which must be refused without
-stopping the run. `test_config.py` asserts on those two, and setting nothing else
-also leaves `tpm_crb_boot` in the default text form, which is what keeps the
-human-readable output under test. `tpm_tis_boot` stays at `trace` for its
-per-locality `TPM_ACCESS` line.
+For each boot, `qemu-tests/machine.py` builds a scratch ESP under the system
+temp dir, which is removed on exit. The ESP holds two files:
 
-`drtmtest.qemu_vm` runs it: a copy of the warmed Dasharo firmware image
-as pflash, variable store included, that ESP as a FAT-formatted drive, an
-`swtpm` when the boot asks for a TPM, serial on a raw TCP port (see below)
-and QMP on a short-lived Unix socket. Nothing here depends on the settings
-the store holds, since the binary is found as removable media rather than
-through a boot entry.
+- `EFI/BOOT/BOOTX64.EFI`, a copy of the built `drtm.efi`. UEFI's removable-media
+    boot path picks it up from there, so no boot entry or bootloader is needed.
+- `drtm.conf` beside it, which the binary reads at startup and `make_esp`
+    writes.
 
-The warmed image is the download after one boot, cached beside it under the
-download's hash. Populating the variable store is 2.8s and the firmware only
-does it on an image that has never booted, so the first boot of a fresh
-clone makes it and every boot after starts from a store that is already
-there. Deleting `qemu-tests/dl-cache/` costs one boot, not correctness.
+The same module turns a configuration's settings into the QEMU options for that
+boot: the machine, the CPU model and the devices only our build has.
 
-The firmware's boot prompt is answered with a carriage return as soon as it
-appears, which boots the default entry at once rather than after the boot
-manager's 3s timeout. Not seeing that prompt fails the boot: the firmware
-release is pinned, so its absence means something changed. QEMU's serial
-server therefore waits for its connection before the machine starts, since
-that prompt is the first thing printed and nothing may be dropped ahead of
+Most boots raise the level to `trace` and ask for `format=json`. The platform
+dump needs both, and they let the assertions key on record fields rather than
+wording. Two boots read only results, which print at any level, so they carry
+the other config states, and `test_config.py` asserts on both:
+
+- `tpm_crb_boot` sets nothing but `launch=off`. That leaves it in the default
+    text form, which keeps the human-readable output under test.
+- `amd_iommu_enabled_boot` sets an unusable level, which must be refused without
+    stopping the run.
+
+`tpm_tis_boot` stays at `trace` for its per-locality `TPM_ACCESS` line.
+
+The firmware fills its variable store only on an image that has never booted,
+which takes 2.8s. So the suite keeps the image after one boot, beside the
+download and under the download's hash, and calls it the warmed image. The first
+boot of a fresh clone makes it, and every later boot starts from a store that is
+already there. Deleting `qemu-tests/dl-cache/` costs one boot, not correctness.
+
+`drtmtest.qemu_vm`, from the `drtm-tests` harness, starts QEMU with:
+
+- a copy of the warmed Dasharo firmware image as pflash, variable store included
+- the scratch ESP as a FAT-formatted drive
+- an `swtpm` when the boot asks for a TPM
+- serial on a raw TCP port, for the reason under [Why
+    pytest](#why-pytest-not-robot-framework)
+- QMP on a short-lived Unix socket
+
+Nothing here depends on the settings the store holds, since the binary is found
+as removable media rather than through a boot entry.
+
+The suite answers the firmware's boot prompt with a carriage return as soon as
+it appears, which boots the default entry at once rather than after the boot
+manager's 3s timeout. Not seeing that prompt fails the boot, because the
+firmware release is pinned and its absence means something changed. QEMU's
+serial server therefore waits for its connection before the machine starts,
+since the prompt is the first thing printed and nothing may be dropped ahead of
 it.
 
-Each boot reads serial output until the marker its form ends with: the
-`summary` record under `format=json`, and the `drtm: checks complete` line
-in text mode. Reaching it proves the binary got past every check rather than hanging
+Each boot reads serial output until the marker that ends its form: the `summary`
+record under `format=json`, and the `drtm: checks complete` line in text mode.
+Reaching the marker proves the binary got past every check rather than hanging
 midway. The binary writes to the serial device itself rather than through the
 UEFI text console, which hard-wraps at 80 columns mid-word, so a line arrives
 whole however long it is.
 
 ## DRTM under QEMU
 
-Upstream QEMU models no part of a real DRTM launch. Our build does, from
-`SKINIT` through the locality 4 hash to the northbridge register the Secure
-Kernel Loader releases the block through, and boots TrenchBoot's Xen with
-it. That end-to-end test lives in the QEMU tree rather than here, since it
-exercises the emulator and not this binary.
+Upstream QEMU models no part of a real DRTM launch. Our build models the launch
+from `SKINIT`, through the locality 4 hash, to the northbridge register that
+TrenchBoot's Secure Kernel Loader writes to release the SLB's protection. It
+boots TrenchBoot's Xen this way. That end-to-end test lives in the QEMU tree
+rather than here, since it exercises the emulator and not this binary.
 
-Every boot here runs with `launch=off` unless it asks for a launch, which
-`make_esp` writes into its `drtm.conf`, so the checks run on a platform that
-could launch and is not asked to. The launch boots in `test_launch.py` read on
-past the checks' summary to the DLME's `launch.halted`: one through a
-TIS TPM that must measure the image in SHA-1 and SHA-256, one with the PSP DRTM
-service holding localities 1 to 4, one on the defaults with a SHA-384 bank, one
-through a TPM 1.2, one through a CRB TPM that fails `tpm.locality` and launches
-anyway, and one the gate blocks. Those in `test_psp_launch.py` take the PSP
-path: one where every step passes and the probe sees the TMR block the PIT's
-interrupt, one with another SPLT version, one whose service is not ready so
-`auto` falls back, two that `launch=psp` blocks, one whose `TMR_SETUP`, one
-whose `LAUNCH` and one whose extend times out, one built with a longer
-`DRTM_EXTEND_TIMEOUT_MS` that waits the same extend out, one without an
-IVRS, and five whose `LAUNCH` the service refuses. Four of those patch a
-field of the signed image inside the ESP's copy of `drtm.efi`, through
-`machine.patch_sl`, and one raises the platform's patch level. The tests
-recompute PCR 17 and 18 from the measured part of `target/sl-psp.bin`, its
-key token and `target/dlme.bin` rather than trusting what drtm printed.
+Every boot here runs with `launch=off` unless it asks for a launch, and
+`make_esp` writes that setting into its `drtm.conf`. So the checks run on a
+platform that could launch and is not asked to.
 
-`test_foreign_sl_amd.py` runs only when `DRTM_TEST_FOREIGN_SL` names one of
-AMD's SLs. It builds a second binary embedding it, boots it with
-`launch=foreign`, and reads the POST codes `isa-post-code` logged to
-`post-codes.txt` in the boot's log directory, since that SL writes nothing
-else, then the DLME's report on serial. What the boot needs from QEMU is in
-`docs/foreign-sl.md`.
+The launch boots read on past the checks' summary to the DLME's `launch.halted`.
+The boots in `test_launch.py` cover:
+
+- a TIS TPM that must measure the image in SHA-1 and SHA-256
+- the PSP DRTM service holding localities 1 to 4
+- the defaults, with a SHA-384 bank
+- a TPM 1.2
+- a CRB TPM that fails `tpm.locality` and launches anyway
+- a launch the gate blocks
+
+The boots in `test_psp_launch.py` take the PSP path and cover:
+
+- every step passing, with the probe seeing the TMR block the PIT's interrupt
+- another SPLT version
+- a service that is not ready, so `auto` falls back
+- two launches that `launch=psp` blocks
+- a timeout in each of `TMR_SETUP`, `LAUNCH` and `EXTEND_OSSL_DIGEST`
+- a build with a longer `DRTM_EXTEND_TIMEOUT_MS` that waits out that extend
+- no IVRS
+- five launches the service refuses. Four of them patch a field of the signed
+    image inside the ESP's copy of `drtm.efi`, through `machine.patch_sl`, and
+    one raises the platform's patch level.
+
+The tests recompute PCR 17 and 18 from the measured part of `target/sl-psp.bin`,
+its key token and `target/dlme.bin` rather than trusting what `drtm` printed.
+
+`test_foreign_sl_amd.py` runs only when `DRTM_TEST_FOREIGN_SL` gives the path to
+one of AMD's SLs. It builds a second binary that embeds the SL and boots it with
+`launch=foreign`. The SL writes nothing to serial, so the test reads the POST
+codes that `isa-post-code` logged to `post-codes.txt` in the boot's log
+directory, then the DLME's report on serial. What the boot needs from QEMU is in
+[foreign-sl.md](foreign-sl.md).
+
 What each check can prove, and what the build still models loosely, is in
-`qemu-drtm-support.md`. Dasharo's own TrenchBoot QEMU tests run on upstream and
-never get further than GRUB's precondition checks.
+[qemu-drtm-support.md](qemu-drtm-support.md).
 
-Dasharo's `trenchboot/*.robot` tests don't apply here as they are, because they
-run against a fully booted Linux. They read PCRs from
+Dasharo's own TrenchBoot QEMU tests run on upstream and never get further than
+GRUB's precondition checks. Its `trenchboot/*.robot` tests don't apply here as
+they are, because they run against a fully booted Linux. They read PCRs from
 `/sys/class/tpm/tpm0/pcr-*` and the event log from
 `/sys/kernel/security/slaunch/eventlog`.
 
@@ -273,67 +304,64 @@ Each pytest invocation gets its own numbered, gitignored folder under
 `qemu-tests/logs/`, e.g. `0007-2026-09-13/`, holding:
 
 - `timestamp.txt`: the exact run time.
-- `results.txt`: every test's outcome and duration, the session's exit
-    status, and the full traceback for anything that failed. Durations sum
-    the setup, call and teardown phases, so a shared boot's cost shows
-    against the test that triggered it rather than every test reading 0.0s.
-- One subfolder per boot, named after its configuration, e.g. `default_boot`
-    to `boot-default/`, with that boot's captured `serial.log`, the
-    process's own output in `qemu-stderr.log`, its `-D` log in `qemu.log`,
-    and the `qemu-args.txt` it was launched with. Boots with a TPM also get
-    `swtpm.log`, and the run that warms a firmware image gets
-    `boot-warm-firmware/`.
+- `results.txt`: every test's outcome and duration, the session's exit status,
+    and the full traceback for anything that failed. Durations sum the setup,
+    call and teardown phases, so a shared boot's cost shows against the test
+    that triggered it rather than every test reading 0.0s.
+- One subfolder per boot, named after its configuration, e.g. `default_boot` to
+    `boot-default/`, with that boot's captured `serial.log`, the process's own
+    output in `qemu-stderr.log`, its `-D` log in `qemu.log`, and the
+    `qemu-args.txt` it was launched with. Boots with a TPM also get `swtpm.log`,
+    and the run that warms a firmware image gets `boot-warm-firmware/`.
 
-On the launch machine `qemu.log` holds the guest errors and the launch
-traces, the same `amd_drtm_*`, `amd_psp_*` and `x86_*` set the boot matrix
-turns on. `qemu_log()` hands tests the guest errors alone, so a healthy
-launch still reads empty, and `qemu_traces()` the trace lines.
+On the launch machine `qemu.log` holds the guest errors and the launch traces,
+which are the same `amd_drtm_*`, `amd_psp_*` and `x86_*` set the `drtm-tests`
+boot matrix turns on. `qemu_log()` gives tests only the guest errors, so a
+healthy launch reads empty. `qemu_traces()` gives them the trace lines.
 
-`swtpm.log` is empty after a healthy run: swtpm writes errors to stderr,
-which that file captures, and emits nothing otherwise. Debug tracing is
-separate, via `DRTM_SWTPM_LOG_LEVEL`, where level 5 and above activates
-libtpms logging and 20 dumps every command (~38K per boot).
+`swtpm.log` is empty after a healthy run: swtpm writes errors to stderr, which
+that file captures, and emits nothing otherwise. Debug tracing is separate, via
+`DRTM_SWTPM_LOG_LEVEL`, where level 5 and above activates libtpms logging and 20
+dumps every command (~38K per boot).
 
-Old runs are never pruned automatically, so clean out `qemu-tests/logs/` by
-hand once in a while. The run number is 4 digits; if it's exhausted, delete
-old runs and try again.
+Old runs are never pruned automatically, so clean out `qemu-tests/logs/` by hand
+once in a while. The run number is 4 digits; if it's exhausted, delete old runs
+and try again.
 
 ## Timeouts
 
 A stuck `drtm.efi` fails the run rather than wedging it. Layers, innermost
 first:
 
-- `QemuVm.expect` raises with the output captured since its last match.
-    Boot waits use `BOOT_TIMEOUT` (120s), far above the ~5s a real boot
-    takes, so a loaded machine does not fail looking like a hang. A console
-    silent for `IDLE_TIMEOUT` (90s) or a VM stopped as panicked ends the
-    wait earlier, with that reason.
-- `QemuVm.__exit__` always tears QEMU down (`terminate`, then `kill` after
-    5s), so a timed-out test leaves no stray process.
-- The serial connection waits at most 10s for QEMU to open its port,
-    `QmpClient` bounds every socket operation at 10s, and the `cargo build`
-    in `built_efi_binary` is capped at `BUILD_TIMEOUT` (300s).
-- `pytest-timeout` backstops the rest at 300s per test, with the `signal`
-    method so the failure is still reported and `results.txt` still written.
-    The `thread` method calls `os._exit()` and loses both.
+- `QemuVm.expect` raises with the output captured since its last match. Boot
+    waits use `BOOT_TIMEOUT` (120s), far above the ~5s a real boot takes, so a
+    loaded machine does not fail looking like a hang. A console silent for
+    `IDLE_TIMEOUT` (90s) or a VM stopped as panicked ends the wait earlier, with
+    that reason.
+- `QemuVm.__exit__` always tears QEMU down (`terminate`, then `kill` after 5s),
+    so a timed-out test leaves no stray process.
+- The serial connection waits at most 10s for QEMU to open its port, `QmpClient`
+    bounds every socket operation at 10s, and the `cargo build` in
+    `built_efi_binary` is capped at `BUILD_TIMEOUT` (300s).
+- `pytest-timeout` backstops the rest at 300s per test, with the `signal` method
+    so the failure is still reported and `results.txt` still written. The
+    `thread` method calls `os._exit()` and loses both.
 
 ## Acceleration
 
-`DRTM_QEMU_ACCEL` picks the accelerator: `tcg` (the default), `kvm`, or
-`auto` (KVM whenever `/dev/kvm` is usable). TCG is the default because KVM
-measured slower on every machine tried, roughly 2x on a
-nested-virtualisation host, where one boot took 11.0s under TCG against
-22.7s under KVM. On bare metal KVM was still marginally behind. The guest
-boots with `smm=on` and Dasharo's firmware does substantial SMM setup, so
-nested, every SMM transition traps through both hypervisor layers while TCG
-has no exits at all.
+`DRTM_QEMU_ACCEL` picks the accelerator: `tcg` (the default), `kvm`, or `auto`
+(KVM whenever `/dev/kvm` is usable). TCG is the default because KVM measured
+slower on every machine tried, roughly 2x on a nested-virtualisation host, where
+one boot took 11.0s under TCG against 22.7s under KVM. On bare metal KVM was
+still marginally behind. The guest boots with `smm=on` and Dasharo's firmware
+does substantial SMM setup. On a nested host every SMM transition traps through
+both hypervisor layers, while TCG has no exits at all.
 
-That was a one-off comparison and is not kept current, since only TCG is
-used. Per-boot figures are quoted rather than whole-session ones, which
-would go stale every time a boot fixture is added. `kvm` and `auto` remain
-so the comparison can be re-run somewhere it may not hold. Each boot records
-its invocation to `qemu-args.txt`, so two runs compared show what actually
-differed.
+That was a one-off comparison and is not kept current, since only TCG is used.
+Per-boot figures are quoted rather than whole-session ones, which would go stale
+every time a boot fixture is added. `kvm` and `auto` remain so the comparison
+can be re-run somewhere it may not hold. Each boot records its invocation to
+`qemu-args.txt`, so two runs compared show what actually differed.
 
 ## Boot time
 
@@ -356,16 +384,16 @@ since its tests are the ones reading a populated bus.
 ## Why Dasharo's firmware, not OVMF
 
 Firmware for QEMU testing is Dasharo's coreboot+UEFI build for QEMU Q35 (from
-the `Dasharo/coreboot` releases, `qemu_q35_all_menus.rom`), not stock OVMF.
-It's a more feature-complete, open-source UEFI implementation, already used
-by Dasharo to test TrenchBoot itself.
+the `Dasharo/coreboot` releases, `qemu_q35_all_menus.rom`), not stock OVMF. It's
+a more feature-complete, open-source UEFI implementation, already used by
+Dasharo to test TrenchBoot itself.
 
 ## Why pytest, not Robot Framework
 
-RF's test-case syntax is `.robot` files, which is more ceremony than this
-project wants. QEMU is driven directly from Python over its serial console,
-exposed as a raw TCP socket (`-serial tcp:...`, not `telnet:...`, to avoid
-depending on Python's removed/deprecated `telnetlib`, which RF's own
-`Telnet` library needs), plus its QMP socket to control and query the VM.
-See `drtmtest.qemu_vm` in the `drtm-tests` repository, which also carries
-the QMP client and its Apache-2.0 attribution.
+Dasharo's own TrenchBoot tests use Robot Framework (RF), which keeps test cases
+in `.robot` files. That is more ceremony than this project wants. QEMU is driven
+directly from Python over its serial console, plus its QMP socket to control and
+query the VM. The console is exposed as a raw TCP socket (`-serial tcp:...`, not
+`telnet:...`), to avoid depending on Python's removed `telnetlib`, which RF's
+own `Telnet` library needs. See `drtmtest.qemu_vm` in the `drtm-tests`
+repository, which also carries the QMP client and its Apache-2.0 attribution.
