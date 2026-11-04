@@ -15,7 +15,7 @@ Linux/Xen, or GRUB, SKL, and Linux/Xen), this tool is deliberately simpler:
 one binary whose only job is to exercise the DRTM launch and report whether
 it worked.
 
-## Status
+## What it does
 
 `drtm` is a UEFI binary that checks whether an AMD platform meets the
 preconditions of a dynamic launch, and can dump the platform state those checks
