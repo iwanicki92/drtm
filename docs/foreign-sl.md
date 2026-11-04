@@ -187,7 +187,7 @@ writes version 2, whose tables start at `0x54` under QEMU. The fields up to
 Memory and TMR descriptors are `0x20` bytes each: a version of 1, a type (2 for
 a TMR), a size of `0x20`, one more word (a TMR's index, 1 in the memory
 descriptors seen so far), then a 64-bit base and a 64-bit length in bytes. The
-log is a copy of the one `GET_TCG_LOGS` names.
+log is a copy of the one `GET_TCG_LOGS` returns.
 
 The DLME reports the header (`launch.amd_handoff`), each TMR (`launch.amd_tmr`),
 each memory descriptor at `debug`, and whether the log replays to PCR 17 and 18

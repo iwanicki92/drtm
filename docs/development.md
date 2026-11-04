@@ -59,9 +59,9 @@ task test
 ```
 
 These just wrap the commands on this page, so using them directly works too.
-Arguments after `--` reach the wrapped command, as in `task build -- --features
-sink-console` or `task lint -- cargo-clippy`. `docs` takes none, because its
-script does not.
+Arguments after `--` reach the wrapped command, as in
+`task build -- --features sink-console` or `task lint -- cargo-clippy`. `docs`
+takes none, because its script does not.
 
 ## Crates
 
