@@ -14,6 +14,11 @@ Client PSP firmware takes only SLs signed with keys its DRTM TA lists, which
 to launch. On either kind it shows whether the platform's DRTM works at all,
 separately from anything `drtm` does.
 
+The idea of using the Windows SL as a shim comes from the talk
+[A Practical Security Assessment of DRTM on AMD-based Systems][talk] by
+Christian Werling and Julian Prein ([slides][talk-slides]). The talk proposes a
+shim and reuse of Microsoft's SL as ways to live with the key check.
+
 ## Where AMD's SLs come from
 
 Neither is part of any BIOS image. The firmware only carries the DRTM TA with
@@ -231,3 +236,6 @@ The boot needs four things from our QEMU beyond a PSP launch:
     `GET_SMM_POLICY` with zero hashes and an empty policy. That is only what
     the client SL accepts, not what client firmware returns. The EPYC SL
     never sends them.
+
+[talk]: https://cfp.3mdeb.com/bsmconf/talk/ZJWHCU/
+[talk-slides]: https://cfp.3mdeb.com/media/bsmconf/submissions/ZJWHCU/resources/20260924-drtm-on-amd-slides_5B8J8mF.pdf

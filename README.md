@@ -121,6 +121,23 @@ server firmware ships its TA encrypted.
 - [docs/foreign-sl.md](docs/foreign-sl.md): launching AMD's own SLs, and
     what it expects from the OS loader.
 
+## Acknowledgements
+
+Two ideas in `drtm` come from the talk
+[A Practical Security Assessment of DRTM on AMD-based Systems][talk] by
+Christian Werling and Julian Prein at the Boot Security Mastery Conference 2026
+([slides][talk-slides]):
+
+- Using AMD's Windows Secure Loader as a shim. Client firmware lists the key
+    that signs this SL, and the SL then hands control to `drtm`'s own code. See
+    [docs/foreign-sl.md](docs/foreign-sl.md).
+- Checking which firmware versions accept only Secure Loaders signed with a
+    listed key. See
+    [docs/client-sl-key-allowlist.md](docs/client-sl-key-allowlist.md).
+
 ## License
 
 BSD-3-Clause, see [LICENSE](LICENSE).
+
+[talk]: https://cfp.3mdeb.com/bsmconf/talk/ZJWHCU/
+[talk-slides]: https://cfp.3mdeb.com/media/bsmconf/submissions/ZJWHCU/resources/20260924-drtm-on-amd-slides_5B8J8mF.pdf

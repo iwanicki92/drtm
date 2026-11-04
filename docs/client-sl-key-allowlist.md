@@ -13,6 +13,11 @@ to be refused there. This document explains the check, lists the TA versions
 and says how to check a firmware image. Every release checked is listed in
 [releases][releases].
 
+The idea of checking which firmware versions make this key check comes from the
+talk [A Practical Security Assessment of DRTM on AMD-based Systems][talk] by
+Christian Werling and Julian Prein ([slides][talk-slides]). The talk reports the
+check on client firmware.
+
 ## What the allowlist is
 
 The PSP runs its DRTM service as a trusted application, the DRTM TA (PSP
@@ -81,3 +86,5 @@ B550 boards agree: both gain the allowlist in mid-2023.
 [releases]: client-sl-key-allowlist/releases.md
 [foreign-sl]: foreign-sl.md
 [fwscan]: ../tools/fwscan/README.md
+[talk]: https://cfp.3mdeb.com/bsmconf/talk/ZJWHCU/
+[talk-slides]: https://cfp.3mdeb.com/media/bsmconf/submissions/ZJWHCU/resources/20260924-drtm-on-amd-slides_5B8J8mF.pdf
