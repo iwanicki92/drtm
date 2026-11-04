@@ -27,7 +27,7 @@ System packages needed alongside it:
   doesn't need one.
 - [`uv`](https://docs.astral.sh/uv/): manages the Python test dependencies
   and their virtual environment, see `docs/testing.md`.
-- `qemu-system-x86_64`: for the test suite.
+- `swtpm` and [our QEMU build](testing.md#the-qemu-build): for the test suite.
 
 ## Crates
 

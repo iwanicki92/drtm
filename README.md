@@ -30,11 +30,15 @@ out.
 
 ## Requirements
 
-- Rust via [rustup](https://rustup.rs/), with the `x86_64-unknown-uefi`
-    target added.
-- `qemu-system-x86_64`, `swtpm` and [uv](https://docs.astral.sh/uv/), for
-    the test suite. `swtpm` backs the emulated TPM the TPM-detection tests
-    need.
+- Rust via [rustup](https://rustup.rs/), with the `x86_64-unknown-uefi` and
+    `x86_64-unknown-none` targets added.
+- For the test suite:
+    - [our QEMU build](docs/testing.md#the-qemu-build), since a distribution
+        QEMU can't run it
+    - a checkout of [`drtm-tests`](https://github.com/iwanicki92/drtm-tests)
+        beside this repository
+    - `swtpm`, which backs the emulated TPM the TPM-detection tests need
+    - [uv](https://docs.astral.sh/uv/)
 
 See [docs/development.md](docs/development.md) for setup details.
 
@@ -105,11 +109,19 @@ before it is flashed:
 uv run --project tools/fwscan fwscan IMAGE...
 ```
 
-It reports `allowlist` when the TA compares the SL's key token against
-digests it carries, naming the keys it recognises, `encrypted` when the TA
-cannot be read, `inconclusive` for a plaintext TA without that check, and
-`no-drtm-ta`. The client firmware checked so far carries such a list, and
-server firmware ships its TA encrypted.
+It gives each image one of these verdicts:
+
+- `allowlist`: the TA compares the SL's key token against digests it carries.
+    The report names the keys it recognises.
+- `no-allowlist`: the TA compares only digests of other keys.
+- `encrypted`: the TA cannot be read.
+- `inconclusive`: the TA is plaintext, but no such compare was found in it.
+- `no-drtm-ta`: the image has no DRTM TA.
+
+Newer client firmware carries such a list, see
+[docs/client-sl-key-allowlist.md](docs/client-sl-key-allowlist.md). Server
+firmware ships its TA encrypted, so a scan can't tell, and some server firmware
+does refuse `drtm`'s key.
 
 ## More
 

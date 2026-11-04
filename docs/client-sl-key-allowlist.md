@@ -26,8 +26,11 @@ the `0x440`-byte key token of the key that signed it. Newer TAs then compare
 that digest with one they carry in their code: the SHA-256 of the token of
 the key that signs AMD's Windows SL (key ID
 `024ca9a5c32f41008aa8dd84c88b8dfc`, see [foreign SL][foreign-sl]). A key
-with any other token, such as `drtm`'s, would fail the compare. Server
-firmware has no such check.
+with any other token, such as `drtm`'s, would fail the compare.
+
+Server firmware's TA is encrypted, so this compare can't be read there, and
+firmware differs. Some Turin firmware launches an SL signed with `drtm`'s key.
+Other Turin firmware checks the key: it refuses `drtm`'s SL but launches AMD's.
 
 TAs also carry a second digest, the SHA-384 of AMD key `D2DBD452...`. It is
 compared on a separate code path and is not an SL key: that key signs the
@@ -50,8 +53,8 @@ launch. In the other versions up to 4.11.0.30, fwscan finds the `D2DBD452`
 compare but none for the SL key token. No verdict has been tried on
 hardware.
 
-The Windows SL key is the only entry in every allowlist found. No encrypted
-DRTM TA turned up.
+In the [client firmware survey](#coverage), the Windows SL key is the only entry
+in every allowlist found, and no DRTM TA is encrypted.
 
 ## What it means for `drtm`
 
@@ -63,6 +66,8 @@ DRTM TA turned up.
     SL key, so `drtm`'s own SL is quite likely accepted. Most of these are
     older releases of models whose later releases carry the allowlist, and
     anti-rollback may block a downgrade to them (not checked).
+- `encrypted`: the TA can't be read, so only a launch shows whether the firmware
+    checks the key.
 - `no-drtm-ta`: the firmware quite likely offers no DRTM at all.
 
 ## Checking a firmware image

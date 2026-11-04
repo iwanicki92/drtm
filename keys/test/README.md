@@ -7,10 +7,12 @@ SPDX-License-Identifier: BSD-3-Clause
 # Test signing key
 
 `sl-test-key.pem` is an RSA-4096 private key, published on purpose. The
-build signs the Secure Loader with it for the PSP DRTM service, which on
-server parts takes an image signed with any key and extends PCR 18 with
-the key token the image carries. Anyone can sign an SL with this key, so a
-PCR 18 holding its token says nothing about who built the image.
+build signs the Secure Loader with it for the PSP DRTM service, which extends
+PCR 18 with the key token the image carries. Firmware that checks the key
+refuses this one, see
+[the key allowlist](../../docs/client-sl-key-allowlist.md). Anyone can sign an
+SL with this key, so a PCR 18 holding its token says nothing about who built the
+image.
 
 `sl-test-key.pub` is its public half, which the host tests verify the
 signature against.

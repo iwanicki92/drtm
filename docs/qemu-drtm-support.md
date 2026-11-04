@@ -8,9 +8,9 @@ SPDX-License-Identifier: BSD-3-Clause
 
 What upstream QEMU models of the AMD DRTM path, what our own build adds on
 top, up to a launch that boots TrenchBoot's Xen, and what it still models
-loosely. Everything said about upstream was checked against `v11.1.1`,
-which is what our build branches from. How the test suite drives QEMU, and
-how to build it, is in `testing.md`.
+loosely. Everything said about upstream was checked against `v11.1.1`, and our
+build is on a later development version, `11.1.50`. How the test suite drives
+QEMU, and how to build it, is in `testing.md`.
 
 Observations from our own boots go in [Findings](#findings), one row each,
 so the page stays a reference rather than growing a section per discovery.
@@ -81,7 +81,8 @@ platform whatever the CPU model.
 
 ## What our build adds
 
-Patches carried on the `drtm` branch of our QEMU fork, described by what
+Patches carried on the `drtm-txt` branch of
+[our QEMU fork](https://github.com/iwanicki92/qemu), described by what
 they make observable rather than by their diff. All are opt-in, so a guest
 that does not ask for them behaves as it would upstream.
 

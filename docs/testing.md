@@ -14,9 +14,15 @@ are supported, to prove the UEFI application itself boots and runs correctly.
 `cargo` must be on `PATH` (the test fixture builds the binary itself). Test
 dependencies are managed by [uv](https://docs.astral.sh/uv/) via
 `qemu-tests/pyproject.toml`, no separate venv setup needed. The QEMU
-harness itself, the `drtmtest` package, lives in the `drtm-tests`
-repository and is taken from a checkout beside this one, `../drtm-tests`,
-until that repository has a remote to pin instead.
+harness itself, the `drtmtest` package, lives in the
+[`drtm-tests`](https://github.com/iwanicki92/drtm-tests) repository. The suite
+takes it from a checkout beside this one, so clone it there first:
+
+```sh
+git clone https://github.com/iwanicki92/drtm-tests ../drtm-tests
+```
+
+To run the suite:
 
 ```sh
 task test
@@ -45,8 +51,8 @@ What those patches do, and what is still missing, is in
 [qemu-drtm-support.md](qemu-drtm-support.md).
 
 ```sh
-git clone <fork> qemu
-cd qemu && git checkout drtm
+git clone https://github.com/iwanicki92/qemu
+cd qemu && git checkout drtm-txt
 mkdir build && cd build
 ../configure --target-list=x86_64-softmmu --enable-tpm --disable-docs
 make -j"$(nproc)"

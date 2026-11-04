@@ -10,10 +10,11 @@ A debug build of `drtm` can embed a Secure Loader signed by someone else and
 launch it through the PSP DRTM service in place of its own. The point is AMD's
 own SLs, one for client platforms and one for server platforms, which AMD names
 for EPYC. Both are signed with the same AMD key. Each SL runs only on CPUs it
-knows, and those differ between SL versions. Client PSP firmware takes only SLs
-signed with keys its DRTM TA lists, which `drtm`'s key never is, so on a client
-machine AMD's SL is the only one known to launch. On either kind it shows
-whether the platform's DRTM works at all, separately from anything `drtm` does.
+knows, and those differ between SL versions. Newer client firmware and some
+server firmware accept only SLs signed with certain keys, and `drtm`'s key is
+never one of them. On that firmware AMD's SL is the only one known to launch. On
+any firmware it shows whether the platform's DRTM works at all, separately from
+anything `drtm` does.
 
 The idea of using the Windows SL as a shim comes from the talk
 [A Practical Security Assessment of DRTM on AMD-based Systems][talk] by
@@ -23,8 +24,8 @@ check.
 
 ## Where AMD's SLs come from
 
-Neither is part of any BIOS image. The firmware only carries the DRTM TA with
-its list of accepted keys. Both SLs ship inside Windows drivers, as
+Neither is part of any BIOS image. The firmware only carries the DRTM TA, which
+holds any list of accepted keys. Both SLs ship inside Windows drivers, as
 `amddrtm.dll`.
 
 ### Client
@@ -236,8 +237,10 @@ the probe, the TMR and log the SL left, and a passing summary. A boot that
 never reaches the DLME is still judged by its POST codes. Under QEMU, on the
 `EPYC-Genoa` CPU these tests use, the client SL 1.0.19.4 and the EPYC SLs 1.10.4.1
 to 1.10.4.9 all pass. The EPYC 1.10.1.0 doesn't list that CPU, and on the CPUs it
-lists it stops at `0xb0001a09`, short of the DLME. The EPYC 1.10.2.0 usually stops
-at `0xb0001002`, also short of the DLME. Why those two stop is not known.
+lists it stops at `0xb0001a09`, short of the DLME, because our QEMU doesn't model
+the Data Fabric registers it reads. The EPYC 1.10.2.0 usually stops at
+`0xb0001002`, also short of the DLME: it starts the second CPU, then gives up
+waiting for it. Why that CPU doesn't finish is not known.
 The boot needs four things from our QEMU beyond a PSP launch:
 
 - `isa-post-code`, which logs every write to ports `0x80` to `0x83` whole,
