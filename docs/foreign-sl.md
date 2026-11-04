@@ -17,10 +17,9 @@ On that firmware AMD's SL is the only one known to launch. On any firmware,
 running AMD's SL shows whether the platform's DRTM works at all, separately from
 anything `drtm` does.
 
-The idea of using the Windows SL as a shim comes from the talk [A Practical
+The idea of reusing the SL that Windows launches comes from the talk [A Practical
 Security Assessment of DRTM on AMD-based Systems][talk] by Christian Werling and
-Julian Prein ([slides][talk-slides]). The talk proposes a shim and reuse of the
-SL that Windows launches as ways to live with the key check.
+Julian Prein ([slides][talk-slides]), as a way to live with the key check.
 
 ## Where AMD's SLs come from
 
