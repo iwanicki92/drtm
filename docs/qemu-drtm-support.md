@@ -83,8 +83,16 @@ platform whatever the CPU model.
 
 Patches carried on the `drtm-txt` branch of
 [our QEMU fork](https://github.com/iwanicki92/qemu), described by what
-they make observable rather than by their diff. All are opt-in, so a guest
-that does not ask for them behaves as it would upstream.
+they make observable rather than by their diff. Most take an option, so a guest
+that does not ask for them behaves as it would upstream. These changes have no
+option and apply on every boot under TCG:
+
+- `-cpu max` reports `skinit`, because that model takes every feature TCG
+    supports.
+- MSRs `0xC0010114` and `0xC0010058` take writes, which upstream ignores. The
+    sections below say what those writes do.
+- A halted CPU wakes for INIT.
+- INIT waits while `GIF` is clear.
 
 **The `skinit` CPUID bit can be asked for.** `-cpu EPYC,+skinit` then
 reports the feature instead of being refused. On its own this advertises a
@@ -175,7 +183,10 @@ firmware did map for software that then uses it.
 **One machine option.** `-machine q35,amd-drtm=on` adds the `skinit`
 feature to every CPU, the platform object, `amd-nb` at `00:18.0`, an
 `amd-iommu` at `00:00.2` with its capability enabled, and turns on the two
-host bridge properties above. It is the configuration the TrenchBoot boot
+host bridge properties above. It also turns on the MCH's `smn` property, which
+answers the address and data registers at `0xb8` and `0xbc` of `00:00.0`. GRUB,
+the Secure Kernel Loader's AMDSL build and Xen's PSP driver read the Secure
+Processor's address through them. It is the configuration the TrenchBoot boot
 test uses. Each device still works on its own, and the MCH stays Intel
 underneath.
 
@@ -264,25 +275,21 @@ is refused on purpose.
 ## Findings
 
 Observations from real boots. Newest first. `QEMU` says which build the
-observation belongs to, since the older rows were taken on Debian's 8.2.2
-and some of them no longer hold.
+observation belongs to, since the older rows were taken on Debian's 8.2.2.
 
 | Date       | QEMU   | Observation                                                                                                               |
 |------------|--------|---------------------------------------------------------------------------------------------------------------------------|
 | 2026-09-26 | ours   | A Secure Loader's GDT loaded with the accessed bits clear changes its signed bytes, so `LAUNCH` fails the signature       |
 | 2026-09-26 | ours   | The PIT's interrupt through the IO-APIC stays out of the IRR under a TMR over `[0, 4 GiB)`, arriving after `TMR_RELEASE`  |
 | 2026-09-20 | ours   | `vm-cr=0x8` reads back as family 1Ah firmware leaves it, and `vm-cr=0x7` reaches the `R_INIT` warning of `amd.vm_cr`      |
-| 2026-09-20 | ours   | A `drtm` boot of the launch machine under strict mode with `-d guest_errors` leaves the log empty and no launch recorded  |
 | 2026-09-20 | ours   | `amd-nb` answers offset `0x384` through the root bridge protocol, reading zero, as function 0 of a family 1Ah node does   |
 | 2026-09-20 | ours   | `mmio-conf-base=0xb0000021` names the window Dasharo's MCFG publishes, so `amd.mmconfig_table` agrees there alone         |
-| 2026-09-20 | ours   | `VM_CR` reads zero on every boot, so `amd.vm_cr` reaches only its all-clear outcome                                       |
 | 2026-09-20 | ours   | With `SL_DEV` enforced, SKL's first IOMMU pass stops at the event log interrupt, the second completes after the release   |
 | 2026-09-20 | ours   | SKL's `IOMMU event log not empty` with an all-zero dump is that first pass, not a fault: the entry was never written      |
 | 2026-09-20 | ours   | `-machine q35,amd-drtm=on` boots the same image with SKL taking the `0xCF8` route, MSR `0xC0010058` left at zero          |
 | 2026-09-20 | ours   | `amd-iommu` passes DMA through unless `dma-remap=on`, so `amd-drtm=on` sets it and a Linux booted directly finds its disk |
 | 2026-09-20 | ours   | meta-trenchboot v0.5.2 boots Xen and dom0 through `SKINIT`, PCR 17 extended in every bank, PCR 18 in SHA-1 and SHA-256    |
 | 2026-09-20 | ours   | SKL writes `MEMPROT_CR` over `0xCF8` with AMD's extended bits unless MSR `0xC0010058` is enabled, bits QEMU masks off     |
-| 2026-09-20 | ours   | Dasharo maps MMCONFIG at `0xb0000000`, so `mmio-conf-base=0xb0000001` names the window it did map                         |
 | 2026-09-20 | ours   | SKL's serial lines sit between Xen's EFI stub banner and its first `(XEN)` line, so they read as part of Xen's boot       |
 | 2026-09-18 | ours   | `-device amd-psp,drtm-device=on` publishes the SSDT AMD firmware does, so `amd.drtm_device` finds it                      |
 | 2026-09-18 | ours   | `-device amd-psp` answers C2PMSG_72 through the window its ASPT declares, so `amd.psp_drtm` reads it both ways            |
@@ -300,7 +307,6 @@ and some of them no longer hold.
 | 2026-09-16 | 11.1.1 | `amd-iommu` answers `1022:1419`, so an AMD vendor ID alone would take it for a Secure Processor                           |
 | 2026-09-16 | 8.2.2  | `tpm-crb` reports `CapLocality` clear and `tpm-tis` set, so both locality outcomes are reachable                          |
 | 2026-09-16 | 8.2.2  | `amd-iommu` reads its capability's enable bit clear, so a launch would treat it as disabled by firmware                   |
-| 2026-09-16 | 8.2.2  | No guest configuration answers with any Secure Processor device ID, so the PSP check only reaches its not-found branch    |
 | 2026-09-15 | 8.2.2  | Dasharo publishes `EFI_PCI_ROOT_BRIDGE_IO_PROTOCOL`, one handle on segment 0, and config reads through it work            |
 | 2026-09-15 | 8.2.2  | That protocol reaches extended config space too: the e1000 answers `14020001` at offset 0x100                             |
 | 2026-09-15 | 8.2.2  | `amd-iommu` lands at `0:03.0` in the full test configuration and `0:01.0` with `-nodefaults`, so its address is not fixed |

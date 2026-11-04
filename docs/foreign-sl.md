@@ -62,9 +62,10 @@ Windows Server driver repository (`windows-server.lenovo.com`), versions
 - The SL in the DLL: offset `0x34c0`, `0x9270` bytes measured.
 - The key ID in its token: the client SL's, `024ca9a5c32f41008aa8dd84c88b8dfc`.
 
-From 1.10.4.1 on, the SL leaves SMM alone. Its `$AS1` header also gives
-`SizeFWSigned` as the image alone, where its signature covers the image and
-the header, as every other SL's does.
+From 1.10.4.1 on, the SL has no SMM step, as
+[Reading the POST codes](#reading-the-post-codes) explains. Its `$AS1` header
+also gives `SizeFWSigned` as the image alone, where its signature covers the
+image and the header, as every other SL's does.
 
 ## Building and running
 
@@ -217,8 +218,26 @@ The commands the client SL sends, in order: `LAUNCH`, `EXTEND_OSSL_DIGEST`,
 `GET_SMM_POLICY`, `GET_TCG_LOGS`. `PROCESS_SMM` and `GET_SMM_POLICY` are
 client only (58453, appendix H.2). Server firmware refuses them and the SL
 treats that as fatal, so it cannot complete on a server even where the
-firmware accepts its key. The EPYC SL sends the same commands without
-`ALLOCATE_SHARED_MEMORY`, `PROCESS_SMM` and `GET_SMM_POLICY`.
+firmware accepts its key.
+
+The EPYC SLs send the other commands in the same order. Whether they also send
+`ALLOCATE_SHARED_MEMORY`, `PROCESS_SMM` and `GET_SMM_POLICY` depends on the
+version:
+
+- From 1.10.4.1 on, nothing calls these three commands.
+- 1.10.1.0 and 1.10.2.0 send all three unless the CPU is one they skip, as the
+    table below shows.
+
+The CPUs in the table are family and model. The SL compares the family and the
+model's high digit, so 19h/10h covers models 10h to 1Fh.
+
+| EPYC SL  | Skips the three commands on        | Other CPUs on its list             |
+|----------|------------------------------------|------------------------------------|
+| 1.10.1.0 | 19h/00h                            | 17h/60h, 19h/50h                   |
+| 1.10.2.0 | 19h/00h, 19h/10h, 19h/80h, 19h/A0h | 17h/60h, 19h/40h, 19h/50h, 19h/70h |
+
+The client SL's list has every CPU in the last column as well. The table comes
+from reading the code, because no boot has reached this step on those CPUs.
 
 ## Under QEMU
 
@@ -251,8 +270,8 @@ The boot needs four things from our QEMU beyond a PSP launch:
     through `MSR_AMD64_MMIO_CONF_BASE`, which firmware always sets.
 - `client-smm=on` on `amd-psp`, which answers `PROCESS_SMM` and
     `GET_SMM_POLICY` with zero hashes and an empty policy. That is only what
-    the client SL accepts, not what client firmware returns. The EPYC SL
-    never sends them.
+    the client SL accepts, not what client firmware returns. The EPYC SLs don't
+    send them on `EPYC-Genoa`.
 
 [talk]: https://cfp.3mdeb.com/bsmconf/talk/ZJWHCU/
 [talk-slides]: https://cfp.3mdeb.com/media/bsmconf/submissions/ZJWHCU/resources/20260924-drtm-on-amd-slides_5B8J8mF.pdf
