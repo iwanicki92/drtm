@@ -128,8 +128,10 @@ Two ideas in `drtm` come from the talk
 Christian Werling and Julian Prein at the Boot Security Mastery Conference 2026
 ([slides][talk-slides]):
 
-- Using AMD's Windows Secure Loader as a shim. Client firmware lists the key
-    that signs this SL, and the SL then hands control to `drtm`'s own code. See
+- Using AMD's Windows Secure Loader as a shim. Newer client firmware most
+    likely launches only SLs signed with a key on its built-in list. AMD's
+    SL is signed with a listed key and `drtm`'s own SL is not, so `drtm`
+    launches AMD's SL, which then jumps to `drtm`'s code. See
     [docs/foreign-sl.md](docs/foreign-sl.md).
 - Checking which firmware versions accept only Secure Loaders signed with a
     listed key. See

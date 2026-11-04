@@ -17,7 +17,8 @@ separately from anything `drtm` does.
 The idea of using the Windows SL as a shim comes from the talk
 [A Practical Security Assessment of DRTM on AMD-based Systems][talk] by
 Christian Werling and Julian Prein ([slides][talk-slides]). The talk proposes a
-shim and reuse of Microsoft's SL as ways to live with the key check.
+shim and reuse of the SL that Windows launches as ways to live with the key
+check.
 
 ## Where AMD's SLs come from
 
