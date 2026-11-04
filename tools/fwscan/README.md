@@ -71,10 +71,9 @@ digest of an unknown key still counts.
 
 ## psptool
 
-psptool comes from a fork pinned in `pyproject.toml`, which parses client
-ROMs (64 MB flash, direct L2 pointers) that upstream does not yet.
-`--psptool` runs another one instead. psptool is GPL-3.0: fwscan only runs
-it, it never imports it.
+fwscan needs psptool 3.7 or later, the first release that parses client ROMs
+with 64 MB flash or direct L2 pointers. `--psptool` runs another copy instead.
+psptool is GPL-3.0: fwscan only runs it, it never imports it.
 
 ## Tests
 

@@ -181,7 +181,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "capstone", specifier = ">=5.0" },
-    { name = "psptool", url = "https://github.com/iwanicki92/PSPTool/archive/8a4695cb2e299745b095312b4cf4f914b4ca3630.tar.gz" },
+    { name = "psptool", specifier = ">=3.7" },
 ]
 
 [package.metadata.requires-dev]
@@ -228,18 +228,15 @@ wheels = [
 
 [[package]]
 name = "psptool"
-version = "3.6+fork.8a4695c"
-source = { url = "https://github.com/iwanicki92/PSPTool/archive/8a4695cb2e299745b095312b4cf4f914b4ca3630.tar.gz" }
+version = "3.7"
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "cryptography" },
     { name = "prettytable" },
 ]
-sdist = { hash = "sha256:512c4a78bbcab9e6b3d4230231fce0d0b0f43ebcbb852ff0e02b8ff47581eefb" }
-
-[package.metadata]
-requires-dist = [
-    { name = "cryptography", specifier = ">=38.0.0" },
-    { name = "prettytable" },
+sdist = { url = "https://files.pythonhosted.org/packages/91/2d/4855ab661e1b571042b9f4398823f6de208c32ee6d514ad01900646227a4/psptool-3.7.tar.gz", hash = "sha256:950c9315d0a2cecfaf2b4112199084a99e929810324768bf0d55296a3faea9ee", size = 73359, upload-time = "2026-10-02T09:04:53.293Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/73/c3/1ffbb7998d5610e6cb7009d1010b7bcd2090953c088dd6c93bef3849b78e/psptool-3.7-py3-none-any.whl", hash = "sha256:b67532b7ce43f7f4aabc9cbe8196917f9ee0d96f1d292765a7964e05ab2e11cb", size = 69486, upload-time = "2026-10-02T09:04:51.772Z" },
 ]
 
 [[package]]
