@@ -8,11 +8,12 @@ SPDX-License-Identifier: BSD-3-Clause
 
 A debug build of `drtm` can embed a Secure Loader signed by someone else and
 launch it through the PSP DRTM service in place of its own. The point is AMD's
-own SLs, one for clients and one for EPYC, both signed with the same AMD key.
-Client PSP firmware takes only SLs signed with keys its DRTM TA lists, which
-`drtm`'s key never is, so on a client machine AMD's SL is the only one known
-to launch. On either kind it shows whether the platform's DRTM works at all,
-separately from anything `drtm` does.
+own SLs, one for client platforms and one for server platforms, which AMD names
+for EPYC. Both are signed with the same AMD key. Each SL runs only on CPUs it
+knows, and those differ between SL versions. Client PSP firmware takes only SLs
+signed with keys its DRTM TA lists, which `drtm`'s key never is, so on a client
+machine AMD's SL is the only one known to launch. On either kind it shows
+whether the platform's DRTM works at all, separately from anything `drtm` does.
 
 The idea of using the Windows SL as a shim comes from the talk
 [A Practical Security Assessment of DRTM on AMD-based Systems][talk] by
@@ -95,6 +96,11 @@ Appendix B.3 of 58453 is the only public description: `TotalLength` at
 header offset `0x18` covers the image and its signature block, and the OS
 loader puts the SL's parameters at `SLB + TotalLength`. The layouts below come
 from the SL itself, its strings and its code.
+
+The SL also has to know the CPU. EPYC 1.10.4.9 looks up the PSP mailbox's offset
+by CPUID, comparing with the same values as the list its header points at from
+`0x1c`. On any other CPU it polls a wrong address until it gives up with
+`0xb0001e08` and resets.
 
 `AmdSlInputParameters`, `0x4c` bytes:
 
@@ -222,9 +228,11 @@ The tests check the DLME was reached, every command was answered in either
 SL's order above, the PSP model verified the signature, and the DLME's
 report: PCR 18 against a value the tests compute from the SL, `TMR_RELEASE`,
 the probe, the TMR and log the SL left, and a passing summary. A boot that
-never reaches the DLME is still judged by its POST codes. Under QEMU the
-client SL 1.0.19.4 and the EPYC SLs 1.10.4.1 to 1.10.4.9 all pass. The EPYC
-1.10.1.0 and 1.10.2.0 do not reach the DLME, and why is not known.
+never reaches the DLME is still judged by its POST codes. Under QEMU, on the
+`EPYC-Genoa` CPU these tests use, the client SL 1.0.19.4 and the EPYC SLs 1.10.4.1
+to 1.10.4.9 all pass. The EPYC 1.10.1.0 most likely fails because it reads the
+PSP's base address from MSR `0xc00110a2`, which our QEMU does not model. Why the
+EPYC 1.10.2.0 stops short of the DLME is not known.
 The boot needs four things from our QEMU beyond a PSP launch:
 
 - `isa-post-code`, which logs every write to ports `0x80` to `0x83` whole,
