@@ -6,8 +6,8 @@ SPDX-License-Identifier: BSD-3-Clause
 
 # Testing
 
-A QEMU-based test suite exists from the start, even before real DRTM launches
-are supported, to prove the UEFI application itself boots and runs correctly.
+The test suite boots the UEFI application under QEMU and checks what it reports,
+including [its launches](#drtm-under-qemu).
 
 ## Running
 
@@ -38,16 +38,22 @@ The first run downloads Dasharo's QEMU Q35 firmware image into
 
 ### The QEMU build
 
-The suite needs our own QEMU, not a distribution one. Nine checks reach
-outcomes upstream cannot produce: `amd.skinit` passing needs a CPU allowed
-to report the feature bit, `amd.iommu` passing needs an `amd-iommu` whose
-capability reads enabled, `amd.mmconfig` and `amd.mmconfig_table` need
-`MSR 0xC0010058` to hold a value at all, `amd.psp` needs a device with a
-Secure Processor ID, `amd.psp_drtm` needs that device's mailbox registers
-and the table naming where they are, `amd.drtm_device` finding anything
-needs the SSDT that describes it, `amd.iommu_table` warning needs an IOMMU
-with no IVRS table, and `amd.northbridge` finding a function needs the
-northbridge the launch machine adds.
+The suite needs our own QEMU, not a distribution one. Upstream has no launch,
+so every launch boot needs our build, and so do these check outcomes:
+
+- `amd.skinit` passing needs a CPU allowed to report the feature bit.
+- `amd.iommu` passing needs an `amd-iommu` whose capability reads enabled.
+- `amd.mmconfig` and `amd.mmconfig_table` need `MSR 0xC0010058` to hold a value
+    at all.
+- `amd.psp` needs a device with a Secure Processor ID.
+- `amd.psp_drtm` needs that device's mailbox registers and the table naming
+    where they are.
+- `amd.drtm_device` finding anything needs the SSDT that describes it.
+- `amd.iommu_table` warning needs an IOMMU with no IVRS table.
+- `amd.northbridge` finding a function needs the northbridge the launch machine
+    adds.
+- `amd.vm_cr` warning about `R_INIT` needs the `VM_CR` register.
+
 What those patches do, and what is still missing, is in
 [qemu-drtm-support.md](qemu-drtm-support.md).
 
@@ -103,8 +109,8 @@ test file still boots only what it names.
 `level=verbose` is not a level, and that boot carries it on purpose.
 
 `default_boot` is also the only one keeping QEMU's display adapter and
-network card. Initialising them costs 1.3s, and no test asserts on either,
-but it is the boot the scan tests read and they want a populated bus.
+network card. Initialising them [costs time](#boot-time) and no test asserts on
+either, but it is the boot the scan tests read and they want a populated bus.
 
 The CPU model decides the vendor string, and that selects which checks run
 at all: `default_boot` is AMD so every check runs, while `intel_cpu_boot`
@@ -122,8 +128,9 @@ differs in the capability, adds a Secure Processor whose DRTM service is
 ready, and is the one boot whose MSR names the window the firmware mapped,
 so the MCFG check agrees there and warns everywhere else.
 `mmconfig_above_4gib_boot` moves the window, and reports CPUID family 1Ah,
-which is the one family the platform dump reads AMD's own MSRs on: every
-other boot is `EPYC`, family 17h, where that list is refused. Its `VM_CR`
+which is the one family the platform dump reads AMD's own MSRs on. `EPYC`,
+which the other AMD check boots use, is family 17h, where that list is refused.
+Its `VM_CR`
 starts locked with SVM still enabled, as that family's firmware leaves it,
 which is the one place the check reports a lock. It carries a Secure
 Processor whose DRTM service is not ready too, which is the form that
@@ -144,15 +151,15 @@ processor list and the BSP check are read with an AP present.
 than by ID, and starts with the three `VM_CR` bits `SKINIT` sets still in
 place, so it is where the check warns about `R_INIT`.
 
-The binary reads `drtm.conf` from beside itself on the ESP, so `QemuVm`
+The binary reads `drtm.conf` from beside itself on the ESP, so `make_esp`
 writes one into the scratch ESP. Most boots raise the level to `trace` and
 ask for `format=json`, which is what the platform dump takes and what lets
 the assertions key on record fields rather than wording. Two boots only
 read results, which print at any level, so they carry the other config
-states: `tpm_crb_boot` has no file at all and `amd_iommu_enabled_boot` an
-unusable level, which must be refused without stopping the run.
-`test_config.py` asserts on those two, and having no file also leaves
-`tpm_crb_boot` in the default text form, which is what keeps the
+states: `tpm_crb_boot` sets nothing but `launch=off`, and
+`amd_iommu_enabled_boot` sets an unusable level, which must be refused without
+stopping the run. `test_config.py` asserts on those two, and setting nothing else
+also leaves `tpm_crb_boot` in the default text form, which is what keeps the
 human-readable output under test. `tpm_tis_boot` stays at `trace` for its
 per-locality `TPM_ACCESS` line.
 
@@ -174,16 +181,18 @@ whole however long it is.
 
 ## What tests assert on
 
-Every check reports as `[TAG] <identifier>: <detail>`, where the identifier
-is a stable dotted name with the area first (`cpu.bsp`, `amd.iommu`) and the
-tag is one of five. `PASS`, `FAIL` and `WARN` are verdicts, `SKIP` means the
-check did not run, and `INFO` is for a check that reports a platform fact
-without gating anything. `src/check.rs` holds the macros that produce them.
+Every check reports an identifier, a tag and a detail text, which the text form
+prints as `[TAG] <identifier>: <detail>` and the JSON form as a record's fields.
+The identifier is a stable dotted name with the area first (`cpu.bsp`,
+`amd.iommu`) and the tag is one of five. `PASS`, `FAIL` and `WARN` are verdicts,
+`SKIP` means the check did not run, and `INFO` is for a check that reports a
+platform fact without gating anything. `src/check.rs` holds the macros that
+produce them.
 
 Tests key on the tag and the identifier, through `results` and `verdicts` in
 `conftest.py`, so rewording a check's detail text is not a test failure. A
 test that needs a value the check computed, such as the SLB address or the
-machine-check bank count, scrapes it out of the detail and says so. An
+machine-check bank count, reads it with `fields`. An
 identifier that reports nothing yields an empty list, which is how a skipped
 phase or a vendor gate is asserted.
 
@@ -289,8 +298,7 @@ old runs and try again.
 Firmware for QEMU testing is Dasharo's coreboot+UEFI build for QEMU Q35 (from
 the `Dasharo/coreboot` releases, `qemu_q35_all_menus.rom`), not stock OVMF.
 It's a more feature-complete, open-source UEFI implementation, already used
-by Dasharo to test TrenchBoot itself, which leaves room to grow into
-TPM/DRTM-adjacent QEMU testing later without switching firmware.
+by Dasharo to test TrenchBoot itself.
 
 ## Why pytest, not Robot Framework
 
@@ -298,7 +306,7 @@ RF's test-case syntax is `.robot` files, which is more ceremony than this
 project wants. QEMU is driven directly from Python over its serial console,
 exposed as a raw TCP socket (`-serial tcp:...`, not `telnet:...`, to avoid
 depending on Python's removed/deprecated `telnetlib`, which RF's own
-`Telnet` library needs), plus its QMP socket for VM control (reset, quit).
+`Telnet` library needs), plus its QMP socket to control and query the VM.
 See `drtmtest.qemu_vm` in the `drtm-tests` repository, which also carries
 the QMP client and its Apache-2.0 attribution.
 
@@ -339,20 +347,18 @@ What each check can prove, and what the build still models loosely, is in
 `qemu-drtm-support.md`. Dasharo's own TrenchBoot QEMU tests run on upstream and
 never get further than GRUB's precondition checks.
 
-Dasharo's `trenchboot/*.robot` tests are a useful model for DRTM-aware test
-structure later. They run against a fully booted Linux and read PCRs from
+Dasharo's `trenchboot/*.robot` tests don't apply here as they are, because they
+run against a fully booted Linux. They read PCRs from
 `/sys/class/tpm/tpm0/pcr-*` and the event log from
-`/sys/kernel/security/slaunch/eventlog`, though not applicable verbatim
-since we don't boot a full OS.
+`/sys/kernel/security/slaunch/eventlog`.
 
 ## Boot time
 
 Almost all of a session is firmware rather than anything being tested, so the
-boots are where the time is. One is now ~5s, some 8s less than it was, and
-the configurations boot together, as many at a time as the machine has
-cores, rather than one after another. Measured under TCG against the pinned
-firmware release, each figure below being what a run lost when that change
-landed, over the boots it applies to.
+boots are where the time is. One boot takes about 5s, and the configurations
+boot in parallel, up to one per CPU core. The table below shows how much time
+each change saved on the boots it applies to, measured under TCG on the pinned
+firmware release.
 
 | Change                                 | Per boot |
 |----------------------------------------|----------|

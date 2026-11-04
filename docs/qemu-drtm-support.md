@@ -188,7 +188,8 @@ declares, `drtm-ready=` sets the bit the DRTM service sets when it will
 take a command, and `aspt=off` leaves the table out.
 
 **The PSP DRTM service.** `-device amd-psp,drtm-service=on` answers every
-command AMD's integration guide (publication 58453) lists. `TMR_SETUP`
+command AMD's integration guide (publication 58453) lists, except the client-only
+ones, which `client-smm=on` adds. `TMR_SETUP`
 blocks device DMA to a range in the IOMMU's view, the interrupt window
 included, so the IO-APIC's messages are dropped under a TMR over it until
 `TMR_RELEASE`. `LAUNCH` checks the Secure Loader's signature against the
@@ -214,8 +215,9 @@ the IVRS table out, which upstream writes whenever the device is present
 (`hw/i386/acpi-build.c`). The IOMMU still answers in configuration space,
 so this is a configured IOMMU no OS would find.
 
-**AMD's SLs can run.** Three opt-in pieces carry them to their hand-off,
-see `docs/foreign-sl.md`. `-device isa-post-code,chardev=` logs each write
+**AMD's SLs can run.** Three opt-in pieces carry them to their hand-off, on top
+of `mmio-conf-base` above, see `docs/foreign-sl.md`.
+`-device isa-post-code,chardev=` logs each write
 to ports `0x80` to `0x83` whole, which the machine otherwise discards.
 `-device amd-fch-pmio` answers the FCH's `AcpiPmTmrBlk` at `0xfed80364`
 with the ICH9 PM timer's port. `amd-psp,client-smm=on` answers the client
@@ -224,13 +226,12 @@ policy, which the client SL accepts and no firmware is known to return.
 
 ## What would still be needed
 
-Every precondition check reaches its outcomes, with three exceptions. Two
-take a deliberately wrong ACPI table: `amd.iommu_table` never meets an IVRS
-that is malformed or disagrees with configuration space, and
-`amd.mmconfig_table` and `amd.psp_drtm` never meet a table whose checksum
-or structures are wrong. One takes state only firmware leaves: `amd-nb`
-resets `MEMPROT_CR` to zero, so `amd.northbridge` never sees `MEMPROT_EN`
-set. These are left to hardware.
+Every precondition check reaches its outcomes, except four. Three need a
+deliberately wrong ACPI table: `amd.iommu_table` never meets an IVRS that is
+malformed or disagrees with configuration space, and `amd.mmconfig_table` and
+`amd.psp_drtm` never meet a table whose checksum or structures are wrong. The
+fourth needs state only firmware leaves: `amd-nb` resets `MEMPROT_CR` to zero,
+so `amd.northbridge` never sees `MEMPROT_EN` set. These are left to hardware.
 
 The launch itself runs: the meta-trenchboot v0.5.2 image boots Xen and
 dom0 through GRUB's EFI TrenchBoot entry with PCR 17 extended, which a
@@ -238,9 +239,10 @@ functional test in the QEMU tree checks, since it exercises the emulator
 rather than this binary. What the build still models loosely, in the order
 a stricter guest would notice:
 
-1. **The Secure Processor's DRTM service is the guide's.** Which commands
-    seize a locality, where the regions lie and what the three commands no
-    loader issues return are our reading of it, and hardware may differ.
+1. **The Secure Processor's DRTM service follows AMD's guide, not hardware.**
+    Which commands seize a locality, where the regions lie and what
+    `GET_TMR_DESCRIPTORS`, `ALLOCATE_SHARED_MEMORY` and `GET_IVRS_TABLE_INFO`
+    return are our reading of the guide, and hardware may differ.
 2. **A writable IOMMU enable bit.** The property sets it at realize and
     leaves it read-only. The Secure Kernel Loader programs the IOMMU's MMIO
     registers, which upstream models, but a loader that expects the

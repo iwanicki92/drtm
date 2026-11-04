@@ -43,9 +43,9 @@ need that target added:
 rustup target add x86_64-unknown-none
 ```
 
-`common` holds what the two share, such as the record format and the TPM
-commands, and needs neither UEFI nor a particular processor mode. Its unit
-tests run on the host:
+`common` holds what `drtm`, `sl` and `dlme` share, such as the record format and
+the TPM commands, and needs neither UEFI nor a particular processor mode. Its
+unit tests run on the host:
 
 ```sh
 cargo test-host
@@ -109,9 +109,9 @@ launch=auto
 ```
 
 `level=info` is the default and prints one line per check. `debug` adds the
-PCI root bridge count, and `trace` the platform dump below and the TPM's
-per-locality access registers. A build made with `DRTM_LOG_LEVEL` starts at
-that level instead, and this file overrides it either way.
+PCI root bridge count. `trace` adds the TPM's per-locality access registers and,
+with `format=json`, the platform dump below. A build made with `DRTM_LOG_LEVEL`
+starts at that level instead, and this file overrides it either way.
 
 `format=text` is the default and prints prose for the person watching the
 serial console. `format=json` prints one JSON object per line instead, still
@@ -152,8 +152,7 @@ through `SKINIT` into the Secure Loader, which reports and hands off to the
 DLME, which reports and halts, through the PSP DRTM service where the
 platform offers it. With the defaults, a missing `drtm.conf` launches too.
 `launch=psp` insists on the PSP path and `launch=skinit` never takes it.
-`launch=off` stops after the summary, as a run did before the launch
-existed. See `docs/design.md` for what the gate
+`launch=off` stops after the summary. See `docs/design.md` for what the gate
 blocks on and how the path is chosen. `launch=foreign` exists only in a build
 made with `DRTM_FOREIGN_SL`, see `docs/foreign-sl.md`.
 

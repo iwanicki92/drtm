@@ -45,14 +45,15 @@ See [docs/development.md](docs/development.md) for setup details.
 ```sh
 task build   # cargo build -> target/x86_64-unknown-uefi/debug/drtm.efi
 task lint    # pre-commit run --all-files
-task test    # uv run pytest qemu-tests/ (builds the binary itself first)
-task docs    # cargo doc -> docs/dependency-docs (offline dependency docs)
+task test    # uv run --project qemu-tests pytest qemu-tests (builds the binary)
+task docs    # scripts/gen-dependency-docs.sh -> docs/dependency-docs
 ```
 
 `task` is optional. Each wraps a plain command documented in
-[docs/development.md](docs/development.md). Anything after `--` reaches that
-command, so `task build -- --features sink-console` and `task test -- -k tpm`
-work.
+[docs/development.md](docs/development.md) or, for the tests,
+[docs/testing.md](docs/testing.md). Anything after `--` reaches that command
+(except for `docs`), so `task build -- --features sink-console` and
+`task test -- -k tpm` work.
 
 ## Configuration
 
@@ -93,7 +94,8 @@ rest.
 `launch=foreign` needs a debug build made with `DRTM_FOREIGN_SL` naming a
 Secure Loader signed by someone else, such as AMD's client or EPYC SL from
 Lenovo's Windows "AMD DRTM Boot Driver" packages. It launches that SL in place of
-`drtm`'s own, which then reports only through POST codes. See
+`drtm`'s own. That SL reports only through POST codes, until it hands off to
+`drtm`'s DLME, which reports as usual. See
 [docs/foreign-sl.md](docs/foreign-sl.md).
 
 ## Firmware scan

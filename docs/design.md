@@ -21,7 +21,7 @@ report whether it worked, with enough logging to be useful when it didn't.
 - Platforms: UEFI first, non-UEFI (legacy BIOS boot path) planned for later.
 - Architectures: x86 first, ARM planned for later.
 - x86 has two distinct DRTM paths: Intel (TXT) and AMD (SKINIT/SVM).
-- First milestone targets AMD only. Intel, ARM, and non-UEFI support come
+- Only AMD on UEFI is implemented. Intel, ARM, and non-UEFI support would come
     after that.
 
 ## Architecture principle
@@ -34,17 +34,15 @@ logic or generic plumbing to find it.
 
 ## DRTM launch design decisions
 
-These were agreed before the launch was built, so the surrounding
-scaffolding (logging, reporting) could be built without re-litigating them:
-
-- The tool embeds its own minimal Secure-Loader-like stub rather than driving
-  an externally supplied SL/DLME binary (e.g. TrenchBoot's own). It stays a
-  single, self-contained binary. It only needs to prove the DRTM launch
-  mechanics work, not host a real next-stage payload. Its DLME is a stub of
-  the same kind, which reports and halts.
-- SKINIT (and equivalent) tears down normal UEFI execution, so the embedded
-    stub cannot rely on UEFI console/boot services to report results. It
-    writes results directly to the serial UART before halting or resetting.
+- The tool embeds its own Secure Loader and DLME rather than needing externally
+    supplied binaries (e.g. TrenchBoot's own), so it stays a single,
+    self-contained binary. They only need to prove that the DRTM launch
+    mechanics work, so the DLME reports and halts instead of hosting a real
+    next-stage payload. A debug build can embed
+    [a Secure Loader from elsewhere](foreign-sl.md) instead of `drtm`'s own.
+- SKINIT (and equivalent) tears down normal UEFI execution, so the Secure Loader
+    and the DLME cannot rely on UEFI console/boot services to report results.
+    They write results directly to the serial UART, and the DLME then halts.
 - On real hardware, the tool is most often run by hand, over serial, with
     no second console. Output should carry a human-readable form and a
     machine-parseable form, but as two exclusive modes of one binary rather
@@ -69,8 +67,9 @@ Neither wakes an AP.
 There are two paths. The classic one is `SKINIT` alone. The PSP one, which
 Turin firmware offers, adds AMD's PSP DRTM service (publication 58453): the
 preamble has it protect memory with a TMR before `SKINIT`, and the Secure
-Loader has it check the image's signature, extend the DRTM PCRs and tear the
-launch down again, issuing every command the guide lists.
+Loader has it check the image's signature and extend the DRTM PCRs. The DLME
+then has it release the TMR. Together they issue every command the guide lists,
+except the client-only `PROCESS_SMM` and `GET_SMM_POLICY`.
 
 ### Choosing the path
 

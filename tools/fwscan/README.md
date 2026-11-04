@@ -14,7 +14,7 @@ any other key, such as `drtm`'s, is expected to be refused.
 ## Usage
 
 ```sh
-uv run fwscan IMAGE... [--sl FILE] [--json] [--no-hid]
+uv run --project tools/fwscan fwscan IMAGE... [--sl FILE] [--json] [--no-hid]
 ```
 
 For each image fwscan lists the DRTM TAs (PSP directory entry type 0x47),
@@ -78,7 +78,7 @@ psptool is GPL-3.0: fwscan only runs it, it never imports it.
 ## Tests
 
 ```sh
-uv run pytest
+uv run --project tools/fwscan pytest tools/fwscan
 ```
 
 The tests use synthetic TAs and images. Vendor firmware is never committed.
